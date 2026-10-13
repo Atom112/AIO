@@ -439,6 +439,25 @@ impl AgentTurnRunner {
             }
             // Record peak context (input_tokens of the last round)
             context_input_tokens = round_result.input_tokens;
+            // Per-round usage ping (no content): lets the frontend context bar track the
+            // growing prompt across a multi-round turn (mainstream agent harnesses update
+            // context per API call, not only at turn end). input/output carry the running
+            // turn totals so the mid-turn display matches the final done event.
+            let _ = window.emit(
+                ev::LLM_CHUNK,
+                StreamPayload {
+                    assistant_id: assistant_id_c.clone(),
+                    topic_id: topic_id_c.clone(),
+                    content: String::new(),
+                    done: false,
+                    error: None,
+                    input_tokens: Some(total_input_tokens),
+                    output_tokens: Some(total_output_tokens),
+                    context_tokens: Some(context_input_tokens),
+                    cached_input_tokens: Some(total_cached_tokens),
+                    images: None,
+                },
+            );
             // Accumulate final text and generated images (incl. aio-image markers, returned with done)
             accumulated_content.push_str(&round_result.content);
             all_images.extend(round_result.images.clone());

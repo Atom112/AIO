@@ -58,13 +58,27 @@ const TokenStatsBar: Component = () => {
       cached = 0,
       tools = 0;
     let contextInput = 0;
-    for (const msg of topic.history || []) {
+    const history = topic.history || [];
+    for (const msg of history) {
       if (msg.role === 'assistant') {
         input += msg.inputTokens || 0;
         output += msg.outputTokens || 0;
         cached += msg.cachedInputTokens || 0;
         tools += msg.toolCalls?.length || 0;
-        contextInput = msg.contextTokens || msg.inputTokens || 0;
+      }
+    }
+    // Context-window occupancy = the most recent KNOWN peak context (contextTokens of
+    // the last assistant message that carries one, scanned backwards). Mainstream agent
+    // harnesses (Claude Code / Codex) keep showing the last measured prompt size while
+    // the next turn streams, and never reset to 0 mid-session. Deliberately NO
+    // inputTokens fallback: for agent turns inputTokens is the SUM over all rounds
+    // (cost unit), which wildly overstates the real context (the "500k after a short
+    // chat" report). Legacy topics without a persisted contextTokens show 0 (unknown).
+    for (let i = history.length - 1; i >= 0; i--) {
+      const msg = history[i];
+      if (msg.role === 'assistant' && (msg.contextTokens || 0) > 0) {
+        contextInput = msg.contextTokens!;
+        break;
       }
     }
     let maxCtx = 128_000;

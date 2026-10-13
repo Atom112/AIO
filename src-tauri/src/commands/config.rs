@@ -166,8 +166,8 @@ pub async fn load_assistants(state: tauri::State<'_, DbState>) -> Result<Vec<Ass
         for topic in topic_iter {
             let mut topic = topic.map_err(|e| e.to_string())?;
 
-            // 3. Load history messages (including tool_call_id / name / tool_calls_json / input_tokens / output_tokens / cached_input_tokens, so tool-call sessions resume across restarts and token stats are kept)
-            let mut m_stmt = conn.prepare("SELECT id, role, content, model_id, display_files, display_text, reasoning, tool_call_id, name, tool_calls_json, input_tokens, output_tokens, agent_steps_json, interim_content, agent_start_time, parent_message_id, branch_index, images_json, cached_input_tokens FROM messages WHERE topic_id = ? ORDER BY timestamp ASC")
+            // 3. Load history messages (including tool_call_id / name / tool_calls_json / input_tokens / output_tokens / cached_input_tokens / context_tokens, so tool-call sessions resume across restarts and token stats are kept)
+            let mut m_stmt = conn.prepare("SELECT id, role, content, model_id, display_files, display_text, reasoning, tool_call_id, name, tool_calls_json, input_tokens, output_tokens, agent_steps_json, interim_content, agent_start_time, parent_message_id, branch_index, images_json, cached_input_tokens, context_tokens FROM messages WHERE topic_id = ? ORDER BY timestamp ASC")
     .map_err(|e| e.to_string())?;
 
             let msg_iter = m_stmt
@@ -201,6 +201,7 @@ pub async fn load_assistants(state: tauri::State<'_, DbState>) -> Result<Vec<Ass
                         input_tokens: row.get(10)?,        // index 10: input_tokens
                         output_tokens: row.get(11)?,       // index 11: output_tokens
                         cached_input_tokens: row.get(18)?, // index 18: cached_input_tokens
+                        context_tokens: row.get(19)?,      // index 19: context_tokens
                         agent_steps: row
                             .get::<_, Option<String>>(12)?
                             .and_then(|s| serde_json::from_str(&s).ok()), // index 12: agent_steps_json
@@ -354,11 +355,11 @@ fn persist_assistant_inner(
             let content_json = serde_json::to_string(&msg.content).unwrap_or_default();
             let tool_calls_json = serde_json::to_string(&msg.tool_calls).ok();
 
-            // Persist tool_call_id / name / tool_calls_json / input_tokens / output_tokens / cached_input_tokens so tool-call sessions resume across restarts and token stats are kept.
+            // Persist tool_call_id / name / tool_calls_json / input_tokens / output_tokens / cached_input_tokens / context_tokens so tool-call sessions resume across restarts and token stats are kept.
             // ON CONFLICT(id) DO UPDATE overwrites rows on re-save; DO NOTHING would leave stale content.
             conn.execute(
-                "INSERT INTO messages (id, topic_id, role, content, model_id, display_files, display_text, reasoning, tool_call_id, name, tool_calls_json, input_tokens, output_tokens, agent_steps_json, interim_content, agent_start_time, parent_message_id, branch_index, images_json, cached_input_tokens)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)
+                "INSERT INTO messages (id, topic_id, role, content, model_id, display_files, display_text, reasoning, tool_call_id, name, tool_calls_json, input_tokens, output_tokens, agent_steps_json, interim_content, agent_start_time, parent_message_id, branch_index, images_json, cached_input_tokens, context_tokens)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)
                  ON CONFLICT(id) DO UPDATE SET
                    content = excluded.content,
                    reasoning = excluded.reasoning,
@@ -370,13 +371,14 @@ fn persist_assistant_inner(
                    input_tokens = excluded.input_tokens,
                    output_tokens = excluded.output_tokens,
                    cached_input_tokens = excluded.cached_input_tokens,
+                   context_tokens = excluded.context_tokens,
                    agent_steps_json = excluded.agent_steps_json,
                    interim_content = excluded.interim_content,
                    agent_start_time = excluded.agent_start_time,
                    parent_message_id = excluded.parent_message_id,
                    branch_index = excluded.branch_index,
                    images_json = excluded.images_json",
-                params![msg_id, topic.id, msg.role, content_json, msg.model_id, files_json, msg.display_text, msg.reasoning, msg.tool_call_id, msg.name, tool_calls_json, msg.input_tokens, msg.output_tokens, serde_json::to_string(&msg.agent_steps).ok(), msg.interim_content, msg.agent_start_time, msg.parent_message_id, msg.branch_index, serde_json::to_string(&msg.images).ok(), msg.cached_input_tokens],
+                params![msg_id, topic.id, msg.role, content_json, msg.model_id, files_json, msg.display_text, msg.reasoning, msg.tool_call_id, msg.name, tool_calls_json, msg.input_tokens, msg.output_tokens, serde_json::to_string(&msg.agent_steps).ok(), msg.interim_content, msg.agent_start_time, msg.parent_message_id, msg.branch_index, serde_json::to_string(&msg.images).ok(), msg.cached_input_tokens, msg.context_tokens],
             ).map_err(|e| e.to_string())?;
             sync_message_attachments(conn, &msg_id, msg.display_files.as_ref())?;
         }
@@ -1042,7 +1044,7 @@ pub async fn branch_topic(
             "SELECT id, role, content, model_id, display_files, display_text, reasoning,
              tool_call_id, name, tool_calls_json, input_tokens, output_tokens,
              agent_steps_json, interim_content, agent_start_time, parent_message_id, branch_index,
-             images_json, cached_input_tokens
+             images_json, cached_input_tokens, context_tokens
              FROM messages WHERE topic_id = ?1 ORDER BY timestamp ASC",
         )
         .map_err(|e| e.to_string())?;
@@ -1067,6 +1069,7 @@ pub async fn branch_topic(
                 input_tokens: row.get(10)?,
                 output_tokens: row.get(11)?,
                 cached_input_tokens: row.get(18)?,
+                context_tokens: row.get(19)?,
                 agent_steps: row
                     .get::<_, Option<String>>(12)?
                     .and_then(|s| serde_json::from_str(&s).ok()),
@@ -1157,8 +1160,8 @@ pub async fn branch_topic(
         conn.execute(
             "INSERT INTO messages (id, topic_id, role, content, model_id, display_files, display_text, reasoning,
              tool_call_id, name, tool_calls_json, input_tokens, output_tokens,
-             agent_steps_json, interim_content, agent_start_time, parent_message_id, branch_index, cached_input_tokens)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
+             agent_steps_json, interim_content, agent_start_time, parent_message_id, branch_index, cached_input_tokens, context_tokens)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)",
             params![
                 msg_id,
                 new_topic_id,
@@ -1179,6 +1182,7 @@ pub async fn branch_topic(
                 msg.parent_message_id,
                 msg.branch_index,
                 msg.cached_input_tokens,
+                msg.context_tokens,
             ],
         )
         .map_err(|e| ierr!("插入分支消息失败: {}", "Failed to insert branch messages: {}", e))?;

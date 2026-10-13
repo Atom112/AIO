@@ -281,13 +281,16 @@ export const checkAndSummarize = async (
 
   // Measure context usage: prefer the context peak of the last assistant message
   // (contextTokens already includes all history + system prefix + output; do not
-  // double-count user messages)
+  // double-count user messages). Scanned backwards for the most recent KNOWN value;
+  // deliberately NO inputTokens fallback — for agent turns inputTokens is the sum
+  // over all rounds (cost unit), not the context size, and would over-trigger
+  // compression on sessions reloaded from a DB that predates context_tokens.
   let totalUsed = 0;
   let hasAssistantCtx = false;
   for (let i = topic.history.length - 1; i >= 0; i--) {
     const msg = topic.history[i];
-    if (msg.role === 'assistant') {
-      totalUsed = (msg.contextTokens || msg.inputTokens || 0) + (msg.outputTokens || 0);
+    if (msg.role === 'assistant' && (msg.contextTokens || 0) > 0) {
+      totalUsed = msg.contextTokens! + (msg.outputTokens || 0);
       hasAssistantCtx = true;
       break;
     }

@@ -112,8 +112,12 @@ impl AgentTurnRunner {
         // reads fall back to defaults on failure
         let app_config = crate::core::config::load_app_config(&app_c).unwrap_or_default();
 
-        // Subagent concurrency cap
-        let max_concurrent = app_config.max_concurrent_subagents.unwrap_or(5).max(1) as usize;
+        // Subagent concurrency cap (0 = unlimited, full-autonomy opt-in; the per-subagent
+        // round/context budgets and the stop button remain the backstops)
+        let max_concurrent = match app_config.max_concurrent_subagents {
+            Some(0) => usize::MAX,
+            v => v.unwrap_or(5).max(1) as usize,
+        };
         let subagent_semaphore = Arc::new(Semaphore::new(max_concurrent));
 
         let client = streaming_http_client();

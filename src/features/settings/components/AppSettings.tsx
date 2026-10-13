@@ -73,7 +73,7 @@ const AppSettings: Component = () => {
   const [autoStart, setAutoStart] = createSignal(false);
   const [maxToolRounds, setMaxToolRounds] = createSignal(25); // Max tool-call rounds per agent turn (0 = unlimited; default 25)
   const [maxConcurrentSubagents, setMaxConcurrentSubagents] = createSignal(5); // Max concurrent subagents (default 5)
-  const [autoExpandSandbox, setAutoExpandSandbox] = createSignal(false); // Auto/Workflow sandbox auto-expansion (full-autonomy opt-in)
+  const [fullAutoMode, setFullAutoMode] = createSignal(false); // Auto/Workflow full-autonomy opt-in (sandbox auto-expand + network-gate bypass)
   const [subagentIsolation, setSubagentIsolation] = createSignal('auto'); // Parallel write isolation (auto default)
   const [mainAgentToolAccess, setMainAgentToolAccess] = createSignal('hybrid'); // Main agent tool access (hybrid default)
   const [version, setVersion] = createSignal(''); // App version
@@ -148,8 +148,8 @@ const AppSettings: Component = () => {
       if (typeof cfg?.maxConcurrentSubagents === 'number' && cfg.maxConcurrentSubagents > 0) {
         setMaxConcurrentSubagents(cfg.maxConcurrentSubagents);
       }
-      if (typeof cfg?.autoExpandSandbox === 'boolean') {
-        setAutoExpandSandbox(cfg.autoExpandSandbox);
+      if (typeof cfg?.fullAutoMode === 'boolean') {
+        setFullAutoMode(cfg.fullAutoMode);
       }
       if (typeof cfg?.subagentIsolationMode === 'string' && cfg.subagentIsolationMode) {
         setSubagentIsolation(cfg.subagentIsolationMode);
@@ -688,30 +688,30 @@ const AppSettings: Component = () => {
         <div class="flex justify-between items-center py-3 border-b border-white/5">
           <div>
             <span class="block text-[rgba(var(--text-base-rgb),0.93)] text-[14px]">
-              {t('app.autoExpandSandbox.title')}
+              {t('app.fullAutoMode.title')}
             </span>
             <p class="text-xs text-white/35 mt-1 max-w-[420px]">
-              {t('app.autoExpandSandbox.description')}
+              {t('app.fullAutoMode.description')}
             </p>
           </div>
 
           <Switch
-            checked={autoExpandSandbox()}
+            checked={fullAutoMode()}
             onChange={(val) => {
               // Risk acknowledgment on enable (full-autonomy opt-in, self-responsibility)
-              if (val && !window.confirm(t('app.autoExpandSandbox.confirm'))) return;
-              setAutoExpandSandbox(val);
-              schedulePatch('autoExpandSandbox', async () => {
+              if (val && !window.confirm(t('app.fullAutoMode.confirm'))) return;
+              setFullAutoMode(val);
+              schedulePatch('fullAutoMode', async () => {
                 try {
-                  await patchAppConfig({ autoExpandSandbox: val });
+                  await patchAppConfig({ fullAutoMode: val });
                 } catch (err) {
-                  console.warn('Failed to save sandbox auto-expansion config:', err);
-                  setAutoExpandSandbox(!val); // Roll back
+                  console.warn('Failed to save full-auto-mode config:', err);
+                  setFullAutoMode(!val); // Roll back
                 }
               });
             }}
             variant="glow"
-            label={t('app.autoExpandSandbox.title')}
+            label={t('app.fullAutoMode.title')}
           />
         </div>
 

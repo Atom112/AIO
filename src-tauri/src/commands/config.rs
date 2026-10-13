@@ -43,8 +43,9 @@ pub struct PatchAppConfig {
     /// subagents) / "full" (all built-in tools incl. execute_command — simple tasks
     /// complete without a delegation round-trip) / "orchestrator" (strict delegation).
     main_agent_tool_access: Option<String>,
-    /// Auto/Workflow sandbox auto-expansion toggle (full-autonomy opt-in; see AppConfig)
-    auto_expand_sandbox: Option<bool>,
+    /// Auto/Workflow full-autonomy opt-in (sandbox auto-expansion + network-gate
+    /// bypass; see AppConfig.full_auto_mode)
+    full_auto_mode: Option<bool>,
 }
 
 /// Atomically merge a partial app-config update: load → merge `Some` fields → save,
@@ -78,8 +79,8 @@ pub async fn patch_app_config(app: AppHandle, patch: PatchAppConfig) -> Result<A
             };
             cfg.main_agent_tool_access = v;
         }
-        if let Some(v) = patch.auto_expand_sandbox {
-            cfg.auto_expand_sandbox = v;
+        if let Some(v) = patch.full_auto_mode {
+            cfg.full_auto_mode = v;
         }
         crate::core::config::save_app_config(&app, &cfg)?;
         Ok(cfg)

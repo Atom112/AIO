@@ -81,7 +81,8 @@ Agent mode provides several built-in tools. In addition to file, Git, and search
 ### execute_command
 
 - **Purpose**: Execute system commands in the project directory, returning stdout, stderr, and the exit code.
-- **Permission Model**: Requires approval in `Workspace edit` mode, auto-allowed in `Full permission` mode, denied in `Read-only`/`Plan` mode.
+- **Shell**: Windows defaults to **PowerShell** (pwsh 7, falling back to `powershell.exe` 5.1), switchable to `cmd` via the `shellWindows` config; the exit code propagates via `exit $LASTEXITCODE` and the command text travels via `-EncodedCommand` (base64) to avoid quote-escaping issues; Linux/macOS use `sh`.
+- **Permission Model**: Requires approval in `Workspace edit` mode, auto-allowed in `Full permission`/`Machine full trust` mode, denied in `Read-only`/`Plan` mode.
 - **Security**: Child processes are isolated via a Windows Job Object sandbox (`src-tauri/src/utils/sandbox.rs`); dangerous command detection (`shell_tools::check_dangerous_command`) catches destructive, installation, and network operations.
 - **Dangerous Command Categories**:
   - Destructive: `rm`/`del`/`format`;

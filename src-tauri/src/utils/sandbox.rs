@@ -457,7 +457,9 @@ pub fn build_sandbox_exec_argv(
 /// `allow_network`: false (default) = no network egress inside the sandbox (Linux `--unshare-net` /
 /// macOS SBPL `deny network*`); true = keep the host network (explicitly declared by the model, visible in approvals).
 /// `protect_git_ro`: Codex-style `<root>/.git` deny-write inside the sandbox.
+/// Windows 构建下无调用方（bwrap/SBPL 仅 Unix）——保留接口供 Unix 目标。
 #[allow(unused_variables)]
+#[cfg_attr(windows, allow(dead_code))]
 pub fn sandbox_command_prefix(
     shell: &str,
     shell_arg: &str,

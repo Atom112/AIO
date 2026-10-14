@@ -613,6 +613,9 @@ pub(crate) async fn execute_builtin_tool(
         let protect_git_ro = sandbox_cfg.sandbox_protect_git && workspace_root.is_none();
         #[cfg(windows)]
         let unsandboxed_fallback = sandbox_cfg.sandbox_unsandboxed_fallback;
+        // Windows shell 选择（shellWindows 配置：powershell 默认 / cmd）
+        #[cfg(windows)]
+        let shell_kind = crate::utils::shell_tools::parse_windows_shell(&sandbox_cfg.shell_windows);
         let root = tools_root.clone();
         let command_for_run = command.clone();
         let run_command = |ac_dirs: Option<Vec<String>>, command: String| {
@@ -626,6 +629,10 @@ pub(crate) async fn execute_builtin_tool(
                         allow_network,
                         ac_dirs,
                         protect_git_ro,
+                        #[cfg(windows)]
+                        shell_kind,
+                        #[cfg(not(windows))]
+                        crate::utils::shell_tools::WindowsShell::Cmd,
                     )
                 })
                 .await

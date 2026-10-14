@@ -377,7 +377,7 @@ const SubagentModelSettings: Component = () => {
                     <span class="max-w-[140px] truncate">
                       {current()?.model_id ?? t('subagent.followMain')}
                     </span>
-                    <span class="text-white/30 text-[10px]">&#9662;</span>
+                    <Icon name="triangle-down" size={10} class="text-white/30 shrink-0" />
                   </button>
                   <Show when={!isBuiltin(profile.id)}>
                     <button

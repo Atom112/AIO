@@ -36,12 +36,6 @@ struct AppConfigDisk {
         rename = "parallelToolExecution"
     )]
     parallel_tool_execution: bool,
-    /// Main agent built-in tool set (hybrid default / orchestrator / full)
-    #[serde(
-        default = "crate::core::models::default_main_agent_tool_access",
-        rename = "mainAgentToolAccess"
-    )]
-    main_agent_tool_access: String,
     /// Retry count for the pre-flight stage of the main model call
     #[serde(
         default = "crate::core::models::default_model_call_retries",
@@ -149,7 +143,6 @@ impl AppConfigDisk {
             max_concurrent_subagents: cfg.max_concurrent_subagents.unwrap_or(5),
             subagent_isolation_mode: cfg.subagent_isolation_mode.clone(),
             parallel_tool_execution: cfg.parallel_tool_execution,
-            main_agent_tool_access: cfg.main_agent_tool_access.clone(),
             model_call_retries: cfg.model_call_retries,
             sandbox_required: cfg.sandbox_required,
             sandbox_windows: cfg.sandbox_windows.clone(),
@@ -204,7 +197,6 @@ impl AppConfigDisk {
             }),
             subagent_isolation_mode: self.subagent_isolation_mode.clone(),
             parallel_tool_execution: self.parallel_tool_execution,
-            main_agent_tool_access: self.main_agent_tool_access,
             model_call_retries: self.model_call_retries,
             sandbox_required: self.sandbox_required,
             sandbox_windows: self.sandbox_windows.clone(),
@@ -239,7 +231,6 @@ impl Default for AppConfigDisk {
             max_concurrent_subagents: 5,
             subagent_isolation_mode: crate::core::models::default_subagent_isolation_mode(),
             parallel_tool_execution: crate::core::models::default_true(),
-            main_agent_tool_access: crate::core::models::default_main_agent_tool_access(),
             model_call_retries: crate::core::models::default_model_call_retries(),
             sandbox_required: crate::core::models::default_true(),
             sandbox_windows: crate::core::models::default_sandbox_windows(),

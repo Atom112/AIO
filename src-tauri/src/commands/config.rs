@@ -39,10 +39,6 @@ pub struct PatchAppConfig {
     max_tool_rounds: Option<i32>,
     max_concurrent_subagents: Option<i32>,
     subagent_isolation_mode: Option<String>,
-    /// Main agent built-in tool access: "hybrid" (default: reads direct + mutations via
-    /// subagents) / "full" (all built-in tools incl. execute_command — simple tasks
-    /// complete without a delegation round-trip) / "orchestrator" (strict delegation).
-    main_agent_tool_access: Option<String>,
 }
 
 /// Atomically merge a partial app-config update: load → merge `Some` fields → save,
@@ -76,19 +72,6 @@ pub async fn patch_app_config(app: AppHandle, patch: PatchAppConfig) -> Result<A
         }
         if let Some(v) = patch.subagent_isolation_mode {
             cfg.subagent_isolation_mode = v;
-        }
-        if let Some(v) = patch.main_agent_tool_access {
-            let v = match v.as_str() {
-                "full" | "orchestrator" | "hybrid" => v,
-                other => {
-                    return Err(ierr!(
-                        "mainAgentToolAccess 无效: {}（可选 hybrid / full / orchestrator）",
-                        "Invalid mainAgentToolAccess: {} (hybrid / full / orchestrator)",
-                        other
-                    ))
-                }
-            };
-            cfg.main_agent_tool_access = v;
         }
         crate::core::config::save_app_config(&app, &cfg)?;
         Ok(cfg)

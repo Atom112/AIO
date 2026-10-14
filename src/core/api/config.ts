@@ -10,8 +10,6 @@ export interface AppConfigPatch {
   maxToolRounds?: number;
   maxConcurrentSubagents?: number;
   subagentIsolationMode?: string;
-  /** Main agent built-in tool access: "hybrid" | "full" | "orchestrator" */
-  mainAgentToolAccess?: string;
 }
 
 /**

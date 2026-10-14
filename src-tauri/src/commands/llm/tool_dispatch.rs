@@ -262,8 +262,8 @@ pub(crate) struct MainToolSet {
 /// - 只读 (Off): read-only set (fs reads/search + git reads + LSP) + think + project_map + web
 /// - Plan: research tools only (think + project_map + web)
 /// - Normal/Auto: orchestration tools (delegate_task(s) + think + web + project_map)
-///   x builtin tool set (per tool_access: hybrid default = read-only tools direct + mutations
-///   via subagent; orchestrator = legacy strict orchestrator; full = all builtin tools)
+///   x the FULL builtin tool set (all file/git/LSP tools + execute_command — the main
+///   agent can complete simple tasks directly without a subagent round-trip)
 /// - chat (Off without a project) + web search: web tools only
 /// - plain chat (Off without a project): no tools
 ///
@@ -282,7 +282,6 @@ pub(crate) fn build_main_tool_set(
     skills: &[SkillConfig],
     memory_enabled_global: bool,
     mcp: Option<&crate::core::models::AssistantTools>,
-    tool_access: &str,
 ) -> MainToolSet {
     let is_agent_mode = *agent_mode != AgentMode::Off;
     let (mut tools, mut tool_server_map) = if *agent_mode == AgentMode::Plan {
@@ -449,10 +448,9 @@ pub(crate) fn build_main_tool_set(
             orch_tools.push(spec);
         }
 
-        // Builtin tool set: the main agent holds builtin tools directly, removing the
-        // subagent round-trip latency for even a single file read. hybrid (default) =
-        // read-only set (is_parallel_safe is the read-only predicate); full = all builtin
-        // tools (Claude Code shape); orchestrator = legacy (strict orchestrator, orchestration tools only).
+        // Builtin tool set: the main agent holds the FULL builtin tool set directly
+        // (all file/git/LSP tools + execute_command), removing the subagent round-trip
+        // latency for even a single file read — simple tasks complete directly.
         let project_root = file_tools::resolve_project_root(app, project_id).ok();
         let git_ok = project_root
             .as_deref()
@@ -467,31 +465,20 @@ pub(crate) fn build_main_tool_set(
             )
             .chain(lsp_agent_tools::get_all_lsp_tool_specs())
             .collect();
-        let include = |name: &str| match tool_access {
-            "orchestrator" => false,
-            "full" => true,
-            // hybrid: read-only set
-            _ => is_parallel_safe(name),
-        };
         for spec in builtin_specs {
-            if include(&spec.function.name) {
-                orch_map.insert(
-                    spec.function.name.clone(),
-                    crate::core::ids::BUILTIN_SERVER_ID.into(),
-                );
-                orch_tools.push(spec);
-            }
-        }
-        // Command execution tool: direct access only in full mode (under hybrid,
-        // execute_command is a mutating op and stays delegated; debugger/general profiles can run it)
-        if tool_access == "full" {
-            let shell_spec = crate::utils::shell_tools::get_command_tool_spec();
             orch_map.insert(
-                shell_spec.function.name.clone(),
+                spec.function.name.clone(),
                 crate::core::ids::BUILTIN_SERVER_ID.into(),
             );
-            orch_tools.push(shell_spec);
+            orch_tools.push(spec);
         }
+        // Command execution tool: direct access for the main agent.
+        let shell_spec = crate::utils::shell_tools::get_command_tool_spec();
+        orch_map.insert(
+            shell_spec.function.name.clone(),
+            crate::core::ids::BUILTIN_SERVER_ID.into(),
+        );
+        orch_tools.push(shell_spec);
 
         (orch_tools, orch_map)
     } else if web_search_enabled {
@@ -753,56 +740,48 @@ mod tests {
     }
 
     /// P0-1 regression: the built-in fs server's MUTATING tools must never enter the
-    /// main agent's tool set under any tool_access mode — they run in a subprocess rooted
-    /// at the main project and would bypass the per-file write-lock choke point.
+    /// main agent's tool set — they run in a subprocess rooted at the main project and
+    /// would bypass the per-file write-lock choke point.
     #[test]
     fn fs_server_mutating_tools_never_reach_the_main_agent() {
-        for (tool_access, builtin_mutating_injected) in
-            [("hybrid", false), ("full", true), ("orchestrator", false)]
-        {
-            // Mirror the three modes' builtin mutating-tool presence
-            let mut map = std::collections::HashMap::new();
-            let mut tools = Vec::new();
-            if builtin_mutating_injected {
-                map.insert(tool_names::WRITE_FILE.to_string(), "builtin".to_string());
-                tools.push(spec_named(tool_names::WRITE_FILE));
-            }
-            merge_mcp_tools(
-                &mut tools,
-                &mut map,
-                &mcp_set(&[
-                    (
-                        tool_names::WRITE_FILE,
-                        crate::core::ids::BUILTIN_FS_SERVER_ID,
-                    ),
-                    (
-                        tool_names::REPLACE_IN_FILE,
-                        crate::core::ids::BUILTIN_FS_SERVER_ID,
-                    ),
-                    (
-                        tool_names::DELETE_FILE,
-                        crate::core::ids::BUILTIN_FS_SERVER_ID,
-                    ),
-                    (
-                        tool_names::MAKE_DIRECTORY,
-                        crate::core::ids::BUILTIN_FS_SERVER_ID,
-                    ),
-                ]),
-                FsServerPolicy::DropMutatingAndDuplicates,
-            );
-            assert!(
-                map.values()
-                    .all(|v| v.as_str() != crate::core::ids::BUILTIN_FS_SERVER_ID),
-                "{tool_access}: 变更类文件工具不得路由到 fs server"
-            );
-            if builtin_mutating_injected {
-                assert_eq!(
-                    map.get(tool_names::WRITE_FILE).map(String::as_str),
-                    Some("builtin"),
-                    "{tool_access}: 内置 write_file 不得被覆盖"
-                );
-            }
-        }
+        // The main agent always holds the full builtin set (write_file present)
+        let mut map = std::collections::HashMap::new();
+        let mut tools = Vec::new();
+        map.insert(tool_names::WRITE_FILE.to_string(), "builtin".to_string());
+        tools.push(spec_named(tool_names::WRITE_FILE));
+        merge_mcp_tools(
+            &mut tools,
+            &mut map,
+            &mcp_set(&[
+                (
+                    tool_names::WRITE_FILE,
+                    crate::core::ids::BUILTIN_FS_SERVER_ID,
+                ),
+                (
+                    tool_names::REPLACE_IN_FILE,
+                    crate::core::ids::BUILTIN_FS_SERVER_ID,
+                ),
+                (
+                    tool_names::DELETE_FILE,
+                    crate::core::ids::BUILTIN_FS_SERVER_ID,
+                ),
+                (
+                    tool_names::MAKE_DIRECTORY,
+                    crate::core::ids::BUILTIN_FS_SERVER_ID,
+                ),
+            ]),
+            FsServerPolicy::DropMutatingAndDuplicates,
+        );
+        assert!(
+            map.values()
+                .all(|v| v.as_str() != crate::core::ids::BUILTIN_FS_SERVER_ID),
+            "变更类文件工具不得路由到 fs server"
+        );
+        assert_eq!(
+            map.get(tool_names::WRITE_FILE).map(String::as_str),
+            Some("builtin"),
+            "内置 write_file 不得被覆盖"
+        );
     }
 
     /// Main policy dedupes fs-server read tools against their locked builtin equivalents

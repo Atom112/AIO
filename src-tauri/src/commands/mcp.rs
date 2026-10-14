@@ -755,9 +755,16 @@ pub(crate) async fn execute_tool_call(
 
         // Force approval for untrusted-server tools under Auto (完全权限): autonomous mode must
         // not blanket-allow unknown external tools (auto-allow only once the server is trusted in settings).
+        // 信任判定修正（用户实测反馈：Auto 下 MCP 工具调用仍弹确认框）：项目级 server
+        // 的信任标记不在配置 JSON 里，而在项目信任存储（mcp-trust.json，与 spawn 门
+        // 同源）——用户在项目打开时确认过指纹的 server 不应逐次弹窗。全局 server 仍
+        // 以 MCP 设置页的 trusted 开关为准。
+        let project_trusted =
+            mcp::project_server_spawn_allowed(app, project_id, server_id).unwrap_or(false);
         let untrusted_auto = matches!(agent_mode, AgentMode::Auto)
             && action == PermissionAction::Allow
-            && !cfg.trusted;
+            && !cfg.trusted
+            && !project_trusted;
         let action = if untrusted_auto {
             PermissionAction::Ask
         } else {
@@ -776,8 +783,8 @@ pub(crate) async fn execute_tool_call(
                 // Needs user confirmation; select! lets cancellation interrupt a pending approval
                 let reason = if untrusted_auto {
                     ierr!(
-                        "工具 '{}' 来自未受信任的 MCP server「{}」，请在确认安全后执行（可在 MCP 设置中标记为受信任以跳过确认）",
-                        "Tool '{}' comes from an untrusted MCP server \"{}\"; confirm it is safe before running (mark the server as trusted in MCP settings to skip this confirmation)",
+                        "工具 '{}' 来自未受信任的 MCP server「{}」，请在确认安全后执行（项目级 server 在项目打开的信任确认中标记；全局 server 可在 MCP 设置中标记为受信任以跳过确认）",
+                        "Tool '{}' comes from an untrusted MCP server \"{}\"; confirm it is safe before running (project servers are trusted via the project-open confirmation; global servers can be marked trusted in MCP settings to skip this)",
                         tool_name, cfg.display_name
                     )
                 } else {

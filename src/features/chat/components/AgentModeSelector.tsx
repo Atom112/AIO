@@ -227,6 +227,7 @@ const AgentModeSelector: Component = () => {
             class="p-6 rounded-lg max-w-[420px] w-full"
             style={{
               background: 'var(--dialog-bg)',
+              'background-attachment': 'fixed',
               border: '1px solid var(--border-dim)',
               'backdrop-filter': 'var(--popup-blur)',
               'box-shadow': '0 8px 32px rgba(0,0,0,0.5)',

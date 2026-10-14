@@ -97,7 +97,11 @@ export default function ProjectCreateModal(props: Props) {
           'scale-95 opacity-0': isExiting() || isEntering(),
           'scale-100 opacity-100': !isExiting() && !isEntering(),
         }}
-        class="bg-[var(--dialog-bg)] backdrop-blur-[24px] border border-white/15 rounded-xl shadow-2xl w-full max-w-md p-6 transition-all duration-500 ease-out transform"
+        class="backdrop-blur-[24px] border border-white/15 rounded-xl shadow-2xl w-full max-w-md p-6 transition-all duration-500 ease-out transform"
+        style={{
+          background: 'var(--dialog-bg)',
+          'background-attachment': 'fixed',
+        }}
         onClick={(e) => e.stopPropagation()}
       >
         <h2 class="text-lg font-semibold text-white mb-4">{t('project.new')}</h2>

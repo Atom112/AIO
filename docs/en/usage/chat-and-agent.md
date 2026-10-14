@@ -63,7 +63,7 @@ Both sidebars support collapsing to expand the message area:
 
 ### Full-Permission Mode
 
-Entering full-permission mode first shows a risk confirmation: in this mode commands (including network-declaring ones) no longer ask per command, and sandbox-denied commands auto-apply the recommended expansion — suitable for fully trusted automation. `deny` rules in `.aio/permissions.json` still take precedence, and file paths remain constrained to the project root directory.
+Entering full-permission mode first shows a risk confirmation: in this mode commands (including network-declaring ones) no longer ask per command, and sandbox-denied commands auto-apply the recommended expansion without the ask-once throttling — a derivable directory is granted for the session first; if the grant never lands (e.g. blocked by an EDR) the command falls back to one unsandboxed retry; a grant that lands and succeeds is remembered permanently. The whole flow runs unattended — suitable for fully trusted automation. `deny` rules in `.aio/permissions.json` still take precedence, and file paths remain constrained to the project root directory.
 
 ![Agent File Diff and Approval](../../assets/screenshots/agent-diff-approval.webp)
 

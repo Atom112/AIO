@@ -408,6 +408,17 @@ pub async fn stop_llm_stream(
 /// `workspace_root` overrides the root the tool operates on (worktree-isolated subagents
 /// pass their worktree path); permission rules and project memory stay bound to the
 /// project root resolved from `project_id`.
+/// 沙箱拒绝签名：access-denied（WinError 5 系）或转发解释器 not-found（沙箱内
+/// PATH 目录不可读导致的「程序不存在」）。扩权触发与「授权后仍被拒」兜底判定共用。
+#[cfg(windows)]
+fn sandbox_denial_signature(result: &ToolResult, command: &str) -> bool {
+    let text = round_artifacts::tool_result_text(result);
+    let denied = shell_tools::is_sandbox_access_denied(&text);
+    let not_found = shell_tools::forwarded_interpreter_of(command).is_some()
+        && shell_tools::is_command_not_found_result(&text);
+    denied || not_found
+}
+
 #[allow(
     clippy::too_many_arguments,
     reason = "explicit execution context incl. workspace isolation"
@@ -597,23 +608,17 @@ pub(crate) async fn execute_builtin_tool(
         // instead of a raw error the model blind-retries against. Ask at most once
         // per operation token per 30-min window; timeout degrades to the original
         // error (pre-expansion behavior, safe for unattended runs).
+        // 完全权限（Auto）无人值守：不弹窗、不受 ask-once 窗口节流（该窗口只为
+        // 弹窗防骚扰而设，节流 Auto 的自动扩权会让后续同操作命令在 30 分钟内
+        // 裸吃拒绝），命中签名即自动补救。
+        #[cfg(windows)]
+        let auto_expand = matches!(agent_mode, AgentMode::Auto);
         #[cfg(windows)]
         let result = if sandboxed
             && result.is_error
-            && sandbox_expand::should_ask(&command)
-            && {
-                let text = round_artifacts::tool_result_text(&result);
-                let denied = shell_tools::is_sandbox_access_denied(&text);
-                let not_found = shell_tools::forwarded_interpreter_of(&command).is_some()
-                    && shell_tools::is_command_not_found_result(&text);
-                if result.is_error && !denied && !not_found {
-                    tracing::debug!(
-                    "[sandbox-expand] 不触发：签名不匹配（access_denied={denied}, not_found={not_found}）: {}",
-                    &text.chars().take(120).collect::<String>()
-                );
-                }
-                denied || not_found
-            } {
+            && (auto_expand || sandbox_expand::should_ask(&command))
+            && sandbox_denial_signature(&result, &command)
+        {
             tracing::warn!(
                 "[sandbox-expand] 触发扩权请求：命令「{}」被沙箱拒绝（首次该操作，30 分钟窗口）",
                 command
@@ -628,7 +633,6 @@ pub(crate) async fn execute_builtin_tool(
             // directory when one is derivable, else one unsandboxed retry. Custom
             // Deny rules are unaffected (checked before this point). Other tiers keep
             // the remediation dialog.
-            let auto_expand = matches!(agent_mode, AgentMode::Auto);
             let decision = if auto_expand {
                 tracing::warn!(
                     "[sandbox-expand] 自动扩权（完全权限模式）：命令「{}」→ {}",
@@ -651,11 +655,25 @@ pub(crate) async fn execute_builtin_tool(
             match decision {
                 Ok(sandbox_expand::ExpansionDecision::GrantSessionRetry { dir }) => {
                     crate::utils::sandbox::add_session_rx_grant(&dir);
-                    run_command(
+                    let retried = run_command(
                         sandbox_expand::appcontainer_dirs_with_session_grants(app),
                         command_for_run.clone(),
                     )
-                    .await
+                    .await;
+                    // 会话授权可能写不进去（EDR 拦 ACL 写，round 10/11 实录：对
+                    // D:\Git\cmd 的 SetNamedSecurityInfoW 被 error 5 拒绝）——授权后
+                    // 仍命中拒绝签名 = 授权未落地或不足。完全权限承诺无需看守：
+                    // Auto 直接跳出沙箱兜底重试一次，不再对同一堵墙盲试；授权落地
+                    // 且命令成功时把目录永久记入工具链配置（等价弹窗的「永久记住」，
+                    // 后续会话免重新授权、免再撞一次 EDR）。
+                    if auto_expand && sandbox_denial_signature(&retried, &command_for_run) {
+                        run_command(None, command_for_run).await
+                    } else {
+                        if auto_expand && !retried.is_error {
+                            sandbox_expand::persist_toolchain_dir(app, &dir);
+                        }
+                        retried
+                    }
                 }
                 Ok(sandbox_expand::ExpansionDecision::GrantPermanentRetry { dir }) => {
                     crate::utils::sandbox::add_session_rx_grant(&dir);

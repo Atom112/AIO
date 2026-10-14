@@ -108,14 +108,14 @@
   /* ── Popup surfaces (dropdowns, menus, small popovers) ──
      Light theme: more translucent so the acrylic backdrop reads through;
      dark theme: more opaque for contrast against the near-black base. */
-  --popup-bg: rgba(var(--surface-bg), 0.68);
+  --popup-bg: rgba(var(--surface-bg), 0.48);
   --popup-blur: blur(40px) saturate(160%);
   /* ── Dialog surfaces (modals over a dim overlay) ──
      Light theme reuses the app background's colorful glows under a translucent
      surface tint — paired with `background-attachment: fixed` at usage sites, so
      the dialog shows the exact slice of the main page background it floats over. */
   --dialog-bg:
-    linear-gradient(rgba(var(--surface-bg), 0.62), rgba(var(--surface-bg), 0.62)), var(--app-bg);
+    linear-gradient(rgba(var(--surface-bg), 0.5), rgba(var(--surface-bg), 0.5)), var(--app-bg);
 
   /* ── App background (light/default theme): same as VaporGit (four corner glows + #2f2f2f base) ── */
   --app-bg:
@@ -136,7 +136,7 @@
   --acrylic-bg: rgba(var(--surface-bg), 0.85);
   --acrylic-border: rgba(var(--border-rgb), 0.1);
 
-  --popup-bg: rgba(var(--surface-bg), 0.88);
+  --popup-bg: rgba(var(--surface-bg), 0.82);
   --dialog-bg: rgba(var(--surface-bg), 0.92);
 
   /* Same as VaporGit dark (faint four-corner glows + pure black base) */
@@ -145,6 +145,18 @@
     radial-gradient(circle at 80% 30%, rgba(236, 72, 153, 0.04) 0, transparent 500px),
     radial-gradient(circle at 60% 80%, rgba(56, 189, 248, 0.03) 0, transparent 500px),
     radial-gradient(circle at 10% 90%, rgba(255, 113, 200, 0.03) 0, transparent 500px), #000;
+}
+
+/* ── Graceful degradation: engines without backdrop-filter (old WebKitGTK) get
+   near-solid popup surfaces — a translucent panel with no blur would be unreadable ── */
+@supports not (backdrop-filter: blur(1px)) {
+  :root {
+    --popup-bg: rgba(var(--surface-bg), 0.95);
+    --popup-blur: none;
+  }
+  [data-theme='dark'] {
+    --popup-bg: rgba(var(--surface-bg), 0.97);
+  }
 }
 
 /* ══════════════════════════════════════════════

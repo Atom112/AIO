@@ -261,7 +261,8 @@ const AgentModeSelector: Component = () => {
             <div
               class="p-6 rounded-lg max-w-[420px] w-full"
               style={{
-                background: 'var(--dialog-bg)',
+                background:
+                  'linear-gradient(rgba(var(--surface-bg), 0.96), rgba(var(--surface-bg), 0.96)), var(--dialog-bg)',
                 border: '1px solid var(--border-dim)',
                 'backdrop-filter': 'var(--popup-blur)',
                 animation: 'modalPanelIn 0.25s cubic-bezier(0.16, 1, 0.3, 1) both',

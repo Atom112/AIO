@@ -1103,6 +1103,20 @@ pub fn execute_command(
         c
     } else {
         let mut c = Command::new(shell);
+        // Windows 原生路径（本机全权档 / sandboxWindows=off）：采用 `cmd /S /C "<命令>"`
+        // 规范形态——/S 下 cmd 只剥最外层包裹引号，命令内部引号原样保留。此前
+        // arg() 按 MSVCRT 规则把整条命令包成单参数（内部引号转义 \"）；改为 raw_arg
+        // 后若不带 /S 包裹，多引号命令又会触发 cmd /C 的「剥首尾引号」规则把 -c
+        // 参数拆坏（实测 SyntaxError: unterminated string literal）。/S + 包裹引号
+        // 对零引号/单引号/多引号命令均正确。
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            c.raw_arg("/S")
+                .raw_arg("/C")
+                .raw_arg(format!("\"{command}\""));
+        }
+        #[cfg(not(windows))]
         c.arg(shell_arg).arg(command);
         c
     };
@@ -1243,12 +1257,13 @@ fn execute_command_in_appcontainer(
     best_effort_rx_dirs: &[String],
     protect_git_ro: bool,
 ) -> ToolResult {
-    // Same command-line shape as the native path: cmd /C <command> (cwd is set to
-    // the project root by the AC module). With the AppContainer attribute present,
-    // executable resolution runs under the low-privilege token - the full path
-    // (ComSpec) must be used; a bare "cmd" fails with ERROR_FILE_NOT_FOUND.
-    // SEC-06: if ComSpec is unset, fall back to PATH-only resolution (never a bare
-    // name, which would consult the project-root cwd).
+    // Same command-line shape as the native path: cmd /S /C "<command>"（cwd 由 AC 模块
+    // 设为项目根）. With the AppContainer attribute present, executable resolution runs
+    // under the low-privilege token - the full path (ComSpec) must be used; a bare "cmd"
+    // fails with ERROR_FILE_NOT_FOUND. SEC-06: if ComSpec is unset, fall back to PATH-only
+    // resolution (never a bare name, which would consult the project-root cwd).
+    // /S + 包裹引号：cmd 只剥最外层包裹引号，多引号命令（转发解释器的带引号路径 +
+    // 参数内引号）不再触发「剥首尾引号」规则拆坏参数。
     let cmd_path = std::env::var("ComSpec")
         .ok()
         .filter(|s| !s.is_empty())
@@ -1257,7 +1272,7 @@ fn execute_command_in_appcontainer(
                 .map(|p| p.to_string_lossy().into_owned())
         })
         .unwrap_or_else(|| "cmd.exe".to_string());
-    let cmdline = format!("{cmd_path} /C {command}");
+    let cmdline = format!("{cmd_path} /S /C \"{command}\"");
     let (mut child, job) = match crate::utils::sandbox::spawn_in_appcontainer(
         &cmdline,
         project_root,
@@ -1857,5 +1872,45 @@ mod tests {
             "AC 内 python 转发应成功: {text}"
         );
         let _ = std::fs::remove_dir_all(&project);
+    }
+
+    /// 本机全权/native 路径引号保真 e2e：整条命令文本必须**原样**到达 cmd——参数内
+    /// 双引号不被剥、不转义。回归背景：native 路径曾用 arg() 把整条命令按 MSVCRT
+    /// 规则包成单参数（含空格加引号、内部引号转义 \"），cmd 收到双重引号包裹的
+    /// 文本 → 引号丢失、含空格参数被拆散（本机全权档实测）。
+    #[test]
+    #[cfg(windows)]
+    fn native_path_preserves_quotes() {
+        let root = std::env::temp_dir().to_string_lossy().to_string();
+        let r = execute_command("echo \"A B\" end", &root, Some(15_000), false, None, false);
+        let text = text_of(&r);
+        assert!(
+            !r.is_error && text.contains("\"A B\""),
+            "引号应原样保留: {text}"
+        );
+    }
+
+    /// native 路径的转发解释器 e2e：裸名 python 改写为绝对路径后经 raw 命令行执行，
+    /// cmd 的 /C 引号规则应正确剥离路径引号（与沙箱路径同语义）。
+    #[test]
+    #[cfg(windows)]
+    fn native_path_forwarded_interpreter_runs() {
+        if crate::utils::exec_resolve::resolve_executable("python").is_none() {
+            return; // host has no python on PATH
+        }
+        let root = std::env::temp_dir().to_string_lossy().to_string();
+        let r = execute_command(
+            "python -c \"print('aio_native_ok')\"",
+            &root,
+            Some(30_000),
+            false,
+            None,
+            false,
+        );
+        let text = text_of(&r);
+        assert!(
+            !r.is_error && text.contains("aio_native_ok"),
+            "native 转发解释器应成功: {text}"
+        );
     }
 }

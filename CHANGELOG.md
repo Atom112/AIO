@@ -46,6 +46,7 @@
   - **文案对齐**：`agent.mode.autoDescription` 与完全权限风险弹窗补上「未受信任 MCP server 仍逐次确认」门槛与收窄后的沙箱表述（zh/en）；agent-prompts Auto 段同步；文档删除与运行时行为不符的表述、改写为真实边界
   - **e2e 扩充**：`git log` 只读可用性（复刻生产转发授权路径）；`ren .git .git-old` 对象级绕过实证（审查 2.5 猜想——挪走可成功，但挪走后的旧历史仍只读，保护承诺 = 历史不可改写而非目录不可挪动，与 Codex ro-bind 同级，文档如实记录）
   - **已知未修（审查 P1/P2 遗留）**：嵌套仓库/子模块 `.git` 不在保护范围；`auto_persist` 保留（成功授权的目录写入 toolchain dirs，结果文本已标注）；MCP 未信任强制 Ask 属设计保留（补披露未改行为）；审查环境中的 AC e2e 失败为嵌套沙箱干扰——宿主环境 366 通过（+1 git-log/改名 e2e）/ clippy / fmt / i18n / check:frontend 全绿
+- **Auto 模式 MCP 工具确认框修复（项目信任与 spawn 门同源，PR #152）**：round17 实测（MCP 工具已可见可用、Skill 可读、异步唤醒通过）暴露「完全权限模式下 MCP 工具调用仍弹确认框要手点」——根因是 Auto 工具门只看每-server 的 `trusted` 布尔（MCP 设置页开关），而**项目级 server 的信任标记不在配置 JSON 里**（在项目信任存储 `mcp-trust.json`，与 spawn 门同源，项目打开时经指纹确认对话框写入）→ 项目 server 的 `trusted` 恒为 false → 每次工具调用强制 Ask（60 秒超时还会中断无人值守回合）。修复：Auto 工具门的信任判定并入 `project_server_spawn_allowed`（spawn 门同一函数）——项目级 server 经项目打开信任确认后即免逐次确认，全局 server 仍以设置页开关为准（未受信任的双保险语义保留：过不了 spawn 门的 server 连工具都注入不进来）。Ask 提示文案同步区分两条信任路径；文档 chat-and-agent zh/en 更新
 
 ### 🎨 界面视觉修复五连（本轮用户反馈）
 

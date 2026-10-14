@@ -9,7 +9,6 @@ export const loadAppConfig = () => invoke<AppConfig>('load_app_config');
 export interface AppConfigPatch {
   maxToolRounds?: number;
   maxConcurrentSubagents?: number;
-  subagentIsolationMode?: string;
 }
 
 /**

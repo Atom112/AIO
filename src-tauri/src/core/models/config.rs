@@ -168,15 +168,6 @@ pub struct AppConfig {
     /// up gracefully instead of being hard-interrupted, to bound API cost.
     #[serde(default, rename = "maxToolRounds")]
     pub max_tool_rounds: Option<i32>,
-    /// Parallel write isolation for subagents: "auto" (default; awaited write-capable tasks get a
-    /// per-task git worktree when the project is a git repo, falling back to the shared root),
-    /// "off" (always shared root; per-file locks only), "worktree" (require worktrees; fall
-    /// back to shared with a notice when unavailable, e.g. non-git projects).
-    #[serde(
-        default = "default_subagent_isolation_mode",
-        rename = "subagentIsolationMode"
-    )]
-    pub subagent_isolation_mode: String,
     /// Whether read-only tools in the same response block execute concurrently (default true). Off falls back to fully serial execution.
     #[serde(default = "default_true", rename = "parallelToolExecution")]
     pub parallel_tool_execution: bool,
@@ -227,7 +218,6 @@ impl Default for AppConfig {
             auto_start_enabled: false,
             max_concurrent_subagents: None,
             max_tool_rounds: None,
-            subagent_isolation_mode: default_subagent_isolation_mode(),
             parallel_tool_execution: default_true(),
             model_call_retries: default_model_call_retries(),
             sandbox_required: default_true(),
@@ -254,11 +244,6 @@ impl Default for AppConfig {
 
 /// Default maximum tool-call rounds per agent run.
 pub const DEFAULT_MAX_TOOL_ROUNDS: u32 = 50;
-
-/// Default value of the subagent parallel write isolation mode: auto (worktree when git repo).
-pub fn default_subagent_isolation_mode() -> String {
-    "auto".into()
-}
 
 pub(crate) fn default_auto_retry_enabled() -> bool {
     true

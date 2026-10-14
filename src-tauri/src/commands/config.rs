@@ -38,7 +38,6 @@ pub async fn load_app_config(app: AppHandle) -> Result<AppConfig, String> {
 pub struct PatchAppConfig {
     max_tool_rounds: Option<i32>,
     max_concurrent_subagents: Option<i32>,
-    subagent_isolation_mode: Option<String>,
 }
 
 /// Atomically merge a partial app-config update: load → merge `Some` fields → save,
@@ -69,9 +68,6 @@ pub async fn patch_app_config(app: AppHandle, patch: PatchAppConfig) -> Result<A
             } else {
                 v
             });
-        }
-        if let Some(v) = patch.subagent_isolation_mode {
-            cfg.subagent_isolation_mode = v;
         }
         crate::core::config::save_app_config(&app, &cfg)?;
         Ok(cfg)

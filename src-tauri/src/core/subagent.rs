@@ -416,7 +416,7 @@ pub fn delegate_task_tool_spec() -> ToolSpec {
                     "isolation": {
                         "type": "string",
                         "enum": ["worktree", "shared"],
-                        "description": "写入类任务的文件隔离方式（仅 wait=true 时生效）。git 项目默认 worktree：子智能体在独立 git worktree+分支上工作，完成后自动合并回当前分支（冲突会报告冲突文件）；shared 表示在共享项目目录工作（有文件锁保护）。按应用配置 subagentIsolationMode 覆盖此默认。注意：worktree 基于主检出当前 HEAD，不含主目录未提交的改动；需要基于未提交改动工作时请传 shared。并行启动的多个 worktree 子任务从同一 HEAD 分叉、互相看不到对方的未合并产物——相互依赖的任务应串行委托，或在任务描述中写明预期由谁产出什么。"
+                        "description": "写入类任务的文件隔离方式（仅 wait=true 时生效）。git 项目默认 worktree：子智能体在独立 git worktree+分支上工作，完成后自动合并回当前分支（冲突会报告冲突文件）；shared 表示在共享项目目录工作（有文件锁保护）。注意：worktree 基于主检出当前 HEAD，不含主目录未提交的改动；需要基于未提交改动工作时请传 shared。并行启动的多个 worktree 子任务从同一 HEAD 分叉、互相看不到对方的未合并产物——相互依赖的任务应串行委托，或在任务描述中写明预期由谁产出什么。"
                     }
                 },
                 "required": ["profile", "task"]
@@ -472,7 +472,7 @@ pub fn delegate_tasks_tool_spec() -> ToolSpec {
                                 "isolation": {
                                     "type": "string",
                                     "enum": ["worktree", "shared"],
-                                    "description": "该任务的文件隔离方式。git 项目上写入类任务默认 worktree（独立分支，完成后自动合并，冲突会报告）；shared 在共享项目目录工作（有文件锁保护）。按应用配置 subagentIsolationMode 覆盖此默认。注意：worktree 不含主目录未提交的改动；需要基于未提交改动工作时请传 shared。"
+                                    "description": "该任务的文件隔离方式。git 项目上写入类任务默认 worktree（独立分支，完成后自动合并，冲突会报告）；shared 在共享项目目录工作（有文件锁保护）。注意：worktree 不含主目录未提交的改动；需要基于未提交改动工作时请传 shared。"
                                 }
                             },
                             "required": ["profile", "task"]

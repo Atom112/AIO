@@ -64,6 +64,12 @@ struct AppConfigDisk {
     )]
     sandbox_unsandboxed_fallback: bool,
     /// Consecutive env-class failures before a tool is disabled for the turn (0 = default 6)
+    /// Windows shell selection (powershell default / cmd)
+    #[serde(
+        default = "crate::core::models::default_shell_windows",
+        rename = "shellWindows"
+    )]
+    shell_windows: String,
     #[serde(default, rename = "toolBreakerThreshold")]
     tool_breaker_threshold: u32,
     #[serde(default, rename = "memoryEnabled")]
@@ -152,6 +158,7 @@ impl AppConfigDisk {
             sandbox_required: cfg.sandbox_required,
             sandbox_windows: cfg.sandbox_windows.clone(),
             sandbox_windows_toolchain_dirs: cfg.sandbox_windows_toolchain_dirs.clone(),
+            shell_windows: cfg.shell_windows.clone(),
             sandbox_protect_git: cfg.sandbox_protect_git,
             sandbox_unsandboxed_fallback: cfg.sandbox_unsandboxed_fallback,
             tool_breaker_threshold: cfg.tool_breaker_threshold,
@@ -207,6 +214,7 @@ impl AppConfigDisk {
             sandbox_required: self.sandbox_required,
             sandbox_windows: self.sandbox_windows.clone(),
             sandbox_windows_toolchain_dirs: self.sandbox_windows_toolchain_dirs.clone(),
+            shell_windows: self.shell_windows.clone(),
             sandbox_protect_git: self.sandbox_protect_git,
             sandbox_unsandboxed_fallback: self.sandbox_unsandboxed_fallback,
             tool_breaker_threshold: self.tool_breaker_threshold,
@@ -242,6 +250,7 @@ impl Default for AppConfigDisk {
             sandbox_required: crate::core::models::default_true(),
             sandbox_windows: crate::core::models::default_sandbox_windows(),
             sandbox_windows_toolchain_dirs: Vec::new(),
+            shell_windows: crate::core::models::default_shell_windows(),
             sandbox_protect_git: crate::core::models::default_true(),
             sandbox_unsandboxed_fallback: false,
             tool_breaker_threshold: 0,

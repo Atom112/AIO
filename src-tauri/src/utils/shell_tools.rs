@@ -811,7 +811,9 @@ const FORWARDED_INTERPRETERS: &[&str] = &[
 /// Depends on [`decode_console_output`] — GBK mojibake previously made the
 /// Chinese half of this matcher dead on zh-CN systems.
 pub(crate) fn is_sandbox_access_denied(result_text: &str) -> bool {
-    result_text.contains("Access is denied") || result_text.contains("拒绝访问")
+    result_text.contains("Access is denied")
+        || result_text.contains("拒绝访问")
+        || result_text.contains("Access to the path is denied")
 }
 
 /// Whether a command result text says the command was NOT FOUND (as opposed to
@@ -821,6 +823,7 @@ pub(crate) fn is_sandbox_access_denied(result_text: &str) -> bool {
 pub(crate) fn is_command_not_found_result(result_text: &str) -> bool {
     result_text.contains("不是内部或外部命令")
         || result_text.contains("is not recognized")
+        || result_text.contains("无法将")
         || result_text.contains("exit code: 9009")
 }
 
@@ -982,6 +985,90 @@ fn drain_pipe_capped<R: std::io::Read>(mut pipe: R, cap: usize) -> (Vec<u8>, usi
     (kept, total)
 }
 
+/// Windows shell selection (config `shellWindows`): `"powershell"` (default —
+/// pwsh 7 with a `powershell.exe` 5.1 fallback) or `"cmd"`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WindowsShell {
+    Cmd,
+    PowerShell,
+}
+
+/// Parses the config value; unknown values fall back to PowerShell (the default).
+pub fn parse_windows_shell(value: &str) -> WindowsShell {
+    match value {
+        "cmd" => WindowsShell::Cmd,
+        _ => WindowsShell::PowerShell,
+    }
+}
+
+/// Resolved shell executable.
+struct ShellInvocation {
+    program: String,
+    is_powershell: bool,
+}
+
+/// Resolves the Windows shell binary: cmd via ComSpec/PATH; PowerShell prefers
+/// pwsh 7 (App Execution Alias on PATH) and falls back to `powershell.exe` 5.1
+/// (System32, always present).
+fn resolve_windows_shell(kind: WindowsShell) -> Result<ShellInvocation, String> {
+    match kind {
+        WindowsShell::Cmd => {
+            let program = std::env::var("ComSpec")
+                .ok()
+                .filter(|s| !s.is_empty())
+                .or_else(|| {
+                    crate::utils::exec_resolve::resolve_executable("cmd")
+                        .map(|p| p.to_string_lossy().into_owned())
+                })
+                .unwrap_or_else(|| "cmd.exe".to_string());
+            Ok(ShellInvocation {
+                program,
+                is_powershell: false,
+            })
+        }
+        WindowsShell::PowerShell => {
+            if let Some(p) = crate::utils::exec_resolve::resolve_executable("pwsh") {
+                return Ok(ShellInvocation {
+                    program: p.to_string_lossy().into_owned(),
+                    is_powershell: true,
+                });
+            }
+            if let Some(p) = crate::utils::exec_resolve::resolve_executable("powershell") {
+                return Ok(ShellInvocation {
+                    program: p.to_string_lossy().into_owned(),
+                    is_powershell: true,
+                });
+            }
+            Err(
+                "未找到 PowerShell（pwsh / powershell 均不可解析）/ PowerShell not found"
+                    .to_string(),
+            )
+        }
+    }
+}
+
+/// Builds the pwsh script for one command: a leading quoted string needs the `&`
+/// call operator (pwsh treats a bare quoted string as output, not invocation), and
+/// the trailing lines propagate the exit code — `pwsh -Command` otherwise always
+/// exits 0, which would break error detection / the breaker / sandbox expansion.
+fn pwsh_script(command: &str) -> String {
+    let body = if command.trim_start().starts_with('"') {
+        format!("& {command}")
+    } else {
+        command.to_string()
+    };
+    format!("{body}\nif ($null -ne $LASTEXITCODE) {{ exit $LASTEXITCODE }} elseif (-not $?) {{ exit 1 }}")
+}
+
+/// `-EncodedCommand` payload: UTF-16LE base64 — immune to every quote-escaping
+/// problem on both the argv and raw-command-line invocation paths.
+fn pwsh_encoded(script: &str) -> String {
+    use base64::Engine as _;
+    let utf16: Vec<u16> = script.encode_utf16().collect();
+    let bytes: Vec<u8> = utf16.iter().flat_map(|w| w.to_le_bytes()).collect();
+    base64::engine::general_purpose::STANDARD.encode(bytes)
+}
+
 /// Executes a system command in the project root directory.
 ///
 /// # Arguments
@@ -996,6 +1083,7 @@ fn drain_pipe_capped<R: std::io::Read>(mut pipe: R, cap: usize) -> (Vec<u8>, usi
 /// - `protect_git_ro` - Codex-style `<root>/.git` deny-write inside whichever sandbox
 ///   runs (Windows AppContainer deny ACE / Linux ro-bind / macOS SBPL deny); the
 ///   builtin git_* tools run in the host process and are unaffected
+/// - `shell` - Windows shell selection (`shellWindows` config: powershell default / cmd)
 ///
 /// # Returns
 /// A ToolResult carrying stdout, stderr, exit_code and timed_out.
@@ -1006,6 +1094,7 @@ pub fn execute_command(
     allow_network: bool,
     ac_dirs: Option<Vec<String>>,
     protect_git_ro: bool,
+    shell: WindowsShell,
 ) -> ToolResult {
     if command.trim().is_empty() {
         return tool_err("命令为空");
@@ -1072,52 +1161,70 @@ pub fn execute_command(
             &dirs,
             &interpreter_extra,
             protect_git_ro,
+            shell,
         );
     }
 
-    // pick the shell per platform
-    let shell_name = if cfg!(windows) { "cmd" } else { "sh" };
-    let shell_arg = if cfg!(windows) { "/C" } else { "-c" };
-    // SEC-06: resolve the shell against PATH only — CreateProcess searches the cwd
-    // (the project root, model-writable) BEFORE PATH, so a planted `cmd.exe`/`sh`
-    // there must not be executed.
-    let Some(shell) = crate::utils::exec_resolve::resolve_executable(shell_name) else {
-        return tool_err(&format!(
-            "无法定位系统 shell（PATH 中未找到 {shell_name}），拒绝执行"
-        ));
+    // Shell resolution per platform. Windows: config-selected (powershell default /
+    // cmd); Unix: sh, wrapped by bwrap/SBPL when available.
+    #[cfg(windows)]
+    let (sandbox_argv, shell_program, shell_is_powershell) = {
+        let inv = match resolve_windows_shell(shell) {
+            Ok(i) => i,
+            Err(e) => return tool_err(&e),
+        };
+        (None::<Vec<String>>, inv.program, inv.is_powershell)
     };
-    let shell = shell.to_string_lossy().into_owned();
-
-    // Sandbox wrapping (Linux/macOS best-effort): replace the launch argv when available; otherwise run natively
-    let sandbox_argv = crate::utils::sandbox::sandbox_command_prefix(
-        &shell,
-        shell_arg,
-        command,
-        project_root,
-        allow_network,
-        protect_git_ro,
-    );
+    #[cfg(not(windows))]
+    let (sandbox_argv, shell_program, shell_is_powershell) = {
+        let Some(shell) = crate::utils::exec_resolve::resolve_executable("sh") else {
+            return tool_err("无法定位系统 shell（PATH 中未找到 sh），拒绝执行");
+        };
+        let shell = shell.to_string_lossy().into_owned();
+        let argv = crate::utils::sandbox::sandbox_command_prefix(
+            &shell,
+            "-c",
+            command,
+            project_root,
+            allow_network,
+            protect_git_ro,
+        );
+        let program = match &argv {
+            Some(a) => a[0].clone(),
+            None => shell,
+        };
+        (argv, program, false)
+    };
     let mut cmd = if let Some(argv) = sandbox_argv {
         let mut c = Command::new(&argv[0]);
         c.args(&argv[1..]);
         c
     } else {
-        let mut c = Command::new(shell);
-        // Windows 原生路径（本机全权档 / sandboxWindows=off）：采用 `cmd /S /C "<命令>"`
-        // 规范形态——/S 下 cmd 只剥最外层包裹引号，命令内部引号原样保留。此前
-        // arg() 按 MSVCRT 规则把整条命令包成单参数（内部引号转义 \"）；改为 raw_arg
-        // 后若不带 /S 包裹，多引号命令又会触发 cmd /C 的「剥首尾引号」规则把 -c
-        // 参数拆坏（实测 SyntaxError: unterminated string literal）。/S + 包裹引号
-        // 对零引号/单引号/多引号命令均正确。
+        let mut c = Command::new(&shell_program);
         #[cfg(windows)]
         {
-            use std::os::windows::process::CommandExt;
-            c.raw_arg("/S")
-                .raw_arg("/C")
-                .raw_arg(format!("\"{command}\""));
+            if shell_is_powershell {
+                // pwsh：-EncodedCommand（UTF-16LE base64）免疫一切引号转义问题；
+                // 脚本尾部传播退出码（pwsh -Command 默认退出 0，不做此层则所有
+                // 失败命令都会被当成成功，错误检测/熔断/扩权全失效）。
+                c.args([
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-NoLogo",
+                    "-EncodedCommand",
+                    &pwsh_encoded(&pwsh_script(command)),
+                ]);
+            } else {
+                // cmd：/S /C "<命令>" 规范形态——/S 下只剥最外层包裹引号，内部
+                // 引号（转发解释器的带引号路径 + 参数内引号）原样保留。
+                use std::os::windows::process::CommandExt;
+                c.raw_arg("/S")
+                    .raw_arg("/C")
+                    .raw_arg(format!("\"{command}\""));
+            }
         }
         #[cfg(not(windows))]
-        c.arg(shell_arg).arg(command);
+        c.arg("-c").arg(command);
         c
     };
     cmd.current_dir(project_root)
@@ -1248,6 +1355,10 @@ pub fn execute_command(
 /// All other semantics (drain-to-avoid-deadlock, truncation, result building)
 /// match the native path.
 #[cfg(windows)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "explicit sandbox execution context (shell kind, git protection, grant lists)"
+)]
 fn execute_command_in_appcontainer(
     command: &str,
     project_root: &str,
@@ -1256,23 +1367,40 @@ fn execute_command_in_appcontainer(
     toolchain_dirs: &[String],
     best_effort_rx_dirs: &[String],
     protect_git_ro: bool,
+    shell: WindowsShell,
 ) -> ToolResult {
-    // Same command-line shape as the native path: cmd /S /C "<command>"（cwd 由 AC 模块
-    // 设为项目根）. With the AppContainer attribute present, executable resolution runs
-    // under the low-privilege token - the full path (ComSpec) must be used; a bare "cmd"
-    // fails with ERROR_FILE_NOT_FOUND. SEC-06: if ComSpec is unset, fall back to PATH-only
-    // resolution (never a bare name, which would consult the project-root cwd).
-    // /S + 包裹引号：cmd 只剥最外层包裹引号，多引号命令（转发解释器的带引号路径 +
-    // 参数内引号）不再触发「剥首尾引号」规则拆坏参数。
-    let cmd_path = std::env::var("ComSpec")
-        .ok()
-        .filter(|s| !s.is_empty())
-        .or_else(|| {
-            crate::utils::exec_resolve::resolve_executable("cmd")
-                .map(|p| p.to_string_lossy().into_owned())
-        })
-        .unwrap_or_else(|| "cmd.exe".to_string());
-    let cmdline = format!("{cmd_path} /S /C \"{command}\"");
+    // Shell resolution for the AppContainer: pwsh 7 的 Store App Execution Alias
+    //（WindowsApps 下的 reparse point）在 AppContainer 内不可执行——解析结果落在
+    // WindowsApps 下时回退 System32 的 powershell.exe 5.1（ALL APPLICATION PACKAGES
+    // ACE 覆盖，恒可用）；pwsh 的 MSI 安装（Program Files）无此问题。
+    let invocation = match resolve_windows_shell(shell) {
+        Ok(i) => i,
+        Err(e) => return tool_err(&e),
+    };
+    let program = if invocation.is_powershell
+        && invocation
+            .program
+            .to_ascii_lowercase()
+            .contains("windowsapps")
+    {
+        crate::utils::exec_resolve::resolve_executable("powershell")
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_else(|| {
+                r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe".to_string()
+            })
+    } else {
+        invocation.program
+    };
+    let cmdline = if invocation.is_powershell {
+        // -EncodedCommand：UTF-16LE base64，免疫命令行引号转义问题
+        format!(
+            "\"{program}\" -NoProfile -NonInteractive -NoLogo -EncodedCommand {}",
+            pwsh_encoded(&pwsh_script(command))
+        )
+    } else {
+        // /S + 包裹引号：cmd 只剥最外层包裹引号，多引号命令不触发「剥首尾引号」规则
+        format!("\"{program}\" /S /C \"{command}\"")
+    };
     let (mut child, job) = match crate::utils::sandbox::spawn_in_appcontainer(
         &cmdline,
         project_root,
@@ -1426,7 +1554,15 @@ mod tests {
             // targets a nonexistent device name: harmless even if the guard fails
             "dd if=/dev/zero of=/dev/aio_test_nonexistent_device",
         ] {
-            let r = execute_command(cmd, &root, Some(5_000), false, None, false);
+            let r = execute_command(
+                cmd,
+                &root,
+                Some(5_000),
+                false,
+                None,
+                false,
+                WindowsShell::Cmd,
+            );
             assert!(r.is_error, "命令应被拒绝: {cmd}");
             assert!(
                 text_of(&r).contains("高危命令"),
@@ -1512,6 +1648,7 @@ mod tests {
             false,
             None,
             false,
+            WindowsShell::Cmd,
         );
         assert!(!r.is_error, "普通命令不应被拦截: {}", text_of(&r));
         assert!(text_of(&r).contains("aio_benign_check"));
@@ -1579,7 +1716,15 @@ mod tests {
         } else {
             "yes 0123456789ABCDEF | head -n 20000"
         };
-        let r = execute_command(cmd, &root, Some(30_000), false, None, false);
+        let r = execute_command(
+            cmd,
+            &root,
+            Some(30_000),
+            false,
+            None,
+            false,
+            WindowsShell::Cmd,
+        );
         let text = text_of(&r);
         assert!(!r.is_error, "大输出命令应正常完成: {text}");
         assert!(!text.contains("超时"), "不应被超时误杀: {text}");
@@ -1829,6 +1974,7 @@ mod tests {
             false,
             None,
             false,
+            WindowsShell::Cmd,
         );
         let text = text_of(&r);
         assert!(
@@ -1865,6 +2011,7 @@ mod tests {
             false,
             Some(vec![]), // AppContainer enabled, empty toolchain list
             false,
+            WindowsShell::Cmd,
         );
         let text = text_of(&r);
         assert!(
@@ -1882,7 +2029,15 @@ mod tests {
     #[cfg(windows)]
     fn native_path_preserves_quotes() {
         let root = std::env::temp_dir().to_string_lossy().to_string();
-        let r = execute_command("echo \"A B\" end", &root, Some(15_000), false, None, false);
+        let r = execute_command(
+            "echo \"A B\" end",
+            &root,
+            Some(15_000),
+            false,
+            None,
+            false,
+            WindowsShell::Cmd,
+        );
         let text = text_of(&r);
         assert!(
             !r.is_error && text.contains("\"A B\""),
@@ -1906,11 +2061,76 @@ mod tests {
             false,
             None,
             false,
+            WindowsShell::Cmd,
         );
         let text = text_of(&r);
         assert!(
             !r.is_error && text.contains("aio_native_ok"),
             "native 转发解释器应成功: {text}"
         );
+    }
+
+    /// PowerShell 默认 shell e2e（native 路径）：基本执行 + 退出码传播——pwsh
+    /// -Command 默认退出 0，脚本尾部的 `exit $LASTEXITCODE` 包装必须把 native
+    /// 命令的失败码透传出来（错误检测/熔断/扩权都依赖它）。
+    #[test]
+    #[cfg(windows)]
+    fn powershell_native_runs_and_propagates_exit_code() {
+        let root = std::env::temp_dir().to_string_lossy().to_string();
+        let ok = execute_command(
+            "Write-Output 'aio_pwsh_ok'",
+            &root,
+            Some(30_000),
+            false,
+            None,
+            false,
+            WindowsShell::PowerShell,
+        );
+        let ok_text = text_of(&ok);
+        assert!(
+            !ok.is_error && ok_text.contains("aio_pwsh_ok"),
+            "pwsh 基本执行应成功: {ok_text}"
+        );
+        let fail = execute_command(
+            "cmd /c exit 7",
+            &root,
+            Some(30_000),
+            false,
+            None,
+            false,
+            WindowsShell::PowerShell,
+        );
+        assert!(
+            fail.is_error,
+            "退出码 7 应传播为错误 (exit={:?}, text={})",
+            text_of(&fail),
+            text_of(&fail)
+        );
+    }
+
+    /// PowerShell 默认 shell e2e（AppContainer 路径）：pwsh 的 Store 别名在 AC 内
+    /// 不可执行 → 自动回退 System32 的 powershell.exe 5.1；只读命令 + 引号参数
+    /// 在沙箱内均应可用。
+    #[test]
+    #[cfg(windows)]
+    fn appcontainer_powershell_runs() {
+        let project = std::env::temp_dir().join("aio-ac-test-pwsh");
+        let _ = std::fs::remove_dir_all(&project);
+        std::fs::create_dir_all(&project).unwrap();
+        let r = execute_command(
+            "Write-Output ('ac_pwsh_' + (6*7))",
+            project.to_str().unwrap(),
+            Some(30_000),
+            false,
+            Some(vec![]), // AppContainer enabled
+            false,
+            WindowsShell::PowerShell,
+        );
+        let text = text_of(&r);
+        assert!(
+            !r.is_error && text.contains("ac_pwsh_42"),
+            "AC 内 pwsh 应可用: {text}"
+        );
+        let _ = std::fs::remove_dir_all(&project);
     }
 }

@@ -204,8 +204,17 @@ pub struct AppConfig {
     /// missing dependency) before a tool is disabled for the rest of the turn
     /// (harness round 3, P1-1: configurable). Business failures (command ran, nonzero
     /// exit) never trip the breaker. 0 = default (6).
+    /// Windows shell for `execute_command` (default "powershell": pwsh 7 with a
+    /// powershell.exe 5.1 fallback; "cmd" restores the legacy cmd.exe invocation).
+    #[serde(default = "default_shell_windows", rename = "shellWindows")]
+    pub shell_windows: String,
     #[serde(default, rename = "toolBreakerThreshold")]
     pub tool_breaker_threshold: u32,
+}
+
+/// Default value of the Windows shell selection ("powershell").
+pub(crate) fn default_shell_windows() -> String {
+    "powershell".into()
 }
 
 /// Default value of the Windows command sandbox mode.
@@ -238,6 +247,7 @@ impl Default for AppConfig {
             sandbox_windows_toolchain_dirs: Vec::new(),
             sandbox_protect_git: default_true(),
             sandbox_unsandboxed_fallback: default_true(),
+            shell_windows: default_shell_windows(),
             tool_breaker_threshold: 0,
             memory_enabled: false,
             memory_auto_inject: default_true(),

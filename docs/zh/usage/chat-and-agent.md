@@ -81,8 +81,9 @@ Agent 模式下提供多个内置工具。除文件、Git 和搜索工具外，�
 ### execute_command
 
 - **用途**：在项目目录中执行系统命令，返回 stdout、stderr 和退出码；
-- **权限模型**：`工作区内修改` 模式需审批，`完全权限` 模式自动允许，`只读`/`Plan` 模式禁止；
-- **安全机制**：通过 Windows Job Object 沙箱（`src-tauri/src/utils/sandbox.rs`）隔离子进程；危险命令检测（`shell_tools::check_dangerous_command`）捕获破坏性、安装、网络等操作；
+- **Shell**：Windows 默认 **PowerShell**（pwsh 7，缺失时回退 `powershell.exe` 5.1），经 `shellWindows` 配置可切回 `cmd`；退出码经 `exit $LASTEXITCODE` 传播，命令文本经 `-EncodedCommand`（base64）传递以规避引号转义；Linux/macOS 为 `sh`；
+- **权限模型**：`工作区内修改` 模式需审批，`完全权限`/`本机全权` 模式自动允许，`只读`/`Plan` 模式禁止；
+- **安全机制**：通过 Windows Job Object 沙箱（`src-tauri/src/utils/sandbox.rs`）隔离子进程；危险命令检测（`shell_tools::check_dangerous_command`）捕获破坏性、安装、网络等操作（含 PowerShell 等价形态）；
 - **危险命令类别**：
   - 破坏性：`rm`/`del`/`format`；
   - 安装：`curl`/`wget`/`pip`/`npm`；

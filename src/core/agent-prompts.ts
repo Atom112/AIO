@@ -50,6 +50,8 @@ export function buildAgentSystemPrompt(
       normal:
         'Workspace-edit mode: file writes/edits inside the workspace run without confirmation — use them directly; deletes, command execution and git writes still require user confirmation; delegate multi-step work to subagents.',
       auto: 'Full-permission mode: work autonomously until the task is complete — file operations, commands, networked commands and sandbox expansions all run without per-step confirmation; still respect Deny rules and ask via ask_user only at genuine decision points.',
+      danger:
+        'Machine-full-trust mode: same autonomy as full-permission, and commands additionally run OUTSIDE the OS sandbox with full user privileges (no path/network restrictions at the sandbox layer). Use this only as directed by the user; still respect Deny rules and ask via ask_user only at genuine decision points.',
       plan: 'Research and produce an implementation plan only. Do not modify files.',
     };
     const toolPolicy =
@@ -112,6 +114,11 @@ export function buildAgentSystemPrompt(
     case 'auto':
       lines.push(
         `当前是完全权限模式：全自主执行直至任务完成——文件操作、命令执行、声明网络的命令、沙箱扩权均不再逐步确认（进入本模式时用户已确认风险）；仍须遵守项目 Deny 规则，未受信任 MCP server 的工具仍会逐次确认。沙箱内写 .git 被拒时改用内置 git_* 工具；被沙箱拒绝的其他命令按拒绝信息换路（换解释器、装依赖到项目内、调整路径），不要盲试同一命令。仅在真正需要用户拍板的点用 ask_user 提问。`,
+      );
+      break;
+    case 'danger':
+      lines.push(
+        `当前是本机全权模式：与完全权限相同的全自主，且命令在操作系统沙箱之外以完整用户权限原生执行（无路径/网络沙箱限制）。该模式仅应用于用户明确指定的可信环境；仍须遵守项目 Deny 规则。仅在真正需要用户拍板的点用 ask_user 提问。`,
       );
       break;
     case 'plan':

@@ -761,7 +761,7 @@ pub(crate) async fn execute_tool_call(
         // 以 MCP 设置页的 trusted 开关为准。
         let project_trusted =
             mcp::project_server_spawn_allowed(app, project_id, server_id).unwrap_or(false);
-        let untrusted_auto = matches!(agent_mode, AgentMode::Auto)
+        let untrusted_auto = agent_mode.is_full_autonomy()
             && action == PermissionAction::Allow
             && !cfg.trusted
             && !project_trusted;

@@ -66,8 +66,7 @@ pub(crate) enum ExpansionDecision {
 const UNSANDBOXED_BUDGET_PER_TURN: usize = 8;
 
 fn unsandboxed_budget() -> &'static std::sync::atomic::AtomicUsize {
-    static BUDGET: std::sync::OnceLock<std::sync::atomic::AtomicUsize> =
-        std::sync::OnceLock::new();
+    static BUDGET: std::sync::OnceLock<std::sync::atomic::AtomicUsize> = std::sync::OnceLock::new();
     BUDGET.get_or_init(|| std::sync::atomic::AtomicUsize::new(0))
 }
 
@@ -91,7 +90,9 @@ pub(crate) fn auto_remediation(hint_dir: Option<&str>) -> ExpansionDecision {
     match hint_dir {
         // 解释器/工具链不可见（not-found 蕴含 hint）或有派生目录的拒绝类：
         // 会话授权后重试——授权把目录带进沙箱视野，边界不破
-        Some(dir) => ExpansionDecision::GrantSessionRetry { dir: dir.to_string() },
+        Some(dir) => ExpansionDecision::GrantSessionRetry {
+            dir: dir.to_string(),
+        },
         // 无目录可授权：access-denied 类（写目标被拒、.git 保护、项目外路径……）
         // —— 永不跳出沙箱，保持错误让模型绕路
         None => ExpansionDecision::Ignore,
@@ -103,9 +104,7 @@ pub(crate) fn auto_remediation(hint_dir: Option<&str>) -> ExpansionDecision {
 /// write so the directory stayed invisible). Only the not-found class qualifies,
 /// and only when the user opted in via `sandboxUnsandboxedFallback`. Pure — tested.
 pub(crate) fn escalate_after_failed_grant(not_found: bool, fallback_enabled: bool) -> bool {
-    not_found
-        && fallback_enabled
-        && take_unsandboxed_budget()
+    not_found && fallback_enabled && take_unsandboxed_budget()
 }
 
 /// Appends a visibility note to a tool result's first text part (security review:

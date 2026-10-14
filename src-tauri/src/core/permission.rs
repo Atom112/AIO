@@ -376,73 +376,73 @@ pub fn default_rules_for_mode(mode: &AgentMode) -> Vec<PermissionRule> {
             ),
         ],
 
-        AgentMode::Auto => vec![
+        AgentMode::Auto | AgentMode::Danger => vec![
             // All built-in filesystem operations: auto-allowed.
             r(
                 "builtin-auto-allow-fs-read",
                 tool_names::READ_FILE,
-                &[AgentMode::Auto],
+                &[AgentMode::Auto, AgentMode::Danger],
                 PermissionAction::Allow,
             ),
             r(
                 "builtin-auto-allow-fs-list",
                 tool_names::LIST_DIRECTORY,
-                &[AgentMode::Auto],
+                &[AgentMode::Auto, AgentMode::Danger],
                 PermissionAction::Allow,
             ),
             r(
                 "builtin-auto-allow-fs-search",
                 "search_*",
-                &[AgentMode::Auto],
+                &[AgentMode::Auto, AgentMode::Danger],
                 PermissionAction::Allow,
             ),
             r(
                 "builtin-auto-allow-fs-write",
                 tool_names::WRITE_FILE,
-                &[AgentMode::Auto],
+                &[AgentMode::Auto, AgentMode::Danger],
                 PermissionAction::Allow,
             ),
             r(
                 "builtin-auto-allow-fs-replace",
                 tool_names::REPLACE_IN_FILE,
-                &[AgentMode::Auto],
+                &[AgentMode::Auto, AgentMode::Danger],
                 PermissionAction::Allow,
             ),
             // Git tools: all auto-allowed (Auto mode presupposes the user has trusted all operations).
             r(
                 "builtin-auto-allow-git-status",
                 "git_status",
-                &[AgentMode::Auto],
+                &[AgentMode::Auto, AgentMode::Danger],
                 PermissionAction::Allow,
             ),
             r(
                 "builtin-auto-allow-git-diff",
                 "git_diff",
-                &[AgentMode::Auto],
+                &[AgentMode::Auto, AgentMode::Danger],
                 PermissionAction::Allow,
             ),
             r(
                 "builtin-auto-allow-git-log",
                 "git_log",
-                &[AgentMode::Auto],
+                &[AgentMode::Auto, AgentMode::Danger],
                 PermissionAction::Allow,
             ),
             r(
                 "builtin-auto-allow-git-add",
                 "git_add",
-                &[AgentMode::Auto],
+                &[AgentMode::Auto, AgentMode::Danger],
                 PermissionAction::Allow,
             ),
             r(
                 "builtin-auto-allow-git-commit",
                 "git_commit",
-                &[AgentMode::Auto],
+                &[AgentMode::Auto, AgentMode::Danger],
                 PermissionAction::Allow,
             ),
             r(
                 "builtin-auto-allow-fs-mkdir",
                 tool_names::MAKE_DIRECTORY,
-                &[AgentMode::Auto],
+                &[AgentMode::Auto, AgentMode::Danger],
                 PermissionAction::Allow,
             ),
             // Delete: auto-allowed in 完全权限 (Auto). Consistency: execute_command
@@ -453,21 +453,21 @@ pub fn default_rules_for_mode(mode: &AgentMode) -> Vec<PermissionRule> {
             r(
                 "builtin-auto-allow-delete",
                 tool_names::DELETE_FILE,
-                &[AgentMode::Auto],
+                &[AgentMode::Auto, AgentMode::Danger],
                 PermissionAction::Allow,
             ),
             // Command execution: auto-allowed (no per-command confirmation in Auto mode; a risk notice was shown on entry).
             r(
                 "builtin-auto-allow-command",
                 tool_names::EXECUTE_COMMAND,
-                &[AgentMode::Auto],
+                &[AgentMode::Auto, AgentMode::Danger],
                 PermissionAction::Allow,
             ),
             // Other MCP tools: auto-allowed.
             rf(
                 "builtin-auto-allow-other-tools",
                 "*",
-                &[AgentMode::Auto],
+                &[AgentMode::Auto, AgentMode::Danger],
                 PermissionAction::Allow,
                 None,
                 None,

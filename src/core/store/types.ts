@@ -169,7 +169,7 @@ export interface Topic {
  * off = 只读 (read-only) · normal = 工作区内修改 (workspace edits) ·
  * auto = 完全权限 (full autonomy inherent) · plan = 计划
  */
-export type AgentMode = 'off' | 'normal' | 'auto' | 'plan';
+export type AgentMode = 'off' | 'normal' | 'auto' | 'danger' | 'plan';
 
 /**
  * Context compaction outcome (/compact or auto-triggered), so the UI can report accurately.

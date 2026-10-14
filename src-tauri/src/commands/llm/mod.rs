@@ -456,7 +456,8 @@ pub(crate) async fn execute_builtin_tool(
     // Windows 修正（安全审查 P1）：sandboxWindows="off" 时 AppContainer 未启用——
     // sandbox_available() 在 Windows 恒为 true（Job Object 无外部依赖），若只查它，
     // Auto + off = 零确认零沙箱静默通过，sandboxRequired 形同虚设。现在一并校验
-    // 沙箱模式本身。
+    // 沙箱模式本身。例外：本机全权（danger）档即用户对无沙箱的显式 opt-in（进入
+    // 时有独立红色警告），守卫不适用——「沙箱不可用」正是该档位的语义。
     let sandbox_cfg = crate::core::config::load_app_config(app).unwrap_or_default();
     let windows_sandbox_disabled = cfg!(windows) && sandbox_cfg.sandbox_windows != "appcontainer";
     if tool_name == tool_names::EXECUTE_COMMAND
@@ -490,7 +491,7 @@ pub(crate) async fn execute_builtin_tool(
     // zero interruptions is the mode's contract. Other tiers keep the gate via their
     // own Ask actions. Deny rules still win above.
     let network_auto = tool_name == tool_names::EXECUTE_COMMAND
-        && !matches!(agent_mode, AgentMode::Auto)
+        && !agent_mode.is_full_autonomy()
         && arguments["network"].as_bool().unwrap_or(false)
         && action == PermissionAction::Allow;
     let action = if network_auto {
@@ -593,9 +594,14 @@ pub(crate) async fn execute_builtin_tool(
         let allow_network = arguments["network"].as_bool().unwrap_or(false);
         // Windows AppContainer: when enabled in config, run under the OS-level sandbox with
         // the configured toolchain dirs + session grants (added via expansion approvals).
+        // 本机全权（danger）档：显式无沙箱——命令原生执行（该档位即用户对「无沙箱 +
+        // 零确认」的 opt-in，进入模式时有独立红色警告），全局沙箱配置在此档不生效。
         #[cfg(windows)]
-        let ac_dirs: Option<Vec<String>> =
-            sandbox_expand::appcontainer_dirs_with_session_grants(app);
+        let ac_dirs: Option<Vec<String>> = if matches!(agent_mode, AgentMode::Danger) {
+            None
+        } else {
+            sandbox_expand::appcontainer_dirs_with_session_grants(app)
+        };
         #[cfg(not(windows))]
         let ac_dirs: Option<Vec<String>> = None;
         #[cfg(windows)]
@@ -692,10 +698,7 @@ pub(crate) async fn execute_builtin_tool(
                     if auto_expand
                         && retried.is_error
                         && sandbox_not_found_signature(&retried, &command_for_run)
-                        && sandbox_expand::escalate_after_failed_grant(
-                            true,
-                            unsandboxed_fallback,
-                        )
+                        && sandbox_expand::escalate_after_failed_grant(true, unsandboxed_fallback)
                     {
                         let mut escaped = run_command(None, command_for_run).await;
                         sandbox_expand::annotate_result(

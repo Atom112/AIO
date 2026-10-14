@@ -187,6 +187,18 @@ pub struct AppConfig {
     /// system dirs rely on the built-in ALL APPLICATION PACKAGES ACE and need no configuration).
     #[serde(default, rename = "sandboxWindowsToolchainDirs")]
     pub sandbox_windows_toolchain_dirs: Vec<String>,
+    /// Codex-style repository-history protection: inside the sandbox `<root>/.git` is
+    /// denied write/delete recursively (default true). Read-only git ops (status/diff/log)
+    /// keep working; shell-level git mutations fail inside the sandbox — use the builtin
+    /// git_* tools (host process) or, in full-permission mode, the sandbox self-heal chain.
+    #[serde(default = "default_true", rename = "sandboxProtectGit")]
+    pub sandbox_protect_git: bool,
+    /// Whether full-permission (Auto) sandbox self-heal may fall back to ONE unsandboxed
+    /// retry when the session grant cannot land (e.g. an EDR blocks the ACL write)
+    /// (default true). false = never break the sandbox boundary at runtime; denied
+    /// commands stay denied and the model must route around them.
+    #[serde(default = "default_true", rename = "sandboxUnsandboxedFallback")]
+    pub sandbox_unsandboxed_fallback: bool,
     /// Consecutive ENVIRONMENT-class failures (missing command / permission denied /
     /// missing dependency) before a tool is disabled for the rest of the turn
     /// (harness round 3, P1-1: configurable). Business failures (command ran, nonzero
@@ -223,6 +235,8 @@ impl Default for AppConfig {
             sandbox_required: default_true(),
             sandbox_windows: default_sandbox_windows(),
             sandbox_windows_toolchain_dirs: Vec::new(),
+            sandbox_protect_git: default_true(),
+            sandbox_unsandboxed_fallback: default_true(),
             tool_breaker_threshold: 0,
             memory_enabled: false,
             memory_auto_inject: default_true(),

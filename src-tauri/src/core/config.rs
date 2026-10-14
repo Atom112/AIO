@@ -51,6 +51,18 @@ struct AppConfigDisk {
     /// Windows AppContainer toolchain R+X directories
     #[serde(default, rename = "sandboxWindowsToolchainDirs")]
     sandbox_windows_toolchain_dirs: Vec<String>,
+    /// Sandbox-internal `<root>/.git` deny-write (Codex-style history protection, default true)
+    #[serde(
+        default = "crate::core::models::default_true",
+        rename = "sandboxProtectGit"
+    )]
+    sandbox_protect_git: bool,
+    /// Full-permission sandbox self-heal may fall back to one unsandboxed retry (default true)
+    #[serde(
+        default = "crate::core::models::default_true",
+        rename = "sandboxUnsandboxedFallback"
+    )]
+    sandbox_unsandboxed_fallback: bool,
     /// Consecutive env-class failures before a tool is disabled for the turn (0 = default 6)
     #[serde(default, rename = "toolBreakerThreshold")]
     tool_breaker_threshold: u32,
@@ -140,6 +152,8 @@ impl AppConfigDisk {
             sandbox_required: cfg.sandbox_required,
             sandbox_windows: cfg.sandbox_windows.clone(),
             sandbox_windows_toolchain_dirs: cfg.sandbox_windows_toolchain_dirs.clone(),
+            sandbox_protect_git: cfg.sandbox_protect_git,
+            sandbox_unsandboxed_fallback: cfg.sandbox_unsandboxed_fallback,
             tool_breaker_threshold: cfg.tool_breaker_threshold,
             memory_enabled: cfg.memory_enabled,
             memory_auto_inject: cfg.memory_auto_inject,
@@ -193,6 +207,8 @@ impl AppConfigDisk {
             sandbox_required: self.sandbox_required,
             sandbox_windows: self.sandbox_windows.clone(),
             sandbox_windows_toolchain_dirs: self.sandbox_windows_toolchain_dirs.clone(),
+            sandbox_protect_git: self.sandbox_protect_git,
+            sandbox_unsandboxed_fallback: self.sandbox_unsandboxed_fallback,
             tool_breaker_threshold: self.tool_breaker_threshold,
             memory_enabled: self.memory_enabled,
             memory_auto_inject: self.memory_auto_inject,
@@ -226,6 +242,8 @@ impl Default for AppConfigDisk {
             sandbox_required: crate::core::models::default_true(),
             sandbox_windows: crate::core::models::default_sandbox_windows(),
             sandbox_windows_toolchain_dirs: Vec::new(),
+            sandbox_protect_git: crate::core::models::default_true(),
+            sandbox_unsandboxed_fallback: crate::core::models::default_true(),
             tool_breaker_threshold: 0,
             memory_enabled: false,
             memory_auto_inject: crate::core::models::default_true(),

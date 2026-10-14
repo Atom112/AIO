@@ -323,6 +323,7 @@ pub fn build_bwrap_argv(
     shell_arg: &str,
     command: &str,
     allow_network: bool,
+    protect_git_ro: bool,
 ) -> Option<Vec<String>> {
     let root = std::path::Path::new(project_root)
         .canonicalize()
@@ -338,7 +339,17 @@ pub fn build_bwrap_argv(
         "/".to_string(),
         "--bind".to_string(),
         root.clone(),
-        root,
+        root.clone(),
+    ];
+    // Codex 式仓库历史保护：read-only 回绑盖在 RW 根绑定之上（argv 顺序即挂载
+    // 叠加顺序），.git 子树对沙箱内命令只读。--ro-bind-try：无 .git 的目录无害跳过。
+    if protect_git_ro {
+        let git_dir = format!("{root}/.git");
+        argv.push("--ro-bind-try".to_string());
+        argv.push(git_dir.clone());
+        argv.push(git_dir);
+    }
+    argv.extend([
         "--tmpfs".to_string(),
         "/tmp".to_string(),
         "--dev".to_string(),
@@ -347,7 +358,7 @@ pub fn build_bwrap_argv(
         "/proc".to_string(),
         "--unshare-pid".to_string(),
         "--unshare-user".to_string(),
-    ];
+    ]);
     // SEC-01: home read boundary. Ordering matters — bwrap applies mounts in argv
     // order, so the tmpfs shadows the real home bound by --ro-bind / /, and the
     // toolchain re-binds land on top of the tmpfs. (Pure string building — cross-
@@ -390,6 +401,7 @@ pub fn build_sandbox_exec_argv(
     shell_arg: &str,
     command: &str,
     allow_network: bool,
+    protect_git_ro: bool,
 ) -> Option<Vec<String>> {
     let root = std::path::Path::new(project_root)
         .canonicalize()
@@ -400,6 +412,13 @@ pub fn build_sandbox_exec_argv(
         String::new()
     } else {
         "(deny network*)\n".to_string()
+    };
+    // Codex 式仓库历史保护：deny 追加在 allow 之后（SBPL 后匹配者胜），.git 子树
+    // 在「项目根可写」内被单独抠回只读。
+    let git_rule = if protect_git_ro {
+        format!("(deny file-write* (subpath \"{root}/.git\"))\n")
+    } else {
+        String::new()
     };
     // SEC-01: home read boundary — deny home reads, then allow the toolchain
     // subpaths (more specific SBPL subpath rules take precedence). Pure string
@@ -419,8 +438,8 @@ pub fn build_sandbox_exec_argv(
         })
         .unwrap_or_default();
     let profile = format!(
-        "(version 1)\n(allow default)\n(deny file-write*)\n(allow file-write* (subpath \"{}\"))\n{}{}",
-        root, home_rules, network_rule
+        "(version 1)\n(allow default)\n(deny file-write*)\n(allow file-write* (subpath \"{}\"))\n{}{}{}",
+        root, git_rule, home_rules, network_rule
     );
     Some(vec![
         "sandbox-exec".into(),
@@ -437,6 +456,7 @@ pub fn build_sandbox_exec_argv(
 ///
 /// `allow_network`: false (default) = no network egress inside the sandbox (Linux `--unshare-net` /
 /// macOS SBPL `deny network*`); true = keep the host network (explicitly declared by the model, visible in approvals).
+/// `protect_git_ro`: Codex-style `<root>/.git` deny-write inside the sandbox.
 #[allow(unused_variables)]
 pub fn sandbox_command_prefix(
     shell: &str,
@@ -444,6 +464,7 @@ pub fn sandbox_command_prefix(
     command: &str,
     project_root: &str,
     allow_network: bool,
+    protect_git_ro: bool,
 ) -> Option<Vec<String>> {
     #[cfg(target_os = "linux")]
     {
@@ -453,7 +474,14 @@ pub fn sandbox_command_prefix(
         let Some(bwrap) = crate::utils::exec_resolve::resolve_executable("bwrap") else {
             return None;
         };
-        let mut argv = build_bwrap_argv(project_root, shell, shell_arg, command, allow_network)?;
+        let mut argv = build_bwrap_argv(
+            project_root,
+            shell,
+            shell_arg,
+            command,
+            allow_network,
+            protect_git_ro,
+        )?;
         argv[0] = bwrap.to_string_lossy().into_owned();
         Some(argv)
     }
@@ -464,8 +492,14 @@ pub fn sandbox_command_prefix(
         else {
             return None;
         };
-        let mut argv =
-            build_sandbox_exec_argv(project_root, shell, shell_arg, command, allow_network)?;
+        let mut argv = build_sandbox_exec_argv(
+            project_root,
+            shell,
+            shell_arg,
+            command,
+            allow_network,
+            protect_git_ro,
+        )?;
         argv[0] = sandbox_exec.to_string_lossy().into_owned();
         Some(argv)
     }
@@ -502,7 +536,7 @@ mod tests {
     fn bwrap_argv_shape() {
         let root = std::env::temp_dir();
         let root = root.to_string_lossy().into_owned();
-        let argv = build_bwrap_argv(&root, "sh", "-c", "echo hi", true).expect("argl");
+        let argv = build_bwrap_argv(&root, "sh", "-c", "echo hi", true, false).expect("argl");
         assert_eq!(argv[0], "bwrap");
         assert!(argv.contains(&"--die-with-parent".to_string()));
         assert!(argv.contains(&"--ro-bind".to_string()));
@@ -523,12 +557,12 @@ mod tests {
     #[test]
     fn bwrap_network_isolation() {
         let root = std::env::temp_dir().to_string_lossy().into_owned();
-        let no_net = build_bwrap_argv(&root, "sh", "-c", "curl x", false).expect("argv");
+        let no_net = build_bwrap_argv(&root, "sh", "-c", "curl x", false, false).expect("argv");
         assert!(
             no_net.contains(&"--unshare-net".to_string()),
             "默认应隔离网络: {no_net:?}"
         );
-        let with_net = build_bwrap_argv(&root, "sh", "-c", "curl x", true).expect("argv");
+        let with_net = build_bwrap_argv(&root, "sh", "-c", "curl x", true, false).expect("argv");
         assert!(
             !with_net.contains(&"--unshare-net".to_string()),
             "显式声明网络时不应隔离: {with_net:?}"
@@ -546,7 +580,7 @@ mod tests {
             _ => return,
         };
         let root = std::env::temp_dir().to_string_lossy().into_owned();
-        let argv = build_bwrap_argv(&root, "sh", "-c", "ls ~", true).expect("argv");
+        let argv = build_bwrap_argv(&root, "sh", "-c", "ls ~", true, false).expect("argv");
         let joined = argv.join(" ");
         assert!(
             joined.contains(&format!("--tmpfs {home}")),
@@ -572,7 +606,7 @@ mod tests {
             _ => return,
         };
         let root = std::env::temp_dir().to_string_lossy().into_owned();
-        let argv = build_sandbox_exec_argv(&root, "sh", "-c", "ls ~", true).expect("argv");
+        let argv = build_sandbox_exec_argv(&root, "sh", "-c", "ls ~", true, false).expect("argv");
         let profile = &argv[2];
         assert!(profile.contains(&format!("(deny file-read* (subpath \"{home}\"))")));
         assert!(profile.contains(&format!("(allow file-read* (subpath \"{home}/.cargo\"))")));
@@ -583,7 +617,8 @@ mod tests {
     fn sandbox_exec_argv_shape() {
         let root = std::env::temp_dir();
         let root = root.to_string_lossy().into_owned();
-        let argv = build_sandbox_exec_argv(&root, "sh", "-c", "echo hi", true).expect("argv");
+        let argv =
+            build_sandbox_exec_argv(&root, "sh", "-c", "echo hi", true, false).expect("argv");
         assert_eq!(argv[0], "sandbox-exec");
         assert_eq!(argv[1], "-p");
         assert!(argv[2].contains("deny file-write*"));
@@ -599,17 +634,77 @@ mod tests {
     #[test]
     fn sandbox_exec_network_isolation() {
         let root = std::env::temp_dir().to_string_lossy().into_owned();
-        let no_net = build_sandbox_exec_argv(&root, "sh", "-c", "curl x", false).expect("argv");
+        let no_net =
+            build_sandbox_exec_argv(&root, "sh", "-c", "curl x", false, false).expect("argv");
         assert!(
             no_net[2].contains("(deny network*)"),
             "默认应阻断网络: {}",
             no_net[2]
         );
-        let with_net = build_sandbox_exec_argv(&root, "sh", "-c", "curl x", true).expect("argv");
+        let with_net =
+            build_sandbox_exec_argv(&root, "sh", "-c", "curl x", true, false).expect("argv");
         assert!(
             !with_net[2].contains("(deny network*)"),
             "显式声明网络时不应阻断: {}",
             with_net[2]
+        );
+    }
+
+    /// Codex 式仓库历史保护（Linux）：.git 以 read-only 回绑盖在 RW 根绑定之上；
+    /// 关闭保护时不出现该绑定。
+    #[test]
+    fn bwrap_git_ro_protection() {
+        let root = std::env::temp_dir().to_string_lossy().into_owned();
+        // 构建器内部 canonicalize（Windows 产出 \\?\ 前缀路径），期望值须同源
+        let root = std::path::Path::new(&root)
+            .canonicalize()
+            .expect("canon")
+            .to_string_lossy()
+            .into_owned();
+        let protected = build_bwrap_argv(&root, "sh", "-c", "ls", true, true).expect("argv");
+        let joined = protected.join(" ");
+        let expected = format!("--ro-bind-try {root}/.git {root}/.git");
+        assert!(joined.contains(&expected), "应有 .git 只读回绑: {joined}");
+        // 叠加顺序：RW 根绑定在前、.git 只读回绑在后（argv 顺序即挂载叠加顺序）
+        let rw_pos = joined
+            .find(&format!("--bind {root} {root}"))
+            .expect("rw bind");
+        let ro_pos = joined.find(&expected).expect("ro-bind");
+        assert!(ro_pos > rw_pos, "只读回绑必须盖在 RW 绑定之后: {joined}");
+        let unprotected = build_bwrap_argv(&root, "sh", "-c", "ls", true, false).expect("argv");
+        assert!(
+            !unprotected.join(" ").contains(&expected),
+            "关闭保护时不应有 .git 回绑"
+        );
+    }
+
+    /// Codex 式仓库历史保护（macOS）：deny file-write* 追加在项目根 allow 之后
+    /// （SBPL 后匹配者胜），关闭保护时不含该规则。
+    #[test]
+    fn sandbox_exec_git_ro_protection() {
+        let root = std::env::temp_dir().to_string_lossy().into_owned();
+        let root = std::path::Path::new(&root)
+            .canonicalize()
+            .expect("canon")
+            .to_string_lossy()
+            .into_owned();
+        let protected = build_sandbox_exec_argv(&root, "sh", "-c", "ls", true, true).expect("argv");
+        let expected = format!("(deny file-write* (subpath \"{root}/.git\"))");
+        assert!(
+            protected[2].contains(&expected),
+            "SBPL 应含 .git 拒写规则: {}",
+            protected[2]
+        );
+        let allow_pos = protected[2]
+            .find(&format!("(allow file-write* (subpath \"{root}\"))"))
+            .expect("root allow");
+        let deny_pos = protected[2].find(&expected).expect("git deny");
+        assert!(deny_pos > allow_pos, "deny 必须在 allow 之后（后匹配者胜）");
+        let unprotected =
+            build_sandbox_exec_argv(&root, "sh", "-c", "ls", true, false).expect("argv");
+        assert!(
+            !unprotected[2].contains(&expected),
+            "关闭保护时不应有 .git 拒写规则"
         );
     }
 }

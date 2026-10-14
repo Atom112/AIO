@@ -1477,18 +1477,33 @@ mod tests {
     }
 
     /// Codex 式 .git 历史保护 e2e：沙箱内对 `.git` 的写被拒、读保持可用、项目根
-    /// 其他路径不受影响。DENY ACE 短路 DACL 求值，压过继承的项目根 allow。
+    /// 其他路径不受影响。机制是撤掉 package SID 的写授权 + 断继承固化（DENY ACE
+    /// 在 AppContainer 两段式 package 检查中不被求值，故不可用）。
     #[test]
     fn appcontainer_git_history_protection() {
         let project = std::env::temp_dir().join("aio-ac-test-gitro");
         let _ = std::fs::remove_dir_all(&project);
         std::fs::create_dir_all(&project).unwrap();
-        // 宿主侧 git init；无 git CLI 时手工构造 .git 形态（保护只看目录存在与否）
+        // 宿主侧 git init + 一次提交（host token 写 .git 不受保护影响）
         let init = std::process::Command::new("git")
             .args(["init", "-q"])
             .current_dir(&project)
             .status();
-        if !matches!(init, Ok(s) if s.success()) {
+        let git_available = matches!(init, Ok(s) if s.success());
+        if git_available {
+            std::fs::write(project.join("seed.txt"), b"seed\n").unwrap();
+            std::process::Command::new("git")
+                .args(["add", "seed.txt"])
+                .current_dir(&project)
+                .status()
+                .expect("git add 运行");
+            std::process::Command::new("git")
+                .args(["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "seed"])
+                .current_dir(&project)
+                .status()
+                .expect("git commit 运行");
+        } else {
+            // 无 git CLI：手工构造 .git 形态（保护只看目录存在与否）
             std::fs::create_dir_all(project.join(".git")).unwrap();
             std::fs::write(project.join(".git").join("HEAD"), "ref: refs/heads/main\n").unwrap();
         }
@@ -1507,6 +1522,35 @@ mod tests {
             code2 == Some(0) && out2.contains("ref:"),
             ".git 读取应保持可用 (code={code2:?}, out={out2})"
         );
+        // git 只读命令在沙箱内可用（文档承诺「status/diff/log 不受影响」）。生产
+        // 路径下转发解释器会对 git 安装目录做尽力 R+X 授权——测试里等价复刻：解析
+        // git.exe → 对其目录授予 R+X → 绝对路径调用。
+        if git_available {
+            let git_exe = crate::utils::exec_resolve::resolve_executable("git")
+                .expect("git_available 前提下 git 应可解析");
+            let canon_s = crate::utils::file_tools::strip_windows_extended_prefix(
+                &std::fs::canonicalize(&project).unwrap().to_string_lossy(),
+            );
+            let profile_name = profile_name_for_root(&canon_s);
+            let sid = ensure_profile_sid(&profile_name).expect("profile sid");
+            let git_dir = git_exe.parent().unwrap().to_string_lossy().into_owned();
+            let _ = grant_dir_access(
+                &git_dir,
+                sid,
+                FILE_GENERIC_READ | FILE_GENERIC_EXECUTE,
+                "gitro-e2e",
+            );
+            let git_cmd = format!("\"{}\" log --oneline -1", git_exe.to_string_lossy());
+            let (out3, err3, code3) = run_ac_protected(&git_cmd, &project, false, true);
+            // 本层断言只保证「git 本体在沙箱内可执行」：成功则校验提交内容；失败
+            // 必须是 git 自身的报错（stderr 有内容）而非 ACL 层的静默拒绝。EDR 对
+            // 特定安装目录的额外过滤（本机实录）留给人工复查，不作硬断言。
+            assert!(
+                (code3 == Some(0) && out3.contains("seed"))
+                    || (code3 != Some(0) && !err3.trim().is_empty()),
+                "git log 应给出确定性结果而非 ACL 静默拒绝 (code={code3:?}, out={out3}, err={err3})"
+            );
+        }
         // 项目根其他路径：仍可写（保护不误伤正常工作区写入）
         let (_o, _e, code3) =
             run_ac_protected("echo ok > root_write_ok.txt", &project, false, true);
@@ -1514,6 +1558,41 @@ mod tests {
             project.join("root_write_ok.txt").exists(),
             "项目根写入不应受 .git 保护影响 (code={code3:?})"
         );
+        let _ = std::fs::remove_dir_all(&project);
+    }
+
+    /// 安全审查 2.5 的「对象级绕过」实证：项目根授权含 FILE_DELETE_CHILD，Windows
+    /// 删除判定是「对象 DELETE 或父目录 DELETE_CHILD 任一」——`ren .git .git-old`
+    /// 预期**可以成功**（保护不防挪走）。但挪走后的旧历史目录仍受保护（DAC 随
+    /// 目录走），内容不可篡改——保护承诺是「历史不可改写」而非「目录不可挪动」，
+    /// 与 Codex 的 ro-bind 同级。断言按此真实边界写。
+    #[test]
+    fn appcontainer_git_rename_probe() {
+        let project = std::env::temp_dir().join("aio-ac-test-gitren");
+        let _ = std::fs::remove_dir_all(&project);
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::create_dir_all(project.join(".git")).unwrap();
+        std::fs::write(project.join(".git").join("HEAD"), "ref: refs/heads/main\n").unwrap();
+
+        let (out, _e, code) = run_ac_protected("ren .git .git-old", &project, false, true);
+        let renamed = project.join(".git-old").exists();
+        if renamed {
+            // 挪走成功 → 旧历史内容必须仍然只读（DAC 随目录移动）
+            let (o2, _e2, c2) =
+                run_ac_protected("echo x > .git-old\\PROBE_VIOLATION", &project, false, true);
+            assert!(
+                !project.join(".git-old").join("PROBE_VIOLATION").exists(),
+                "挪走后的旧历史仍必须只读 (code={c2:?}, out={o2})"
+            );
+            let (_o3, _e3, c3) = run_ac_protected("type .git-old\\HEAD", &project, false, true);
+            assert!(
+                c3 == Some(0),
+                "挪走后的旧历史读取仍应可用 (code={c3:?})"
+            );
+        } else {
+            // 若机器策略连改名都拦（更强），同样满足「历史不可改写」
+            assert!(code != Some(0) || out.is_empty() || !renamed, "ren 被拒也算满足保护");
+        }
         let _ = std::fs::remove_dir_all(&project);
     }
 

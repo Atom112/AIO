@@ -243,7 +243,7 @@ impl Default for AppConfigDisk {
             sandbox_windows: crate::core::models::default_sandbox_windows(),
             sandbox_windows_toolchain_dirs: Vec::new(),
             sandbox_protect_git: crate::core::models::default_true(),
-            sandbox_unsandboxed_fallback: crate::core::models::default_true(),
+            sandbox_unsandboxed_fallback: false,
             tool_breaker_threshold: 0,
             memory_enabled: false,
             memory_auto_inject: crate::core::models::default_true(),

@@ -63,7 +63,7 @@
 
 ### 完全权限模式
 
-进入完全权限模式时 AIO 会先弹出风险确认：该模式下命令（含声明网络访问的命令）不再逐条确认，被沙箱拒绝的命令自动按推荐方案扩权重试且不受询问窗口节流——可派生目录先会话授权，授权未落地（如被 EDR 拦截）自动跳出沙箱兜底重试（`sandboxUnsandboxedFallback=false` 可关闭），授权落地且成功时永久记住该目录，全程无需看守，适合完全信任的自动化场景。同时沙箱内 `.git` 保持只读（`sandboxProtectGit`，Git 写操作走内置 `git_*` 工具），放手不等于失去边界。项目 `.aio/permissions.json` 中的 `deny` 规则仍然生效，文件路径仍限制在项目根目录内。
+进入完全权限模式时 AIO 会先弹出风险确认：该模式下命令（含声明网络访问的命令）不再逐条确认，沙箱拒绝按收窄策略自动补救且不受询问窗口节流——「解释器/工具链不可见」类拒绝先会话授权，授权落地且成功时永久记住该目录；**access-denied 类拒绝（写目标被拒、`.git` 保护等）永不脱离沙箱执行**；唯一例外是 not-found 类在授权未落地时脱离沙箱重试一次，需显式开启 `sandboxUnsandboxedFallback`（默认关）且结果中会显式标注，全程无需看守。同时沙箱内 `.git` 保持只读（`sandboxProtectGit`，Git 写操作走内置 `git_*` 工具），未受信任 MCP server 的工具仍会逐次确认（请先在 MCP 设置中信任）。项目 `.aio/permissions.json` 中的 `deny` 与自定义 `ask` 规则仍然生效，文件路径仍限制在项目根目录内。
 
 ![Agent 文件 Diff 与审批](../../assets/screenshots/agent-diff-approval.webp)
 

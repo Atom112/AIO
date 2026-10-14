@@ -47,6 +47,77 @@ pub(crate) enum ExpansionDecision {
     GrantPermanentRetry { dir: String },
 }
 
+// ---- Auto-mode self-heal policy (security review P0, PR #151) ----
+//
+// The escalation surface is NARROWED to one class: an interpreter/toolchain that is
+// INVISIBLE inside the sandbox (not-found signature + a derivable directory). That
+// class self-heals with a session grant and — only when the user explicitly opted in
+// via `sandboxUnsandboxedFallback` — one unsandboxed retry if the grant could not
+// land (EDR-blocked ACL write). **Access-denied class denials (write targets, .git
+// protection, out-of-project paths) NEVER escalate to unsandboxed execution**, with
+// or without the switch: the denial text comes from command OUTPUT the model can
+// influence, so it must never gate a boundary break. Denied commands stay denied —
+// the model routes around them (builtin git_* tools, different paths) or the user
+// widens the boundary via static config (`sandboxWindowsToolchainDirs`).
+
+/// Per-turn budget for unsandboxed retries (all escalation sources combined).
+/// Reset at every agent-turn start; exceeded → the original error stands, with a
+/// note in the result text.
+const UNSANDBOXED_BUDGET_PER_TURN: usize = 8;
+
+fn unsandboxed_budget() -> &'static std::sync::atomic::AtomicUsize {
+    static BUDGET: std::sync::OnceLock<std::sync::atomic::AtomicUsize> =
+        std::sync::OnceLock::new();
+    BUDGET.get_or_init(|| std::sync::atomic::AtomicUsize::new(0))
+}
+
+/// Resets the per-turn unsandboxed budget (called at every agent-turn start).
+pub(crate) fn reset_unsandboxed_budget() {
+    unsandboxed_budget().store(0, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Consumes one unit of the budget; false = exhausted (escalation refused).
+fn take_unsandboxed_budget() -> bool {
+    let budget = unsandboxed_budget();
+    let used = budget.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    used < UNSANDBOXED_BUDGET_PER_TURN
+}
+
+/// The Auto self-heal decision for a fresh denial, per the narrowed policy above.
+/// Pure — unit-tested without a UI. The second decision point (one unsandboxed
+/// retry after a failed grant, not-found class only) lives in
+/// [`escalate_after_failed_grant`].
+pub(crate) fn auto_remediation(hint_dir: Option<&str>) -> ExpansionDecision {
+    match hint_dir {
+        // 解释器/工具链不可见（not-found 蕴含 hint）或有派生目录的拒绝类：
+        // 会话授权后重试——授权把目录带进沙箱视野，边界不破
+        Some(dir) => ExpansionDecision::GrantSessionRetry { dir: dir.to_string() },
+        // 无目录可授权：access-denied 类（写目标被拒、.git 保护、项目外路径……）
+        // —— 永不跳出沙箱，保持错误让模型绕路
+        None => ExpansionDecision::Ignore,
+    }
+}
+
+/// Whether a SECOND escalation — one unsandboxed retry — is permitted after a
+/// session grant failed to fix a not-found denial (e.g. the EDR blocked the ACL
+/// write so the directory stayed invisible). Only the not-found class qualifies,
+/// and only when the user opted in via `sandboxUnsandboxedFallback`. Pure — tested.
+pub(crate) fn escalate_after_failed_grant(not_found: bool, fallback_enabled: bool) -> bool {
+    not_found
+        && fallback_enabled
+        && take_unsandboxed_budget()
+}
+
+/// Appends a visibility note to a tool result's first text part (security review:
+/// unsandboxed retries and their side effects must be visible to the user AND the
+/// model — previously only a tracing::warn line existed).
+pub(crate) fn annotate_result(tr: &mut crate::core::models::ToolResult, note: &str) {
+    if let Some(c) = tr.content.iter_mut().find(|c| c.kind == "text") {
+        let existing = c.data.get("text").and_then(|v| v.as_str()).unwrap_or("");
+        c.data["text"] = serde_json::json!(format!("{existing}\n{note}"));
+    }
+}
+
 // ---- ask-once dedup (per first command token) ----
 
 fn recently_asked() -> &'static std::sync::Mutex<HashMap<String, Instant>> {

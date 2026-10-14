@@ -419,6 +419,15 @@ fn sandbox_denial_signature(result: &ToolResult, command: &str) -> bool {
     denied || not_found
 }
 
+/// not-found 子签名（解释器/工具链不可见）。Auto 自愈中唯一允许升级为无沙箱
+/// 重试的类别——与 access-denied 类（写目标被拒等，永不升级）区分开。
+#[cfg(windows)]
+fn sandbox_not_found_signature(result: &ToolResult, command: &str) -> bool {
+    let text = round_artifacts::tool_result_text(result);
+    shell_tools::forwarded_interpreter_of(command).is_some()
+        && shell_tools::is_command_not_found_result(&text)
+}
+
 #[allow(
     clippy::too_many_arguments,
     reason = "explicit execution context incl. workspace isolation"
@@ -444,16 +453,20 @@ pub(crate) async fn execute_builtin_tool(
     // fully-autonomous mode (完全权限) refuses command execution per config.
     // Normal/Plan/只读 modes still go through permission approval (Ask / Deny),
     // whose reason carries a sandbox-unavailable warning (see the Ask branch below).
+    // Windows 修正（安全审查 P1）：sandboxWindows="off" 时 AppContainer 未启用——
+    // sandbox_available() 在 Windows 恒为 true（Job Object 无外部依赖），若只查它，
+    // Auto + off = 零确认零沙箱静默通过，sandboxRequired 形同虚设。现在一并校验
+    // 沙箱模式本身。
+    let sandbox_cfg = crate::core::config::load_app_config(app).unwrap_or_default();
+    let windows_sandbox_disabled = cfg!(windows) && sandbox_cfg.sandbox_windows != "appcontainer";
     if tool_name == tool_names::EXECUTE_COMMAND
         && matches!(agent_mode, AgentMode::Auto)
-        && !crate::utils::sandbox::sandbox_available()
-        && crate::core::config::load_app_config(app)
-            .unwrap_or_default()
-            .sandbox_required
+        && (!crate::utils::sandbox::sandbox_available() || windows_sandbox_disabled)
+        && sandbox_cfg.sandbox_required
     {
         return Err(ierr!(
-            "沙箱不可用，已拒绝执行命令（fail-closed）。请安装 bubblewrap（Linux）或确认 sandbox-exec 存在（macOS）后重试；或在应用配置中将 sandboxRequired 设为 false 以回退无沙箱执行（不推荐）。",
-            "Sandbox unavailable; command execution refused (fail-closed). Install bubblewrap (Linux) or verify sandbox-exec exists (macOS), then retry; or set sandboxRequired to false in app settings to fall back to unsandboxed execution (not recommended)."
+            "沙箱不可用，已拒绝执行命令（fail-closed）。请安装 bubblewrap（Linux）或确认 sandbox-exec 存在（macOS）；Windows 下需将 sandboxWindows 设为 appcontainer；或显式将 sandboxRequired 设为 false 回退无沙箱执行（不推荐）。",
+            "Sandbox unavailable; command execution refused (fail-closed). Install bubblewrap (Linux) or verify sandbox-exec exists (macOS); on Windows set sandboxWindows to appcontainer; or explicitly set sandboxRequired to false to fall back to unsandboxed execution (not recommended)."
         ));
     }
 
@@ -625,10 +638,16 @@ pub(crate) async fn execute_builtin_tool(
         // 完全权限（Auto）无人值守：不弹窗、不受 ask-once 窗口节流（该窗口只为
         // 弹窗防骚扰而设，节流 Auto 的自动扩权会让后续同操作命令在 30 分钟内
         // 裸吃拒绝），命中签名即自动补救。
+        // 安全审查收窄（PR #151）：Auto 的补救面 = 「解释器/工具链不可见」类
+        // （not-found + 有派生目录）会话授权重试；**access-denied 类（写目标被拒、
+        // .git 保护、项目外路径）永不升级为无沙箱执行**——拒绝文本来自模型可影响的
+        // 命令输出（伪造 "Access is denied" 即可骗过签名），不能作为突破边界的
+        // 决策点。唯一的无沙箱重试：not-found + 授权未落地（EDR 拦 ACL 写）+
+        // `sandboxUnsandboxedFallback` 显式开启（默认 false），且有每回合预算上限。
         #[cfg(windows)]
         let auto_expand = matches!(agent_mode, AgentMode::Auto);
         #[cfg(windows)]
-        let result = if sandboxed
+        let mut result = if sandboxed
             && result.is_error
             && (auto_expand || sandbox_expand::should_ask(&command))
             && sandbox_denial_signature(&result, &command)
@@ -644,27 +663,15 @@ pub(crate) async fn execute_builtin_tool(
                 .map(|p| p.to_string_lossy().into_owned());
             // 完全权限 (Auto) is inherently full-autonomy: skip the dialog and apply
             // the recommended decision directly — session grant for the derived
-            // directory when one is derivable, else one unsandboxed retry. Custom
-            // Deny rules are unaffected (checked before this point). Other tiers keep
-            // the remediation dialog.
+            // directory when one is derivable. Custom Deny rules are unaffected
+            // (checked before this point). Other tiers keep the remediation dialog.
             let decision = if auto_expand {
                 tracing::warn!(
-                    "[sandbox-expand] 自动扩权（完全权限模式）：命令「{}」→ {}",
+                    "[sandbox-expand] 自动扩权（完全权限模式）：命令「{}」→ 会话授权 {} 后重试",
                     command,
-                    if hint_dir.is_some() {
-                        "派生目录会话授权后重试"
-                    } else {
-                        "跳出沙箱重试一次"
-                    }
+                    hint_dir.as_deref().unwrap_or("(无派生目录，不升级)")
                 );
-                Ok(if let Some(d) = hint_dir.clone() {
-                    sandbox_expand::ExpansionDecision::GrantSessionRetry { dir: d }
-                } else if unsandboxed_fallback {
-                    sandbox_expand::ExpansionDecision::RunUnsandboxedOnce
-                } else {
-                    // 跳出沙箱兜底被禁用：无目录可授权，保持原错误让模型自行绕路
-                    sandbox_expand::ExpansionDecision::Ignore
-                })
+                Ok(sandbox_expand::auto_remediation(hint_dir.as_deref()))
             } else {
                 sandbox_expand::request_sandbox_expansion(app, &command, &err_text, hint_dir, token)
                     .await
@@ -677,20 +684,34 @@ pub(crate) async fn execute_builtin_tool(
                         command_for_run.clone(),
                     )
                     .await;
-                    // 会话授权可能写不进去（EDR 拦 ACL 写，round 10/11 实录：对
-                    // D:\Git\cmd 的 SetNamedSecurityInfoW 被 error 5 拒绝）——授权后
-                    // 仍命中拒绝签名 = 授权未落地或不足。完全权限承诺无需看守：
-                    // Auto 自动跳出沙箱兜底重试一次，不再对同一堵墙盲试（可用
-                    // `sandboxUnsandboxedFallback=false` 关闭运行时边界突破，此时
-                    // 保持原错误让模型自行绕路）；授权落地且命令成功时把目录永久
-                    // 记入工具链配置（等价弹窗的「永久记住」，后续会话免重新授权、
-                    // 免再撞一次 EDR）。
+                    // 授权可能写不进去（EDR 拦 ACL 写，round 10/11 实录：对
+                    // D:\Git\cmd 的 SetNamedSecurityInfoW 被 error 5 拒绝）。授权后
+                    // 仍为 not-found 类 = 目录依旧不可见 —— 唯一允许无沙箱重试的
+                    // 类别（解释器/工具链不可见），且需 `sandboxUnsandboxedFallback`
+                    // 显式开启 + 每回合预算；access-denied 类永不升级。
                     if auto_expand
-                        && unsandboxed_fallback
-                        && sandbox_denial_signature(&retried, &command_for_run)
+                        && retried.is_error
+                        && sandbox_not_found_signature(&retried, &command_for_run)
+                        && sandbox_expand::escalate_after_failed_grant(
+                            true,
+                            unsandboxed_fallback,
+                        )
                     {
-                        run_command(None, command_for_run).await
+                        let mut escaped = run_command(None, command_for_run).await;
+                        sandbox_expand::annotate_result(
+                            &mut escaped,
+                            &ierr!(
+                                "[沙箱边界] 本次命令已脱离 AppContainer 沙箱执行（会话授权未落地 + sandboxUnsandboxedFallback 开启；network 声明在此路径下不生效）",
+                                "[sandbox boundary] this command ran OUTSIDE the AppContainer sandbox (session grant failed to land + sandboxUnsandboxedFallback on; the network declaration is NOT enforced on this path)"
+                            ),
+                        );
+                        tracing::warn!(
+                            "[sandbox-expand] 授权未落地，已脱离沙箱重试：命令「{command}」"
+                        );
+                        escaped
                     } else {
+                        // 授权落地且命令成功 → 目录永久记入工具链配置（后续会话
+                        // 免重新授权；等价弹窗「永久记住」，Auto 风险确认已覆盖）
                         if auto_expand && !retried.is_error {
                             sandbox_expand::persist_toolchain_dir(app, &dir);
                         }
@@ -707,7 +728,16 @@ pub(crate) async fn execute_builtin_tool(
                     .await
                 }
                 Ok(sandbox_expand::ExpansionDecision::RunUnsandboxedOnce) => {
-                    run_command(None, command_for_run.clone()).await
+                    // 仅非 Auto 弹窗路径可达（用户显式选择「跳出沙箱执行」）
+                    let mut escaped = run_command(None, command_for_run.clone()).await;
+                    sandbox_expand::annotate_result(
+                        &mut escaped,
+                        &ierr!(
+                            "[沙箱边界] 本次命令按用户选择脱离 AppContainer 沙箱执行（仅此一次）",
+                            "[sandbox boundary] this command ran OUTSIDE the AppContainer sandbox (explicit user choice, once)"
+                        ),
+                    );
+                    escaped
                 }
                 Ok(sandbox_expand::ExpansionDecision::Ignore) => result,
                 Err(e) if e == "cancelled" => return Err("cancelled".into()),
@@ -725,6 +755,22 @@ pub(crate) async fn execute_builtin_tool(
         } else {
             result
         };
+        // `.git` 历史保护拒绝的引导文案：git 自身打印 "Permission denied"，不匹配
+        // 扩权签名 → 模型会拿到一个无解释的权限错误。命中「.git + 拒绝」时补一句
+        // 可执行的指引（字符串级启发，仅指导不构成安全决策）。
+        #[cfg(windows)]
+        if result.is_error
+            && command.contains(".git")
+            && shell_tools::is_sandbox_access_denied(&round_artifacts::tool_result_text(&result))
+        {
+            sandbox_expand::annotate_result(
+                &mut result,
+                &ierr!(
+                    "[提示] 对 .git 的写操作受仓库历史保护（sandboxProtectGit）：请改用内置 git_* 工具（宿主进程执行），或经用户将 sandboxProtectGit 设为 false",
+                    "[hint] writes to .git are blocked by repository-history protection (sandboxProtectGit): use the builtin git_* tools (host process), or ask the user to set sandboxProtectGit=false"
+                ),
+            );
+        }
         // SEC-09: a successful command may have modified project files outside the
         // hashline protocol. Mark files changed during its window so the next agent
         // write to them is forced through the cross-writer gate (re-read first) —
@@ -1059,6 +1105,9 @@ pub(crate) async fn run_agent_turn_inner(
         &api_url,
         &crate::utils::url_validation::HttpUrlOptions::local_engine(),
     )?;
+    // 每回合重置「脱离沙箱重试」预算（Auto 自愈的安全上限，见 sandbox_expand）
+    #[cfg(windows)]
+    sandbox_expand::reset_unsandboxed_budget();
     let task_key = (assistant_id.clone(), topic_id.clone());
 
     // Cancel the old task for the same topic (cancel, not abort).

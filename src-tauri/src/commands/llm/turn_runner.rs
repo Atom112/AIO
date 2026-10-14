@@ -40,6 +40,18 @@ use super::DelegateContext;
 use super::{execute_builtin_tool, execute_tool_with_retry};
 use crate::core::tool_names;
 
+/// 子智能体并发上限解析：配置 -1 表示不限制 → 用 tokio 信号量的合法上限
+/// `Semaphore::MAX_PERMITS`（usize::MAX 超出 MAX_PERMITS，`Semaphore::new` 会 panic，
+/// 导致不限制档位的每个 agent 回合在启动时即崩）；0 非法回落 1；None 默认 5。
+fn resolve_subagent_concurrency(configured: Option<i32>) -> usize {
+    match configured {
+        Some(n) if n < 0 => Semaphore::MAX_PERMITS,
+        Some(0) => 1,
+        Some(n) => n.max(1) as usize,
+        None => 5,
+    }
+}
+
 /// 主循环运行器：单回合自主循环的全部输入（原 async-move 闭包的捕获集）。
 pub(crate) struct AgentTurnRunner {
     pub(crate) window: Window,
@@ -117,11 +129,7 @@ impl AgentTurnRunner {
         // Subagent concurrency cap (-1 = unlimited, full-autonomy opt-in; 0 is
         // invalid and clamps to 1; the per-subagent round/context budgets and the
         // stop button remain the backstops)
-        let max_concurrent = match app_config.max_concurrent_subagents {
-            Some(n) if n < 0 => usize::MAX,
-            Some(0) => 1,
-            v => v.unwrap_or(5).max(1) as usize,
-        };
+        let max_concurrent = resolve_subagent_concurrency(app_config.max_concurrent_subagents);
         let subagent_semaphore = Arc::new(Semaphore::new(max_concurrent));
 
         let client = streaming_http_client();
@@ -1162,5 +1170,33 @@ impl AgentTurnRunner {
         // NEW task, and a keyed remove would orphan it)
         // 阶段5: protocol on StreamManager
         state_inner.remove_own(&task_key_inner, &turn_id_c);
+    }
+}
+
+#[cfg(test)]
+mod concurrency_tests {
+    use super::*;
+
+    /// 不限制档位（-1）映射为 tokio 信号量的合法上限，而非 usize::MAX
+    /// （usize::MAX > MAX_PERMITS 会让 Semaphore::new panic）。
+    #[test]
+    fn unlimited_maps_to_max_permits() {
+        assert_eq!(
+            resolve_subagent_concurrency(Some(-1)),
+            Semaphore::MAX_PERMITS
+        );
+        // 防御性：配置层已把 < -1 归一为 -1，消费端再兜底一次
+        assert_eq!(
+            resolve_subagent_concurrency(Some(-9)),
+            Semaphore::MAX_PERMITS
+        );
+    }
+
+    /// 常规档位：默认 5、0 非法回落 1、正数透传。
+    #[test]
+    fn bounded_values_pass_through() {
+        assert_eq!(resolve_subagent_concurrency(None), 5);
+        assert_eq!(resolve_subagent_concurrency(Some(0)), 1);
+        assert_eq!(resolve_subagent_concurrency(Some(3)), 3);
     }
 }

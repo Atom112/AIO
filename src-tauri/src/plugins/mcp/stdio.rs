@@ -337,12 +337,34 @@ impl McpTransport for StdioTransportHandle {
     async fn close(&self) -> McpResult<()> {
         let mut child_guard = self.child.lock().await;
         if let Some(mut child) = child_guard.take() {
-            // Termination: attempt kill (tokio's child only supports kill, no graceful shutdown)
-            let _ = child.kill().await;
-            let _ = child.wait().await;
+            kill_child_tree(&mut child).await;
         }
         Ok(())
     }
+}
+
+/// 终止 stdio 子进程**整棵进程树**（Windows 为主因）。
+///
+/// 直接子进程未必是 server 本身：exec_resolve 对 `npx`/`.cmd` shim 经 `cmd /c`
+/// 包装 spawn（SEC-06 PATHEXT 解析），只 `child.kill()` 杀掉 cmd.exe 后，
+/// npx → node 的孙进程全部成为孤儿——实测一次项目打开把同一 Svelte MCP server
+/// 拉起 3 份，每次「重启语义」的 stop 都只杀到包装层、链尾泄漏存活。
+/// Windows 用 `taskkill /T /F` 自上而下整树终止；非 Windows 直接子进程即 server
+/// （无包装层），沿用 kill。kill 后必须 wait 回收，防僵尸。
+async fn kill_child_tree(child: &mut Child) {
+    #[cfg(windows)]
+    if let Some(pid) = child.id() {
+        // tokio Command 的 creation_flags 是 Windows 固有方法，无需 CommandExt trait
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        let mut taskkill = Command::new("taskkill");
+        taskkill.args(["/PID", &pid.to_string(), "/T", "/F"]);
+        taskkill.creation_flags(CREATE_NO_WINDOW);
+        // taskkill 失败（权限/已退出）不阻塞关闭路径，下方 kill 兜底直接子进程
+        let _ = taskkill.output().await;
+    }
+    // 直接子进程兜底（taskkill 失败/非 Windows）：tokio 的 child 只有 kill，无优雅关闭
+    let _ = child.kill().await;
+    let _ = child.wait().await;
 }
 
 /// Continuously reads stdout in the background; each parsed JSON line is dispatched to McpConnection

@@ -113,6 +113,14 @@ const installMcpListeners = async () => {
 };
 
 /**
+ * 进行中的 autoStart（跨 initMcpServers 并发调用去重）。initMcpServers 有多个
+ * 触发点（应用启动 / 项目选择 / ChatPage effect / 模式选择 / topic 操作），项目
+ * 打开瞬间并发触发；各调用在首个 start 完成前快照 statusMap，看不到 connecting
+ * 态，会对同一 server 重复 start（后端为重启语义：杀旧起新）。
+ */
+const autoStartsInFlight = new Set<string>();
+
+/**
  * Load and initialize the MCP server list, sync backend connection status, and auto-start servers marked autoStart.
  * Project-repo servers that are not trusted yet never auto-start; they enter the pending-confirmation queue instead.
  */
@@ -149,10 +157,21 @@ export const initMcpServers = async (projectId?: string | null) => {
 
     // Auto-start servers marked autoStart (skip connected + untrusted project servers)
     // (Whether an assistant uses a server is filtered by Assistant.mcpServerIds in list_mcp_tools_for_assistant)
-    const autoStartIds = selectAutoStartIds(map, statusMap, untrustedIds);
+    const autoStartIds = selectAutoStartIds(map, statusMap, untrustedIds).filter(
+      (id) => !autoStartsInFlight.has(id),
+    );
     if (autoStartIds.length > 0) {
       const pid = projectId ?? null;
-      await Promise.allSettled(autoStartIds.map((id) => startMcpServerAndRefresh(id, pid)));
+      await Promise.allSettled(
+        autoStartIds.map(async (id) => {
+          autoStartsInFlight.add(id);
+          try {
+            await startMcpServerAndRefresh(id, pid);
+          } finally {
+            autoStartsInFlight.delete(id);
+          }
+        }),
+      );
     }
   } catch (e) {
     console.warn('Failed to load MCP server list:', e);

@@ -72,7 +72,7 @@ const AppSettings: Component = () => {
   const [autoStart, setAutoStart] = createSignal(false);
   const [maxToolRounds, setMaxToolRounds] = createSignal(25); // Max tool-call rounds per agent turn (0 = unlimited; default 25)
   const [maxConcurrentSubagents, setMaxConcurrentSubagents] = createSignal(5); // Max concurrent subagents (0 = unlimited; default 5)
-  
+
   const [version, setVersion] = createSignal(''); // App version
   const [checkUpdating, setCheckUpdating] = createSignal(false); // Manual update check in progress
   const [checkResult, setCheckResult] = createSignal<CheckUpdateResult | null>(null); // Result of the last manual check

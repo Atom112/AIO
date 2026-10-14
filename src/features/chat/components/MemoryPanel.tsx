@@ -546,14 +546,13 @@ const MemoryPanel: Component<MemoryPanelProps> = (props) => {
   return (
     <Show when={props.show}>
       <div
-        class="fixed inset-0 z-[1000] flex items-center justify-center bg-black/60 backdrop-blur-[12px] rounded-lg transition-all duration-200 ease-out"
+        class="fixed inset-0 z-[1000] flex items-center justify-center bg-black/25 rounded-lg transition-all duration-200 ease-out"
         onClick={() => props.onClose()}
       >
         <div
           class="rounded-lg text-[rgba(var(--text-base-rgb),0.88)] p-6 w-[92%] max-w-[640px] max-h-[90vh] overflow-y-auto flex flex-col gap-4 transition-all duration-500 ease-out transform"
           style={{
             background: 'var(--dialog-bg)',
-            'background-attachment': 'fixed',
             'backdrop-filter': 'var(--popup-blur)',
             border: '1px solid var(--border-dim)',
           }}

@@ -219,7 +219,7 @@ const AgentModeSelector: Component = () => {
       {/* Auto mode risk warning dialog */}
       <Show when={showAutoWarning()}>
         <div
-          class="fixed inset-0 z-[2000] flex items-center justify-center bg-black/50 backdrop-blur-[12px]"
+          class="fixed inset-0 z-[2000] flex items-center justify-center bg-black/25"
           style={{ 'z-index': '2100', animation: 'modalOverlayIn 0.2s ease-out both' }}
           onClick={() => setShowAutoWarning(false)}
         >
@@ -227,7 +227,6 @@ const AgentModeSelector: Component = () => {
             class="p-6 rounded-lg max-w-[420px] w-full"
             style={{
               background: 'var(--dialog-bg)',
-              'background-attachment': 'fixed',
               border: '1px solid var(--border-dim)',
               'backdrop-filter': 'var(--popup-blur)',
               'box-shadow': '0 8px 32px rgba(0,0,0,0.5)',

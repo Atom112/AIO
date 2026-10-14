@@ -65,12 +65,11 @@ const ProjectMcpTrustModal: Component = () => {
 
   return (
     <Show when={servers().length > 0}>
-      <div class="fixed inset-0 z-[1100] flex items-center justify-center bg-black/60 backdrop-blur-[12px] rounded-lg">
+      <div class="fixed inset-0 z-[1100] flex items-center justify-center bg-black/25 rounded-lg">
         <div
           class="rounded-lg p-6 w-[92%] max-w-[560px] max-h-[80vh] overflow-y-auto flex flex-col gap-4"
           style={{
             background: 'var(--dialog-bg)',
-            'background-attachment': 'fixed',
             'backdrop-filter': 'var(--popup-blur)',
             border: '1px solid var(--border-dim)',
           }}

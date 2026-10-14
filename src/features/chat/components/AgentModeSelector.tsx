@@ -257,7 +257,6 @@ const AgentModeSelector: Component = () => {
               background: 'var(--dialog-bg)',
               border: '1px solid var(--border-dim)',
               'backdrop-filter': 'var(--popup-blur)',
-              'box-shadow': '0 8px 32px rgba(0,0,0,0.5)',
               animation: 'modalPanelIn 0.25s cubic-bezier(0.16, 1, 0.3, 1) both',
             }}
             onClick={(e) => e.stopPropagation()}

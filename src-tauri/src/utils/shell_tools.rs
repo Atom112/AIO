@@ -993,6 +993,9 @@ fn drain_pipe_capped<R: std::io::Read>(mut pipe: R, cap: usize) -> (Vec<u8>, usi
 ///   parameter, default false)
 /// - `ac_dirs` - Windows AppContainer config (Some = enabled + toolchain R+X dirs;
 ///   resolved by the caller from the app config; always None on non-Windows)
+/// - `protect_git_ro` - Codex-style `<root>/.git` deny-write inside whichever sandbox
+///   runs (Windows AppContainer deny ACE / Linux ro-bind / macOS SBPL deny); the
+///   builtin git_* tools run in the host process and are unaffected
 ///
 /// # Returns
 /// A ToolResult carrying stdout, stderr, exit_code and timed_out.
@@ -1002,6 +1005,7 @@ pub fn execute_command(
     timeout_ms: Option<u64>,
     allow_network: bool,
     ac_dirs: Option<Vec<String>>,
+    protect_git_ro: bool,
 ) -> ToolResult {
     if command.trim().is_empty() {
         return tool_err("命令为空");
@@ -1067,6 +1071,7 @@ pub fn execute_command(
             allow_network,
             &dirs,
             &interpreter_extra,
+            protect_git_ro,
         );
     }
 
@@ -1090,6 +1095,7 @@ pub fn execute_command(
         command,
         project_root,
         allow_network,
+        protect_git_ro,
     );
     let mut cmd = if let Some(argv) = sandbox_argv {
         let mut c = Command::new(&argv[0]);
@@ -1235,6 +1241,7 @@ fn execute_command_in_appcontainer(
     allow_network: bool,
     toolchain_dirs: &[String],
     best_effort_rx_dirs: &[String],
+    protect_git_ro: bool,
 ) -> ToolResult {
     // Same command-line shape as the native path: cmd /C <command> (cwd is set to
     // the project root by the AC module). With the AppContainer attribute present,
@@ -1257,6 +1264,7 @@ fn execute_command_in_appcontainer(
         allow_network,
         toolchain_dirs,
         best_effort_rx_dirs,
+        protect_git_ro,
     ) {
         Ok(v) => v,
         Err(e) => {
@@ -1403,7 +1411,7 @@ mod tests {
             // targets a nonexistent device name: harmless even if the guard fails
             "dd if=/dev/zero of=/dev/aio_test_nonexistent_device",
         ] {
-            let r = execute_command(cmd, &root, Some(5_000), false, None);
+            let r = execute_command(cmd, &root, Some(5_000), false, None, false);
             assert!(r.is_error, "命令应被拒绝: {cmd}");
             assert!(
                 text_of(&r).contains("高危命令"),
@@ -1482,7 +1490,14 @@ mod tests {
     #[test]
     fn benign_command_still_runs() {
         let root = std::env::temp_dir().to_string_lossy().to_string();
-        let r = execute_command("echo aio_benign_check", &root, Some(10_000), false, None);
+        let r = execute_command(
+            "echo aio_benign_check",
+            &root,
+            Some(10_000),
+            false,
+            None,
+            false,
+        );
         assert!(!r.is_error, "普通命令不应被拦截: {}", text_of(&r));
         assert!(text_of(&r).contains("aio_benign_check"));
     }
@@ -1549,7 +1564,7 @@ mod tests {
         } else {
             "yes 0123456789ABCDEF | head -n 20000"
         };
-        let r = execute_command(cmd, &root, Some(30_000), false, None);
+        let r = execute_command(cmd, &root, Some(30_000), false, None, false);
         let text = text_of(&r);
         assert!(!r.is_error, "大输出命令应正常完成: {text}");
         assert!(!text.contains("超时"), "不应被超时误杀: {text}");
@@ -1798,6 +1813,7 @@ mod tests {
             Some(15_000),
             false,
             None,
+            false,
         );
         let text = text_of(&r);
         assert!(
@@ -1833,6 +1849,7 @@ mod tests {
             Some(30_000),
             false,
             Some(vec![]), // AppContainer enabled, empty toolchain list
+            false,
         );
         let text = text_of(&r);
         assert!(

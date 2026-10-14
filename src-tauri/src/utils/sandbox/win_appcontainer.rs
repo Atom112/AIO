@@ -35,8 +35,9 @@ const STILL_ACTIVE: u32 = 259;
 const SE_FILE_OBJECT: u32 = 1;
 const DACL_SECURITY_INFORMATION: u32 = 0x4;
 const GRANT_ACCESS: i32 = 1;
-/// accctrl.h: REVOKE_ACCESS removes all existing allow-ACEs for the trustee
-/// (used by the SEC-14 reclaim path — the grant direction uses GRANT_ACCESS).
+/// accctrl.h: REVOKE_ACCESS removes all existing ACEs for the trustee (both allow
+/// and deny) — used by the SEC-14 reclaim path and the `.git` history protection
+/// (the grant direction uses GRANT_ACCESS).
 const REVOKE_ACCESS: i32 = 4;
 const SUB_CONTAINERS_AND_OBJECTS_INHERIT: u32 = 3;
 const TRUSTEE_IS_SID: i32 = 0;
@@ -46,6 +47,9 @@ const TRUSTEE_IS_UNKNOWN: i32 = 0;
 /// SEC-14 gate and the mask-aware grant check then never match anything
 /// (the ACE dump probe caught it: allow-ACEs carried type=0).
 const ACCESS_ALLOWED_ACE_TYPE: u8 = 0;
+/// winnt.h: SE_DACL_PROTECTED — the DACL does not inherit ACEs from the parent
+/// (set when the `.git` history protection detaches the subtree).
+const SE_DACL_PROTECTED: u16 = 0x1000;
 const ACL_SIZE_INFORMATION: u32 = 2;
 // Note: attribute numbers must follow the local SDK's WinBase.h enum (SecurityCapabilities = 9,
 // 9 | PROC_THREAD_ATTRIBUTE_INPUT = 0x20009). Using 21 (a different attribute) makes
@@ -264,6 +268,11 @@ extern "system" {
         pacl_information: *mut c_void,
         n_acl_information_length: u32,
         dw_acl_information_class: u32,
+    ) -> Bool;
+    fn GetSecurityDescriptorControl(
+        p_security_descriptor: *mut c_void,
+        p_control: *mut u16,
+        p_revision: *mut u32,
     ) -> Bool;
     fn GetAce(pacl: *mut c_void, dw_ace_index: u32, p_ace: *mut *mut c_void) -> Bool;
     fn EqualSid(p_sid1: *const c_void, p_sid2: *const c_void) -> Bool;
@@ -567,6 +576,239 @@ fn grant_dir_access(
     Ok(())
 }
 
+/// Codex 式 `.git` 仓库历史保护（Windows 实现）：把 `<root>/.git` 的 DACL 转为
+/// protected（断开继承，inherited ACE 固化为 explicit），REVOKE 掉 AppContainer
+/// package SID 的全部 ACE，再补一个只读 GRANT（R+X，带继承）。
+///
+/// 为什么不是 DENY ACE：AppContainer 的文件访问走**两段式**检查——普通 DACL 检查
+/// （用户 SIDs）通过后，还要求 DACL 中存在覆盖所请求访问的 **package SID allow
+/// ACE**。package 段对 DENY 不求值（实测：DENY 已落盘、继承的 package allow 仍在
+/// 时，沙箱写照样成功）。撤掉 package 的全部 ACE 后，第二段找不到写授权 → 沙箱
+/// 内对 `.git` 的写一律失败；读（status/diff/log）经新补的 R+X 放行；宿主进程
+/// 的用户 ACE 原样保留。幂等：进程内缓存 + `SE_DACL_PROTECTED` 且 package 已只读
+/// 的 DACL 扫描。SEC-14 回收路径（REVOKE package SID）与本保护兼容。
+fn protect_git_dir_ro(
+    git_dir: &str,
+    sid: *mut c_void,
+    cache_key_suffix: &str,
+) -> Result<(), String> {
+    let canon = std::path::Path::new(git_dir).canonicalize().map_err(|e| {
+        ierr!(
+            "路径不存在 {}: {}",
+            "Path does not exist {}: {}",
+            git_dir,
+            e
+        )
+    })?;
+    let canon_s = canon.to_string_lossy().into_owned();
+    let cache_key = format!("{cache_key_suffix}:{}", canon_s);
+    {
+        let cache = grants_cache().lock().unwrap();
+        if cache.contains(&cache_key) {
+            return Ok(());
+        }
+    }
+    let path_w = wide(&canon_s);
+
+    let mut dacl: *mut c_void = std::ptr::null_mut();
+    let mut sd: *mut c_void = std::ptr::null_mut();
+    let rc = unsafe {
+        GetNamedSecurityInfoW(
+            path_w.as_ptr(),
+            SE_FILE_OBJECT,
+            DACL_SECURITY_INFORMATION,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            &mut dacl,
+            std::ptr::null_mut(),
+            &mut sd,
+        )
+    };
+    if rc != ERROR_SUCCESS {
+        return Err(ierr!(
+            "GetNamedSecurityInfoW({}) 失败: {}",
+            "GetNamedSecurityInfoW({}) failed: {}",
+            canon_s,
+            rc
+        ));
+    }
+
+    // 幂等快路径：DACL 已 protected 且 package 只剩只读授权 → 无需再动
+    let mut control: u16 = 0;
+    let mut revision: u32 = 0;
+    let dacl_protected = unsafe {
+        GetSecurityDescriptorControl(sd, &mut control, &mut revision) != 0
+            && (control & SE_DACL_PROTECTED) != 0
+    };
+    let already_ro = dacl_protected
+        && dacl_sid_missing_permissions(dacl, sid, FILE_GENERIC_READ | FILE_GENERIC_EXECUTE) == 0
+        && {
+            // package 是否仍持有任何写类 allow ACE（有 = 尚未撤干净）
+            let mut write_bits: u32 = 0;
+            let mut info = AclSizeInformation {
+                acl_bytes_in_use: 0,
+                acl_bytes_free: 0,
+                ace_count: 0,
+            };
+            if unsafe {
+                GetAclInformation(
+                    dacl,
+                    &mut info as *mut _ as *mut c_void,
+                    std::mem::size_of::<AclSizeInformation>() as u32,
+                    ACL_SIZE_INFORMATION,
+                )
+            } != 0
+            {
+                for i in 0..info.ace_count {
+                    let mut ace: *mut c_void = std::ptr::null_mut();
+                    if unsafe { GetAce(dacl, i, &mut ace) } == 0 || ace.is_null() {
+                        continue;
+                    }
+                    let ace_hdr = unsafe { &*(ace as *const AccessAllowedAce) };
+                    if ace_hdr.header.ace_type != ACCESS_ALLOWED_ACE_TYPE {
+                        continue;
+                    }
+                    let ace_sid = unsafe { &(*ace.cast::<AccessAllowedAce>()).sid_start }
+                        as *const u32 as *const c_void;
+                    if unsafe { EqualSid(ace_sid, sid) } != 0 {
+                        write_bits |=
+                            ace_hdr.mask & (FILE_GENERIC_WRITE | DELETE | FILE_DELETE_CHILD);
+                    }
+                }
+            }
+            write_bits == 0
+        };
+    if already_ro {
+        grants_cache().lock().unwrap().insert(cache_key);
+        if !sd.is_null() {
+            unsafe { LocalFree(sd) };
+        }
+        return Ok(());
+    }
+
+    // 三步走（REVOKE 只对 explicit ACE 生效——继承态 ACE 由父目录所有，必须先
+    // 冻结继承使其固化，才能被撤掉）：
+    //   A. 以 PROTECTED 写回当前 DACL → 断开继承，inherited ACE 固化为 explicit
+    //   B. 重读 DACL（此刻已无继承 ACE）
+    //   C. SetEntriesInAclW([REVOKE package, GRANT package RX]) → 撤写留读
+    //   D. 以 PROTECTED 写回新 DACL（保持断继承状态）
+    const PROTECTED_DACL_SECURITY_INFORMATION: u32 = 0x8000_0000;
+    let freeze_rc = unsafe {
+        SetNamedSecurityInfoW(
+            path_w.as_ptr(),
+            SE_FILE_OBJECT,
+            DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            dacl,
+            std::ptr::null_mut(),
+        )
+    };
+    if !sd.is_null() {
+        unsafe { LocalFree(sd) };
+    }
+    if freeze_rc != ERROR_SUCCESS {
+        return Err(ierr!(
+            "冻结 .git 继承({}) 失败: rc={}",
+            "Freezing .git inheritance({}) failed: rc={}",
+            canon_s,
+            freeze_rc
+        ));
+    }
+
+    // B: 重读（冻结后的 DACL 全部为 explicit ACE）
+    let mut dacl2: *mut c_void = std::ptr::null_mut();
+    let mut sd2: *mut c_void = std::ptr::null_mut();
+    let reread_rc = unsafe {
+        GetNamedSecurityInfoW(
+            path_w.as_ptr(),
+            SE_FILE_OBJECT,
+            DACL_SECURITY_INFORMATION,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            &mut dacl2,
+            std::ptr::null_mut(),
+            &mut sd2,
+        )
+    };
+    if reread_rc != ERROR_SUCCESS {
+        return Err(ierr!(
+            "重读冻结后 DACL({}) 失败: rc={}",
+            "Re-reading frozen DACL({}) failed: rc={}",
+            canon_s,
+            reread_rc
+        ));
+    }
+
+    // C: REVOKE package 全部 ACE + GRANT 只读（R+X，随子树继承）
+    let revoke = ExplicitAccessW {
+        grf_access_permissions: 0, // ignored for REVOKE_ACCESS
+        grf_access_mode: REVOKE_ACCESS,
+        grf_inheritance: 0,
+        trustee: TrusteeW {
+            p_multiple_trustee: std::ptr::null_mut(),
+            multiple_trustee_operation: 0,
+            trustee_form: TRUSTEE_IS_SID,
+            trustee_type: TRUSTEE_IS_UNKNOWN,
+            ptstr_name: sid as *mut u16,
+        },
+    };
+    let rx_grant = ExplicitAccessW {
+        grf_access_permissions: FILE_GENERIC_READ | FILE_GENERIC_EXECUTE,
+        grf_access_mode: GRANT_ACCESS,
+        grf_inheritance: SUB_CONTAINERS_AND_OBJECTS_INHERIT,
+        trustee: TrusteeW {
+            p_multiple_trustee: std::ptr::null_mut(),
+            multiple_trustee_operation: 0,
+            trustee_form: TRUSTEE_IS_SID,
+            trustee_type: TRUSTEE_IS_UNKNOWN,
+            ptstr_name: sid as *mut u16,
+        },
+    };
+    let entries = [revoke, rx_grant];
+    let mut new_dacl: *mut c_void = std::ptr::null_mut();
+    let rc2 = unsafe { SetEntriesInAclW(2, entries.as_ptr(), dacl2, &mut new_dacl) };
+    if rc2 != ERROR_SUCCESS || new_dacl.is_null() {
+        if !sd2.is_null() {
+            unsafe { LocalFree(sd2) };
+        }
+        return Err(ierr!(
+            "SetEntriesInAclW({}) 失败: rc={}",
+            "SetEntriesInAclW({}) failed: rc={}",
+            canon_s,
+            rc2
+        ));
+    }
+    // D: PROTECTED 写回（保持断继承状态，项目根授权的任何变化不再波及 .git）
+    let rc3 = unsafe {
+        SetNamedSecurityInfoW(
+            path_w.as_ptr(),
+            SE_FILE_OBJECT,
+            DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            new_dacl,
+            std::ptr::null_mut(),
+        )
+    };
+    if !new_dacl.is_null() {
+        unsafe { LocalFree(new_dacl) };
+    }
+    if !sd2.is_null() {
+        unsafe { LocalFree(sd2) };
+    }
+    if rc3 != ERROR_SUCCESS {
+        return Err(ierr!(
+            "SetNamedSecurityInfoW({}) 失败: {}",
+            "SetNamedSecurityInfoW({}) failed: {}",
+            canon_s,
+            rc3
+        ));
+    }
+    grants_cache().lock().unwrap().insert(cache_key);
+    Ok(())
+}
+
 // ---- SEC-14: project-deletion reclaim ----
 
 /// SEC-14: best-effort reclaim of a deleted project's sandbox artifacts.
@@ -767,6 +1009,7 @@ pub fn spawn_in_appcontainer(
     allow_network: bool,
     extra_rx_dirs: &[String],
     best_effort_rx_dirs: &[String],
+    protect_git_ro: bool,
 ) -> Result<(AcChild, crate::utils::sandbox::JobGuard), String> {
     // 1) profile + SID
     // canonicalize() on Windows returns a \?-prefixed extended path, which CreateProcessW's
@@ -796,6 +1039,30 @@ pub fn spawn_in_appcontainer(
         FILE_GENERIC_READ | FILE_GENERIC_WRITE | FILE_GENERIC_EXECUTE | DELETE | FILE_DELETE_CHILD,
         &hash,
     )?;
+    // Codex 式仓库历史保护：`.git` 子树对沙箱内命令只读。注意 deny ACE 在
+    // AppContainer 两段式 package 检查中不被求值（实测 DENY 落盘后沙箱写依旧
+    // 成功）——正确机制是撤掉 package 的写授权，见 protect_git_dir_ro。
+    // Best-effort：ACL 写失败（如 EDR 拦截）时跳过（fail-safe 方向：少一层
+    // 保护，不是坏沙箱）。
+    if protect_git_ro {
+        let git_dir = std::path::Path::new(&canon_s).join(".git");
+        if git_dir.exists() {
+            if let Err(e) = protect_git_dir_ro(
+                git_dir.to_string_lossy().as_ref(),
+                sid,
+                &format!("{hash}-gitro"),
+            ) {
+                failed_grants_cache().lock().unwrap().insert(format!(
+                    "{}-gitro:{}",
+                    hash,
+                    git_dir.to_string_lossy()
+                ));
+                tracing::warn!(
+                    "[appcontainer] .git 历史保护 {git_dir:?} 应用失败（沙箱内仓库历史保持可变）：{e}"
+                );
+            }
+        }
+    }
     let ac_temp = std::env::temp_dir().join("aio-ac").join(&hash);
     std::fs::create_dir_all(&ac_temp).map_err(|e| {
         ierr!(
@@ -1109,6 +1376,15 @@ mod tests {
         project: &std::path::Path,
         network: bool,
     ) -> (String, String, Option<i32>) {
+        run_ac_protected(cmd, project, network, false)
+    }
+
+    fn run_ac_protected(
+        cmd: &str,
+        project: &std::path::Path,
+        network: bool,
+        protect_git_ro: bool,
+    ) -> (String, String, Option<i32>) {
         std::fs::create_dir_all(project).unwrap();
         let cmd_path = std::env::var("ComSpec").unwrap_or_else(|_| "cmd.exe".to_string());
         let (mut child, _job) = spawn_in_appcontainer(
@@ -1117,6 +1393,7 @@ mod tests {
             network,
             &[],
             &[],
+            protect_git_ro,
         )
         .expect("AppContainer spawn 失败");
         use std::io::Read;
@@ -1196,6 +1473,47 @@ mod tests {
         let project = std::env::temp_dir().join("aio-ac-test-net");
         let (out, _err, code) = run_ac("ping -n 1 -w 500 127.0.0.1", &project, false);
         assert!(code != Some(0), "无 capability 时 ping 应失败 (out={out})");
+        let _ = std::fs::remove_dir_all(&project);
+    }
+
+    /// Codex 式 .git 历史保护 e2e：沙箱内对 `.git` 的写被拒、读保持可用、项目根
+    /// 其他路径不受影响。DENY ACE 短路 DACL 求值，压过继承的项目根 allow。
+    #[test]
+    fn appcontainer_git_history_protection() {
+        let project = std::env::temp_dir().join("aio-ac-test-gitro");
+        let _ = std::fs::remove_dir_all(&project);
+        std::fs::create_dir_all(&project).unwrap();
+        // 宿主侧 git init；无 git CLI 时手工构造 .git 形态（保护只看目录存在与否）
+        let init = std::process::Command::new("git")
+            .args(["init", "-q"])
+            .current_dir(&project)
+            .status();
+        if !matches!(init, Ok(s) if s.success()) {
+            std::fs::create_dir_all(project.join(".git")).unwrap();
+            std::fs::write(project.join(".git").join("HEAD"), "ref: refs/heads/main\n").unwrap();
+        }
+        assert!(project.join(".git").exists(), "前置：.git 必须存在");
+
+        // 沙箱内写 .git：必须被拒
+        let (out, _err, code) =
+            run_ac_protected("echo x > .git\\PROBE_VIOLATION", &project, false, true);
+        assert!(
+            !project.join(".git").join("PROBE_VIOLATION").exists(),
+            ".git 内写入必须被拒 (code={code:?}, out={out})"
+        );
+        // 沙箱内读 .git：必须可用（拒写不得误伤读）
+        let (out2, _err2, code2) = run_ac_protected("type .git\\HEAD", &project, false, true);
+        assert!(
+            code2 == Some(0) && out2.contains("ref:"),
+            ".git 读取应保持可用 (code={code2:?}, out={out2})"
+        );
+        // 项目根其他路径：仍可写（保护不误伤正常工作区写入）
+        let (_o, _e, code3) =
+            run_ac_protected("echo ok > root_write_ok.txt", &project, false, true);
+        assert!(
+            project.join("root_write_ok.txt").exists(),
+            "项目根写入不应受 .git 保护影响 (code={code3:?})"
+        );
         let _ = std::fs::remove_dir_all(&project);
     }
 

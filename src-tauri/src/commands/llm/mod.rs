@@ -587,13 +587,27 @@ pub(crate) async fn execute_builtin_tool(
         let ac_dirs: Option<Vec<String>> = None;
         #[cfg(windows)]
         let sandboxed = ac_dirs.is_some();
+        // 沙箱配置一次性读取：.git 历史保护（Codex 式，仅主项目根——worktree 隔离
+        // 工作区的 .git 是指回主仓库的指针文件，拒写会破坏 worktree 内的 shell git
+        // 流程，故隔离工作区跳过）+ 完全权限自愈的「跳出沙箱兜底」开关
+        let sandbox_cfg = crate::core::config::load_app_config(app).unwrap_or_default();
+        let protect_git_ro = sandbox_cfg.sandbox_protect_git && workspace_root.is_none();
+        #[cfg(windows)]
+        let unsandboxed_fallback = sandbox_cfg.sandbox_unsandboxed_fallback;
         let root = tools_root.clone();
         let command_for_run = command.clone();
         let run_command = |ac_dirs: Option<Vec<String>>, command: String| {
             let root = root.clone();
             async move {
                 tokio::task::spawn_blocking(move || {
-                    shell_tools::execute_command(&command, &root, timeout, allow_network, ac_dirs)
+                    shell_tools::execute_command(
+                        &command,
+                        &root,
+                        timeout,
+                        allow_network,
+                        ac_dirs,
+                        protect_git_ro,
+                    )
                 })
                 .await
                 .unwrap_or_else(|_| shell_tools::tool_err("命令执行线程 panic"))
@@ -645,8 +659,11 @@ pub(crate) async fn execute_builtin_tool(
                 );
                 Ok(if let Some(d) = hint_dir.clone() {
                     sandbox_expand::ExpansionDecision::GrantSessionRetry { dir: d }
-                } else {
+                } else if unsandboxed_fallback {
                     sandbox_expand::ExpansionDecision::RunUnsandboxedOnce
+                } else {
+                    // 跳出沙箱兜底被禁用：无目录可授权，保持原错误让模型自行绕路
+                    sandbox_expand::ExpansionDecision::Ignore
                 })
             } else {
                 sandbox_expand::request_sandbox_expansion(app, &command, &err_text, hint_dir, token)
@@ -663,10 +680,15 @@ pub(crate) async fn execute_builtin_tool(
                     // 会话授权可能写不进去（EDR 拦 ACL 写，round 10/11 实录：对
                     // D:\Git\cmd 的 SetNamedSecurityInfoW 被 error 5 拒绝）——授权后
                     // 仍命中拒绝签名 = 授权未落地或不足。完全权限承诺无需看守：
-                    // Auto 直接跳出沙箱兜底重试一次，不再对同一堵墙盲试；授权落地
-                    // 且命令成功时把目录永久记入工具链配置（等价弹窗的「永久记住」，
-                    // 后续会话免重新授权、免再撞一次 EDR）。
-                    if auto_expand && sandbox_denial_signature(&retried, &command_for_run) {
+                    // Auto 自动跳出沙箱兜底重试一次，不再对同一堵墙盲试（可用
+                    // `sandboxUnsandboxedFallback=false` 关闭运行时边界突破，此时
+                    // 保持原错误让模型自行绕路）；授权落地且命令成功时把目录永久
+                    // 记入工具链配置（等价弹窗的「永久记住」，后续会话免重新授权、
+                    // 免再撞一次 EDR）。
+                    if auto_expand
+                        && unsandboxed_fallback
+                        && sandbox_denial_signature(&retried, &command_for_run)
+                    {
                         run_command(None, command_for_run).await
                     } else {
                         if auto_expand && !retried.is_error {

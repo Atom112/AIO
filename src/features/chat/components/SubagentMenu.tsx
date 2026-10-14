@@ -112,7 +112,24 @@ const SubagentMenu: Component<SubagentMenuProps> = (props) => {
                         setSubagentMenuOpen(false);
                       }}
                     >
-                      <span class="flex items-center justify-center w-4 h-4 shrink-0">
+                      <span
+                        class="relative flex items-center justify-center w-5 h-5 rounded shrink-0"
+                        style={{
+                          background: ps.bgColor,
+                          border: `1px solid ${ps.borderColor}`,
+                          color: ps.color,
+                          animation:
+                            sub.status === 'running'
+                              ? 'subagentPulse 1.6s ease-in-out infinite'
+                              : 'none',
+                        }}
+                      >
+                        <Icon name={ps.icon} size={11} />
+                        <Show when={sub.status === 'running'}>
+                          <span class="subagent-work-orbit" style={{ color: ps.color }} />
+                        </Show>
+                      </span>
+                      <span class="flex items-center justify-center w-3.5 h-3.5 shrink-0">
                         <Show
                           when={sub.status === 'running'}
                           fallback={
@@ -128,16 +145,6 @@ const SubagentMenu: Component<SubagentMenuProps> = (props) => {
                         >
                           <Icon name="spinner" size={12} class="animate-spin shrink-0" />
                         </Show>
-                      </span>
-                      <span
-                        class="flex items-center justify-center w-5 h-5 rounded shrink-0"
-                        style={{
-                          background: ps.bgColor,
-                          border: `1px solid ${ps.borderColor}`,
-                          color: ps.color,
-                        }}
-                      >
-                        <Icon name={ps.icon} size={11} />
                       </span>
                       <span class="flex-1 min-w-0 text-left">
                         <span class="flex items-center gap-1.5">

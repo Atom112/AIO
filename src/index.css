@@ -116,6 +116,19 @@
      (not a self-drawn copy), so dialogs of any height share the exact same look. */
   --dialog-bg: rgba(var(--surface-bg), 0.55);
 
+  /* ── Subagent role palette (per-profile identity colors, used by SubagentConversationView) ── */
+  --role-explorer-rgb: 100, 149, 237;
+  --role-coder-rgb: 76, 175, 144;
+  --role-reviewer-rgb: 96, 205, 255;
+  --role-debugger-rgb: 255, 107, 107;
+  --role-writer-rgb: 64, 196, 180;
+  --role-tester-rgb: 139, 195, 74;
+  --role-requirements-rgb: 255, 183, 77;
+  --role-architect-rgb: 149, 117, 205;
+  --role-vision-rgb: 255, 105, 180;
+  --role-general-rgb: 186, 104, 200;
+  --role-default-rgb: 156, 163, 175;
+
   /* ── App background (light/default theme): same as VaporGit (four corner glows + #2f2f2f base) ── */
   --app-bg:
     radial-gradient(circle at 20% 20%, rgba(120, 113, 255, 0.55) 0, transparent 500px),
@@ -369,6 +382,47 @@
     opacity: 1;
     transform: translateY(0) scale(1);
   }
+}
+
+/* ── Subagent work-state: a dot orbits the profile chip while running ── */
+@keyframes subagentOrbit {
+  from {
+    transform: rotate(0deg) translateX(9px) rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg) translateX(9px) rotate(-360deg);
+  }
+}
+
+@keyframes subagentPulse {
+  0%,
+  100% {
+    opacity: 1;
+    box-shadow: 0 0 0 0 rgba(var(--text-base-rgb), 0.18);
+  }
+  50% {
+    opacity: 0.75;
+    box-shadow: 0 0 0 3px rgba(var(--text-base-rgb), 0);
+  }
+}
+
+.subagent-work-orbit {
+  position: absolute;
+  inset: -3px;
+  border-radius: 50%;
+  pointer-events: none;
+}
+.subagent-work-orbit::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 3.5px;
+  height: 3.5px;
+  margin: -1.75px 0 0 -1.75px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: subagentOrbit 1.6s linear infinite;
 }
 
 /* ── Row entrance ── */

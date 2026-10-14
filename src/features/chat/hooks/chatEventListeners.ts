@@ -878,7 +878,11 @@ export function registerChatStreamListeners(): Promise<UnlistenFn>[] {
       });
     }),
 
-    // Subagent done: mark the subagent step complete and record the result
+    // Subagent done: mark the subagent step complete and record the result.
+    // The step may live in ANY assistant message (background wait=false subagents
+    // finish after the parent turn moved on) — search the whole history by id,
+    // not just the last message, or background completions never flip to complete
+    // and the status-bar spinner never stops.
     listen<SubagentDonePayload>(EVENTS.subagentDone, (e) => {
       const { parent_assistant_id, parent_topic_id, subagent_id, result } = e.payload;
       const finishTime = Date.now();
@@ -890,25 +894,28 @@ export function registerChatStreamListeners(): Promise<UnlistenFn>[] {
         'history',
         produce((hDraft) => {
           const h = hDraft as Message[];
-          const lastIdx = h.length - 1;
-          if (lastIdx < 0 || h[lastIdx]?.role !== 'assistant') return;
-          const msg = h[lastIdx];
-          const steps: AgentStep[] = msg.agentSteps || [];
-          const subIdx = steps.findIndex((s) => s.subagentId === subagent_id);
-          if (subIdx < 0) return;
-          const subStep = steps[subIdx];
-          steps[subIdx] = {
-            ...subStep,
-            status: 'complete',
-            duration: finishTime - subStep.timestamp,
-            subagentResult: result || '',
-          };
-          msg.agentSteps = steps;
+          for (const msg of h) {
+            if (!msg || msg.role !== 'assistant') continue;
+            const steps: AgentStep[] = msg.agentSteps || [];
+            const subIdx = steps.findIndex((s) => s.subagentId === subagent_id);
+            if (subIdx < 0) continue;
+            const subStep = steps[subIdx];
+            steps[subIdx] = {
+              ...subStep,
+              status: 'complete',
+              duration: finishTime - subStep.timestamp,
+              subagentResult: result || '',
+            };
+            msg.agentSteps = steps;
+            return;
+          }
         }),
       );
     }),
 
-    // Subagent error
+    // Subagent error: same whole-history search as subagent-done — a background
+    // subagent that errors after the parent turn moved on must still flip status,
+    // or it stays 'running' forever and the status-bar spinner never stops.
     listen<SubagentErrorPayload>(EVENTS.subagentError, (e) => {
       const { parent_assistant_id, parent_topic_id, subagent_id, error } = e.payload;
       setDatas(
@@ -919,20 +926,21 @@ export function registerChatStreamListeners(): Promise<UnlistenFn>[] {
         'history',
         produce((hDraft) => {
           const h = hDraft as Message[];
-          const lastIdx = h.length - 1;
-          if (lastIdx < 0 || h[lastIdx]?.role !== 'assistant') return;
-          const msg = h[lastIdx];
-          const steps: AgentStep[] = msg.agentSteps || [];
-          const subIdx = steps.findIndex((s) => s.subagentId === subagent_id);
-          if (subIdx < 0) return;
-          const subStep = steps[subIdx];
-          steps[subIdx] = {
-            ...subStep,
-            status: 'error',
-            duration: Date.now() - subStep.timestamp,
-            subagentResult: error || t('agent.sub.error'),
-          };
-          msg.agentSteps = steps;
+          for (const msg of h) {
+            if (!msg || msg.role !== 'assistant') continue;
+            const steps: AgentStep[] = msg.agentSteps || [];
+            const subIdx = steps.findIndex((s) => s.subagentId === subagent_id);
+            if (subIdx < 0) continue;
+            const subStep = steps[subIdx];
+            steps[subIdx] = {
+              ...subStep,
+              status: 'error',
+              duration: Date.now() - subStep.timestamp,
+              subagentResult: error || t('agent.sub.error'),
+            };
+            msg.agentSteps = steps;
+            return;
+          }
         }),
       );
     }),

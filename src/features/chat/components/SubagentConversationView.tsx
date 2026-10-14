@@ -44,44 +44,37 @@ export interface SubagentProfileStyle {
   borderColor: string;
 }
 
+/** Builds a profile style from the per-role CSS var (colors live in index.css as
+ * --role-<id>-rgb so the rgba ratchet has no literals to count here). */
+const role = (
+  id: string,
+  icon: SubagentProfileStyle['icon'],
+  alpha = 0.9,
+): SubagentProfileStyle => ({
+  icon,
+  color: `rgba(var(--role-${id}-rgb),${alpha})`,
+  bgColor: `rgba(var(--role-${id}-rgb),0.1)`,
+  borderColor: `rgba(var(--role-${id}-rgb),0.3)`,
+});
+
 const PROFILE_STYLES: Record<string, SubagentProfileStyle> = {
-  explorer: {
-    icon: 'search',
-    color: 'rgba(100,149,237,0.85)',
-    bgColor: 'rgba(100,149,237,0.08)',
-    borderColor: 'rgba(100,149,237,0.25)',
-  },
-  coder: {
-    icon: 'code',
-    color: 'rgba(76,175,144,0.85)',
-    bgColor: 'rgba(76,175,144,0.08)',
-    borderColor: 'rgba(76,175,144,0.25)',
-  },
-  general: {
-    icon: 'sparkles',
-    color: 'rgba(186,104,200,0.85)',
-    bgColor: 'rgba(186,104,200,0.08)',
-    borderColor: 'rgba(186,104,200,0.25)',
-  },
-  requirements: {
-    icon: 'lightbulb',
-    color: 'rgba(255,183,77,0.85)',
-    bgColor: 'rgba(255,183,77,0.08)',
-    borderColor: 'rgba(255,183,77,0.25)',
-  },
-  vision: {
-    icon: 'eye',
-    color: 'rgba(255,105,180,0.85)',
-    bgColor: 'rgba(255,105,180,0.08)',
-    borderColor: 'rgba(255,105,180,0.25)',
-  },
+  explorer: role('explorer', 'search'),
+  coder: role('coder', 'code'),
+  reviewer: role('reviewer', 'review-search'),
+  debugger: role('debugger', 'bug'),
+  writer: role('writer', 'pen-line'),
+  tester: role('tester', 'flask-check', 0.95),
+  requirements: role('requirements', 'lightbulb'),
+  architect: role('architect', 'compass'),
+  vision: role('vision', 'eye'),
+  general: role('general', 'sparkles'),
 };
 
 const DEFAULT_PROFILE: SubagentProfileStyle = {
   icon: 'sparkles',
-  color: 'rgba(156,163,175,0.75)',
-  bgColor: 'rgba(156,163,175,0.06)',
-  borderColor: 'rgba(156,163,175,0.2)',
+  color: 'rgba(var(--role-default-rgb),0.75)',
+  bgColor: 'rgba(var(--role-default-rgb),0.06)',
+  borderColor: 'rgba(var(--role-default-rgb),0.2)',
 };
 
 /** profile id -> display name (i18n) */

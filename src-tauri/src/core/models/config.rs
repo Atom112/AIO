@@ -180,13 +180,6 @@ pub struct AppConfig {
     /// Whether read-only tools in the same response block execute concurrently (default true). Off falls back to fully serial execution.
     #[serde(default = "default_true", rename = "parallelToolExecution")]
     pub parallel_tool_execution: bool,
-    /// Main agent built-in tool set: "hybrid" (default: read-only tools direct, mutating tools via subagents),
-    /// "orchestrator" (strict orchestrator, legacy behavior), "full" (all built-in tools, Claude Code style).
-    #[serde(
-        default = "default_main_agent_tool_access",
-        rename = "mainAgentToolAccess"
-    )]
-    pub main_agent_tool_access: String,
     /// Retries for the pre-flight phase of main model calls (POST + status check) (default 3, backoff 1s/2s/4s).
     /// Only covers failures before any content is emitted; mid-stream errors are not retried.
     #[serde(default = "default_model_call_retries", rename = "modelCallRetries")]
@@ -221,11 +214,6 @@ pub(crate) fn default_model_call_retries() -> u32 {
     3
 }
 
-/// Default value of the main agent built-in tool set.
-pub(crate) fn default_main_agent_tool_access() -> String {
-    "hybrid".into()
-}
-
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
@@ -241,7 +229,6 @@ impl Default for AppConfig {
             max_tool_rounds: None,
             subagent_isolation_mode: default_subagent_isolation_mode(),
             parallel_tool_execution: default_true(),
-            main_agent_tool_access: default_main_agent_tool_access(),
             model_call_retries: default_model_call_retries(),
             sandbox_required: default_true(),
             sandbox_windows: default_sandbox_windows(),

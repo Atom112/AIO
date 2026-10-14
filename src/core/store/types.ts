@@ -271,8 +271,6 @@ export interface AppConfig {
   maxToolRounds?: number;
   /** Parallel write isolation for subagents: "auto" (worktree on git projects, default) | "worktree" | "off" */
   subagentIsolationMode?: string;
-  /** Main agent built-in tool access: "hybrid" (default: reads direct, mutations via subagents) | "full" (all built-in tools incl. execute_command) | "orchestrator" (strict delegation) */
-  mainAgentToolAccess?: string;
 }
 
 /* Activated model config interface holding connection info for available models */

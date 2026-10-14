@@ -149,13 +149,7 @@ export const Dropdown = <V extends string = string>(props: DropdownProps<V>) => 
       </button>
 
       <div
-        class={`absolute z-[100] min-w-full mt-1 rounded-[10px] p-1 transition-all duration-150 ease-out origin-top ${props.align === 'right' ? 'right-0' : 'left-0'} top-full`}
-        style={{
-          background: 'var(--popup-bg)',
-          'backdrop-filter': 'var(--popup-blur)',
-          border: '1px solid var(--border-dim)',
-          'box-shadow': '0 12px 40px rgba(0, 0, 0, 0.45)',
-        }}
+        class={`dropdown-menu absolute z-[100] min-w-full mt-1 rounded-[10px] p-1 transition-all duration-150 ease-out origin-top ${props.align === 'right' ? 'right-0' : 'left-0'} top-full`}
         classList={{
           'invisible opacity-0 scale-95 translate-y-1 pointer-events-none': !open(),
           'visible opacity-100 scale-100 translate-y-0 pointer-events-auto': open(),

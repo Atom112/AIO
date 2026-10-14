@@ -160,7 +160,6 @@ impl AgentTurnRunner {
             &skills,
             app_config.memory_enabled,
             mcp_tools.as_ref(),
-            &app_config.main_agent_tool_access,
         );
         let tools = tool_set.tools;
         let tool_server_map = tool_set.tool_server_map;

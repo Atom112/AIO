@@ -80,8 +80,7 @@ const NavBar: Component = () => {
     try {
       const [models, config] = await Promise.all([loadActivatedModels(), loadAppConfig()]);
       setDatas('activatedModels', models);
-      // Sync the app-config signal with backend truth (round 11): the agent system
-      // prompt reads mainAgentToolAccess from here, so the store must reflect the
+      // Sync the app-config signal with backend truth: the store must reflect the
       // persisted config, not the localStorage mirror.
       setConfig(config);
 

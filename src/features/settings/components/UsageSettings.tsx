@@ -192,12 +192,13 @@ const UsageSettings: Component = () => {
 
               {/* Model breakdown */}
               <Show when={byModel().length > 0}>
+                {/* fade-only entrance: this section mounts on heatmap click; rowIn's
+                    translateY would transiently overflow the scroll area and flash a scrollbar */}
                 <div
-                  class="rounded-xl p-5 animate-row-in"
+                  class="rounded-xl p-5 animate-fade-only"
                   style={{
                     background: 'rgba(var(--text-base-rgb), 0.035)',
                     border: '1px solid var(--border-dim)',
-                    'animation-delay': '120ms',
                   }}
                 >
                   <Show

@@ -383,6 +383,23 @@
   }
 }
 
+/* Opacity-only entrance for sections mounted by user interaction (e.g. the usage
+   page's per-day model breakdown): rowIn's translateY(6px) transiently extends the
+   parent's scrollable overflow (transforms count toward it), flashing a scrollbar
+   when the content sits within 6px of the container edge. */
+@keyframes fadeOnly {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.animate-fade-only {
+  animation: fadeOnly 0.25s ease-out backwards;
+}
+
 /* ── Thinking icon ── */
 @keyframes thinkIconPulse {
   0%,

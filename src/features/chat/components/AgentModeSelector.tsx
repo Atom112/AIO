@@ -52,6 +52,12 @@ const MODES: ModeOption[] = [
     icon: 'zap',
   },
   {
+    value: 'danger',
+    labelKey: 'agent.mode.danger',
+    descKey: 'agent.mode.dangerDescription',
+    icon: 'alert-triangle',
+  },
+  {
     value: 'plan',
     labelKey: 'agent.mode.plan',
     descKey: 'agent.mode.planDescription',
@@ -63,7 +69,25 @@ const MODE_COLORS: Record<string, string> = {
   off: 'rgba(var(--primary-rgb),0.4)',
   normal: 'rgba(124,217,160,0.7)',
   auto: 'rgba(224,192,96,0.7)',
+  danger: 'rgba(224,96,96,0.8)',
   plan: 'rgba(160,124,217,0.7)',
+};
+
+/** Per-mode risk-dialog copy keys (auto and danger each have their own warning). */
+const WARNING_KEYS: Record<
+  'auto' | 'danger',
+  { primary: TranslationKey; details: TranslationKey; trust: TranslationKey }
+> = {
+  auto: {
+    primary: 'agent.mode.warningPrimary',
+    details: 'agent.mode.warningDetails',
+    trust: 'agent.mode.warningTrust',
+  },
+  danger: {
+    primary: 'agent.mode.dangerWarningPrimary',
+    details: 'agent.mode.dangerWarningDetails',
+    trust: 'agent.mode.dangerWarningTrust',
+  },
 };
 
 const AgentModeSelector: Component = () => {
@@ -71,7 +95,8 @@ const AgentModeSelector: Component = () => {
   const [showAutoWarning, setShowAutoWarning] = createSignal(false);
   let containerRef: HTMLDivElement | undefined;
   let autoModeConfirmed = false; // remembered for the session; after one confirmation the dialog no longer shows
-  let pendingMode: AgentMode = 'auto'; // mode currently awaiting confirmation
+  let dangerModeConfirmed = false; // 本机全权档的独立会话内一次确认（警示更强）
+  const [pendingMode, setPendingMode] = createSignal<AgentMode>('auto'); // mode currently awaiting confirmation
 
   const asst = () => datas.assistants.find((a) => a.id === currentAssistantId()) as any;
   const currentMode = (): AgentMode => asst()?.agentMode || 'off';
@@ -89,9 +114,12 @@ const AgentModeSelector: Component = () => {
   onMount(() => document.addEventListener('mousedown', onDocClick));
   onCleanup(() => document.removeEventListener('mousedown', onDocClick));
   const choose = async (mode: AgentMode) => {
-    // Switching to 完全权限 (auto = full autonomy inherent) shows the risk dialog first
-    if (mode === 'auto' && !autoModeConfirmed) {
-      pendingMode = mode;
+    // Switching to 完全权限 (auto) or 本机全权 (danger = sandbox disabled entirely)
+    // shows the mode-specific risk dialog first (session-once per mode)
+    const needsConfirm =
+      (mode === 'auto' && !autoModeConfirmed) || (mode === 'danger' && !dangerModeConfirmed);
+    if (needsConfirm) {
+      setPendingMode(mode);
       setOpen(false);
       setShowAutoWarning(true);
       return;
@@ -216,7 +244,7 @@ const AgentModeSelector: Component = () => {
         </div>
       </div>
 
-      {/* Auto mode risk warning dialog */}
+      {/* Auto / Danger mode risk warning dialog */}
       <Show when={showAutoWarning()}>
         <div
           class="fixed inset-0 z-[2000] flex items-center justify-center bg-black/25"
@@ -235,10 +263,15 @@ const AgentModeSelector: Component = () => {
             onClick={(e) => e.stopPropagation()}
           >
             <div class="flex items-center gap-3 mb-4">
-              <Icon name="alert-triangle" size={24} />
+              <Icon
+                name="alert-triangle"
+                size={24}
+                style={{ color: pendingMode() === 'danger' ? 'rgba(224,96,96,0.9)' : undefined }}
+              />
               <h2
                 style={{
-                  color: 'rgba(224,192,96,0.9)',
+                  color:
+                    pendingMode() === 'danger' ? 'rgba(224,96,96,0.95)' : 'rgba(224,192,96,0.9)',
                   'font-size': '1.1rem',
                   'font-weight': '600',
                   margin: '0',
@@ -256,9 +289,15 @@ const AgentModeSelector: Component = () => {
                 'margin-bottom': '1.5rem',
               }}
             >
-              <p style={{ margin: '0 0 0.75rem 0' }}>{t('agent.mode.warningPrimary')}</p>
-              <p style={{ margin: '0 0 0.75rem 0' }}>{t('agent.mode.warningDetails')}</p>
-              <p style={{ margin: '0' }}>{t('agent.mode.warningTrust')}</p>
+              <p style={{ margin: '0 0 0.75rem 0' }}>
+                {t(WARNING_KEYS[pendingMode() as 'auto' | 'danger'].primary)}
+              </p>
+              <p style={{ margin: '0 0 0.75rem 0' }}>
+                {t(WARNING_KEYS[pendingMode() as 'auto' | 'danger'].details)}
+              </p>
+              <p style={{ margin: '0' }}>
+                {t(WARNING_KEYS[pendingMode() as 'auto' | 'danger'].trust)}
+              </p>
             </div>
 
             <div class="flex justify-end gap-3">
@@ -269,18 +308,29 @@ const AgentModeSelector: Component = () => {
                 type="button"
                 class="px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 cursor-pointer border-solid"
                 style={{
-                  background: 'rgba(224,192,96,0.1)',
-                  color: 'rgba(224,192,96,0.95)',
-                  border: '1.5px solid rgba(224,192,96,0.5)',
+                  background:
+                    pendingMode() === 'danger' ? 'rgba(224,96,96,0.1)' : 'rgba(224,192,96,0.1)',
+                  color:
+                    pendingMode() === 'danger' ? 'rgba(224,96,96,0.95)' : 'rgba(224,192,96,0.95)',
+                  border:
+                    pendingMode() === 'danger'
+                      ? '1.5px solid rgba(224,96,96,0.5)'
+                      : '1.5px solid rgba(224,192,96,0.5)',
                 }}
                 onClick={async () => {
-                  autoModeConfirmed = true;
+                  if (pendingMode() === 'danger') {
+                    dangerModeConfirmed = true;
+                  } else {
+                    autoModeConfirmed = true;
+                  }
                   setShowAutoWarning(false);
                   // Perform the actual mode switch
-                  await choose(pendingMode);
+                  await choose(pendingMode());
                 }}
               >
-                {t('agent.mode.warningConfirm', { mode: t('agent.mode.auto') })}
+                {t('agent.mode.warningConfirm', {
+                  mode: t(pendingMode() === 'danger' ? 'agent.mode.danger' : 'agent.mode.auto'),
+                })}
               </button>
             </div>
           </div>

@@ -268,7 +268,7 @@ pub(crate) async fn handle_delegate_task(
     let project_root = file_tools::resolve_project_root(app, project_id)?;
 
     // Permission check: user confirmation required outside Auto mode
-    if *agent_mode != AgentMode::Auto {
+    if !agent_mode.is_full_autonomy() {
         let custom_rules = permission::load_permissions(Some(&project_root)).rules;
         let action = permission::check_permission(
             tool_names::DELEGATE_TASK,
@@ -487,7 +487,7 @@ async fn merge_pending_workspaces(
     }
 
     // One batch approval outside Auto mode (the launch approval covered spawning only)
-    if *agent_mode != AgentMode::Auto {
+    if !agent_mode.is_full_autonomy() {
         let details = pending
             .iter()
             .map(|p| {
@@ -885,7 +885,7 @@ pub(crate) async fn handle_delegate_tasks(
     }
 
     // Permission check: one approval for the whole batch (outside Auto mode)
-    if *agent_mode != AgentMode::Auto {
+    if !agent_mode.is_full_autonomy() {
         // Resolve the project root to load permission rules
         let project_root = file_tools::resolve_project_root(app, project_id)?;
         let custom_rules = permission::load_permissions(Some(&project_root)).rules;

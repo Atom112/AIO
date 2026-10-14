@@ -1498,7 +1498,16 @@ mod tests {
                 .status()
                 .expect("git add 运行");
             std::process::Command::new("git")
-                .args(["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "seed"])
+                .args([
+                    "-c",
+                    "user.name=t",
+                    "-c",
+                    "user.email=t@t",
+                    "commit",
+                    "-q",
+                    "-m",
+                    "seed",
+                ])
                 .current_dir(&project)
                 .status()
                 .expect("git commit 运行");
@@ -1585,13 +1594,13 @@ mod tests {
                 "挪走后的旧历史仍必须只读 (code={c2:?}, out={o2})"
             );
             let (_o3, _e3, c3) = run_ac_protected("type .git-old\\HEAD", &project, false, true);
-            assert!(
-                c3 == Some(0),
-                "挪走后的旧历史读取仍应可用 (code={c3:?})"
-            );
+            assert!(c3 == Some(0), "挪走后的旧历史读取仍应可用 (code={c3:?})");
         } else {
             // 若机器策略连改名都拦（更强），同样满足「历史不可改写」
-            assert!(code != Some(0) || out.is_empty() || !renamed, "ren 被拒也算满足保护");
+            assert!(
+                code != Some(0) || out.is_empty() || !renamed,
+                "ren 被拒也算满足保护"
+            );
         }
         let _ = std::fs::remove_dir_all(&project);
     }

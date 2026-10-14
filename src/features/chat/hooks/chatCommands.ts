@@ -241,7 +241,7 @@ export function registerChatCommands(deps: ChatCommandDeps): string[] {
       if (!id) return;
       const asst = datas.assistants.find((a) => a.id === id);
       const current: AgentMode = asst?.agentMode ?? 'off';
-      const modes: AgentMode[] = ['off', 'normal', 'auto', 'plan'];
+      const modes: AgentMode[] = ['off', 'normal', 'auto', 'danger', 'plan'];
       const idx = modes.indexOf(current);
       const next = modes[(idx + 1) % modes.length];
       setDatas('assistants', (a) => a.id === id, 'agentMode', next);

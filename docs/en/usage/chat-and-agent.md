@@ -54,18 +54,25 @@ Both sidebars support collapsing to expand the message area:
 
 ## Agent Modes
 
-| Mode            | Reading and Analysis                         | Write File / Git Changes                                            | Shell and Other Tools                                       |
-| --------------- | -------------------------------------------- | ------------------------------------------------------------------- | ----------------------------------------------------------- |
-| Read-only       | File reads, search, Git history, web queries | Denied                                                              | Denied; without a project selected this is pure chat        |
-| Workspace edit  | Allowed by default                           | Writes, edits, directory creation run directly; deletions still ask | Commands, `git add`/`git commit`, etc. require confirmation |
-| Full permission | Allowed by default                           | Allowed by default                                                  | Commands run directly; sandbox denials auto-expand          |
-| Plan            | Read, search, Git status/Diff/Log allowed    | Writing, directory creation, deletion, and Git changes denied       | Web tools allowed; other MCP tools evaluated per rules      |
+| Mode               | Reading and Analysis                         | Write File / Git Changes                                            | Shell and Other Tools                                       |
+| ------------------ | -------------------------------------------- | ------------------------------------------------------------------- | ----------------------------------------------------------- |
+| Read-only          | File reads, search, Git history, web queries | Denied                                                              | Denied; without a project selected this is pure chat        |
+| Workspace edit     | Allowed by default                           | Writes, edits, directory creation run directly; deletions still ask | Commands, `git add`/`git commit`, etc. require confirmation |
+| Full permission    | Allowed by default                           | Allowed by default                                                  | Commands run directly; sandbox denials auto-expand          |
+| Machine full trust | Allowed by default                           | Allowed by default                                                  | Commands run OUTSIDE the sandbox with full user privileges  |
+| Plan               | Read, search, Git status/Diff/Log allowed    | Writing, directory creation, deletion, and Git changes denied       | Web tools allowed; other MCP tools evaluated per rules      |
 
 ### Full-Permission Mode
 
 Entering full-permission mode first shows a risk confirmation: in this mode commands (including network-declaring ones) no longer ask per command, and sandbox denials auto-remediate under a narrowed policy without the ask-once throttling — "interpreter/toolchain invisible" denials grant the session first, and a grant that lands and succeeds is remembered permanently; **access-denied denials (write targets, `.git` protection) never leave the sandbox**; the sole exception is a NOT-FOUND denial whose grant failed to land, which retries once outside the sandbox only with `sandboxUnsandboxedFallback` explicitly enabled (default off) and is annotated in the result. The whole flow runs unattended. `.git` stays read-only inside the sandbox (`sandboxProtectGit`; Git writes go through the builtin `git_*` tools), and tools from untrusted MCP servers still ask per call (project servers are trusted via the project-open confirmation — trusted ones no longer prompt; mark global servers trusted in MCP settings). `deny` and custom `ask` rules in `.aio/permissions.json` still take precedence, and file paths remain constrained to the project root directory.
 
 ![Agent File Diff and Approval](../../assets/screenshots/agent-diff-approval.webp)
+
+### Machine-Full-Trust Mode
+
+One tier above full permission: the same full autonomy, plus commands **entirely outside the OS sandbox**, running natively with full user privileges — no path restrictions, no network restrictions, no `.git` protection; the global sandbox configuration (`sandboxWindows`/`sandboxProtectGit`, etc.) does not apply in this tier. It exists for scenarios where the boundary is carried by the environment itself: disposable test machines, containers, VMs (the counterpart of Codex's `--dangerously-bypass-approvals-and-sandbox` / DSH's danger-full-access).
+
+Entering shows a **dedicated red risk warning** (confirmed once per session) stating that commands take effect on the entire machine. Do not use this tier on a daily development machine — full-permission mode already covers zero-confirmation needs with the sandbox carrying the boundary; machine-full-trust removes the app-layer fence, and only makes sense when the outer environment is disposable.
 
 ## Agent Built-in Tools
 

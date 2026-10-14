@@ -4,13 +4,16 @@ use serde::{Deserialize, Serialize};
 
 /// Agent execution mode.
 ///
-/// The three-tier ladder (wire values are stable — they are persisted in the
+/// The mode ladder (wire values are stable — they are persisted in the
 /// assistants table; only the user-facing labels/semantics changed):
-/// - `off`   → 「只读」: read-only agent (reads/search/web/think; mutations denied)
-/// - `normal`→ 「工作区内修改」: workspace edits without confirmation; deletes/commands still ask
-/// - `auto`  → 「完全权限」: full autonomy inherent (sandbox auto-expansion + network
+/// - `off`    → 「只读」: read-only agent (reads/search/web/think; mutations denied)
+/// - `normal` → 「工作区内修改」: workspace edits without confirmation; deletes/commands still ask
+/// - `auto`   → 「完全权限」: full autonomy inherent (sandbox auto-expansion + network
 ///   gate bypass + everything auto-allowed); risk confirmed on mode entry
-/// - `plan`  → 「计划」: research + plan only
+/// - `danger` → 「本机全权」: Auto plus the OS sandbox disabled entirely — commands run
+///   natively with user privileges. The DSH/Codex-YOLO tier: every entry shows an
+///   explicit red warning; intended for disposable test machines / containers
+/// - `plan`   → 「计划」: research + plan only
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 #[derive(Default)]
@@ -25,8 +28,21 @@ pub enum AgentMode {
     /// Full-permission mode (formerly "auto"): everything auto-allowed — sandbox
     /// auto-expansion and the network-declaration bypass are inherent, no opt-in
     Auto,
+    /// Machine-full-trust mode: identical permissions to Auto plus the OS sandbox
+    /// disabled entirely (commands run natively). The explicit opt-in replacement
+    /// for hand-editing sandboxWindows=off + sandboxRequired=false.
+    Danger,
     /// Plan mode: presents a plan first, executes after user confirmation
     Plan,
+}
+
+impl AgentMode {
+    /// Whether this mode grants inherent full autonomy (everything auto-allowed,
+    /// network gate bypassed, untrusted-MCP gate bypassed): `auto` and `danger`.
+    /// Sandbox behavior differs (`auto` keeps the OS sandbox, `danger` disables it).
+    pub fn is_full_autonomy(&self) -> bool {
+        matches!(self, AgentMode::Auto | AgentMode::Danger)
+    }
 }
 
 // ====== Custom Subagent Profiles ======

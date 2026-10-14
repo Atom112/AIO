@@ -70,6 +70,7 @@ const ProjectMcpTrustModal: Component = () => {
           class="rounded-lg p-6 w-[92%] max-w-[560px] max-h-[80vh] overflow-y-auto flex flex-col gap-4"
           style={{
             background: 'var(--dialog-bg)',
+            'background-attachment': 'fixed',
             'backdrop-filter': 'var(--popup-blur)',
             border: '1px solid var(--border-dim)',
           }}

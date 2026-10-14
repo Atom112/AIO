@@ -51,7 +51,7 @@ const reasoningPopup = `
 </div>`;
 
 const modal = `
-<div class="rounded-xl w-full max-w-md p-6" style="background:var(--dialog-bg);backdrop-filter:var(--popup-blur);border:1px solid var(--border-dim);box-shadow:0 8px 32px rgba(0,0,0,0.5)">
+<div class="rounded-xl w-full max-w-md p-6" style="background:var(--dialog-bg);background-attachment:fixed;backdrop-filter:var(--popup-blur);border:1px solid var(--border-dim);box-shadow:0 8px 32px rgba(0,0,0,0.5)">
   <h2 class="text-lg font-semibold text-white mb-4">新建项目</h2>
   <label class="block text-sm text-white/60 mb-1.5">项目名称</label>
   <input type="text" class="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-white text-sm mb-4" value="my-project" readonly />
@@ -68,7 +68,7 @@ const modal = `
 </div>`;
 
 const modalDark700 = `
-<div class="bg-[var(--dialog-bg)] backdrop-blur-[24px] border border-white/15 rounded-xl shadow-2xl w-full max-w-md p-6">
+<div class="backdrop-blur-[24px] border border-white/15 rounded-xl shadow-2xl w-full max-w-md p-6" style="background:var(--dialog-bg);background-attachment:fixed">
   <h2 class="text-lg font-semibold text-white mb-4">新建项目（项目创建弹窗）</h2>
   <input type="text" class="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-white text-sm mb-4" value="my-project" readonly />
   <div class="flex justify-end gap-3">
@@ -128,8 +128,8 @@ const column = (theme, title) => `
   ${section('下拉菜单 Dropdown', dropdownMenu())}
   ${section('模式菜单 Mode menu', modeMenu)}
   ${section('推理滑杆弹层 Reasoning popup', reasoningPopup)}
-  ${section('弹窗 Modal（panel-bg 实色）', modal)}
-  ${section('弹窗 Modal（dark-700 旧样式）', modalDark700)}
+  ${section('弹窗 Modal（dialog 亚克力）', modal)}
+  ${section('弹窗 Modal（项目创建同款）', modalDark700)}
   ${section('任务清单 Task board', taskBoard)}
   ${section('斜杠菜单 Slash menu', slashMenu)}
 </div>`;

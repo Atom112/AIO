@@ -119,7 +119,7 @@ const SkillList: Component = () => {
     }
   };
 
-  const importNpx = async (pkgName: string) => {
+  const importNpx = async (pkgName: string, sourcePath?: string) => {
     // Safety confirmation: npx import executes unreviewed code from npm
     const confirmed = window.confirm(t('skill.importNpxConfirm', { name: pkgName }));
     if (!confirmed) return;
@@ -127,7 +127,7 @@ const SkillList: Component = () => {
     setNpxImportingId(pkgName);
     setError(null);
     try {
-      const imported = await importNpxSkill(pkgName, projectId());
+      const imported = await importNpxSkill(pkgName, projectId(), sourcePath ?? null);
       setSkills({ ...skills(), [imported.id]: imported });
       // Update the alreadyImported flag in the list (keep local signal and module-level cache in sync)
       const next = npxSkills().map((s) =>
@@ -717,7 +717,7 @@ const SkillList: Component = () => {
                           fallback={
                             <button
                               class={btnSecondarySm}
-                              onClick={() => importNpx(item.packageName)}
+                              onClick={() => importNpx(item.packageName, item.sourcePath)}
                               disabled={npxImportingId() === item.packageName}
                             >
                               {npxImportingId() === item.packageName

@@ -13,6 +13,7 @@ import {
   mcpServers,
   mcpServerStatus,
   skills,
+  initSkills,
   startMcpServerAndRefresh,
   currentProjectId,
 } from '../../../core/store/store';
@@ -52,6 +53,10 @@ const ProjectSettingsModal: Component<ProjectSettingsModalProps> = (props) => {
       void memoryGetStatus(currentProjectId()!)
         .then(setMemoryStatus)
         .catch(() => setMemoryStatus(null));
+      // Skills 池同步刷新：商店下载 / npx 导入发生在设置页（另一个 store 写入方），
+      // 打开面板时重读，避免依赖各处都记得 setSkills 的隐式约定（陈旧 store 曾导致
+      // 「商店已下载、项目设置面板却显示未配置」）
+      void initSkills(currentProjectId()!);
     }
   });
 

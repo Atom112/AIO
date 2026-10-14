@@ -644,6 +644,7 @@ pub async fn download_market_skill(
         npx_package: None,
         npx_version: None,
         npx_command: None,
+        source_disk_path: None,
     };
     match project_id {
         Some(ref pid) => {
@@ -1159,6 +1160,20 @@ fn run_npx_sandboxed(
     Ok(Some(content))
 }
 
+/// Reads skill content from an on-disk skill directory (skills CLI / skill-dir
+/// sources): SKILL.md / skill.md / README.md / index.md，取第一个非空者。
+fn read_content_from_skill_dir(dir: &std::path::Path) -> Option<String> {
+    for file in ["SKILL.md", "skill.md", "README.md", "index.md"] {
+        let p = dir.join(file);
+        if let Ok(s) = std::fs::read_to_string(&p) {
+            if !s.trim().is_empty() {
+                return Some(s);
+            }
+        }
+    }
+    None
+}
+
 /// Sanitizes npx stdout content before storing it in a SkillConfig.
 ///
 /// Strips ANSI escape sequences and null bytes, validates UTF-8,
@@ -1208,28 +1223,55 @@ fn sanitize_skill_content(raw: &str) -> Result<String, String> {
 }
 
 /// Imports an npx skill package: runs npx to fetch content and saves it to the skill pool.
+/// 内容获取分源：skills CLI / skill-dir 来源（discovery 的 source_type）的 name **不是
+/// npm 包**——`npx <name>` 必然报 "could not determine executable to run"（round20 实测），
+/// 正确路径是直接从安装目录读取 SKILL.md；仅真正的 npm 包（bin 打印 Markdown）走 npx 执行。
 #[tauri::command]
 pub async fn import_npx_skill(
     app: AppHandle,
     package_name: String,
     project_id: Option<String>,
+    source_path: Option<String>,
 ) -> Result<SkillConfig, String> {
     // Validate the package name
     validate_npx_package_name(&package_name)?;
 
-    // Run npx <package> in a sandbox to fetch skill content (spawn_blocking avoids blocking an async worker)
-    let pkg = package_name.clone();
-    let raw_content =
-        tokio::task::spawn_blocking(move || run_npx_sandboxed(&[&pkg], 30, 64 * 1024))
+    // Content fetch, source-aware: an on-disk skill directory (from discovery) is
+    // read directly; otherwise fall back to running the package via npx.
+    let raw_content = match source_path
+        .as_deref()
+        .map(std::path::Path::new)
+        .filter(|p| p.is_dir())
+        .and_then(read_content_from_skill_dir)
+    {
+        Some(c) => c,
+        None => {
+            let pkg = package_name.clone();
+            let npx_result = tokio::task::spawn_blocking(move || {
+                run_npx_sandboxed(&[&pkg], 30, 64 * 1024)
+            })
             .await
-            .map_err(|_| ierr!("npx 线程 panic", "npx thread panicked"))??
-            .ok_or_else(|| {
-                ierr!(
-                    "npx {} 未返回任何内容",
-                    "npx {} returned no content",
-                    package_name
-                )
-            })?;
+            .map_err(|_| ierr!("npx 线程 panic", "npx thread panicked"))?;
+            match npx_result {
+                Ok(Some(raw)) => raw,
+                Ok(None) => {
+                    return Err(ierr!(
+                        "npx {} 未返回任何内容",
+                        "npx {} returned no content",
+                        package_name
+                    ))
+                }
+                Err(e) if e.contains("could not determine executable") => {
+                    return Err(ierr!(
+                        "npx {} 不是可执行 npm 包（无 bin 入口）。skills CLI 安装的 skill 会自动从安装目录导入；手工导入需要「执行后打印 Markdown 的 npm 包」",
+                        "npx {} is not an executable npm package (no bin entry). Skills installed via the skills CLI are imported from their install directory automatically; manual import requires an npm package whose bin prints Markdown",
+                        package_name
+                    ));
+                }
+                Err(e) => return Err(e),
+            }
+        }
+    };
 
     // Sanitize content (strip ANSI sequences, null bytes, control characters)
     let content = sanitize_skill_content(&raw_content)?;
@@ -1240,6 +1282,31 @@ pub async fn import_npx_skill(
         tokio::task::spawn_blocking(move || try_read_package_meta(&pkg2))
             .await
             .unwrap_or_else(|_| (String::new(), String::new(), "0.0.0".to_string()));
+
+    // skills CLI / skill-dir 来源的元数据以安装目录为准（npm registry 上查不到它们）
+    let (dir_version, dir_description) = match source_path
+        .as_deref()
+        .map(std::path::Path::new)
+        .map(try_read_package_meta_from_dir)
+    {
+        Some((v, d)) => (v, d),
+        None => (String::new(), String::new()),
+    };
+    let name = if name.is_empty() && !dir_description.is_empty() {
+        package_name.clone()
+    } else {
+        name
+    };
+    let description = if description.is_empty() {
+        dir_description
+    } else {
+        description
+    };
+    let version = if version.is_empty() {
+        dir_version
+    } else {
+        version
+    };
 
     let skill = SkillConfig {
         id: format!("npx-{}", package_name),
@@ -1259,6 +1326,7 @@ pub async fn import_npx_skill(
         npx_package: Some(package_name.clone()),
         npx_version: Some(version),
         npx_command: Some(package_name.clone()),
+        source_disk_path: source_path.clone(),
     };
 
     match project_id {
@@ -1306,19 +1374,38 @@ pub async fn refresh_npx_skill(
     // Re-validate the package name in case the stored value was tampered with
     validate_npx_package_name(pkg_name)?;
 
-    // Sandboxed refresh execution (spawn_blocking avoids blocking an async worker)
-    let pkg = pkg_name.to_string();
-    let raw_content =
-        tokio::task::spawn_blocking(move || run_npx_sandboxed(&[&pkg], 30, 64 * 1024))
-            .await
-            .map_err(|_| ierr!("npx 线程 panic", "npx thread panicked"))??
-            .ok_or_else(|| {
-                ierr!(
-                    "npx {} 未返回任何内容",
-                    "npx {} returned no content",
-                    pkg_name
-                )
-            })?;
+    // 刷新同样分源：skills CLI / skill-dir 来源（有 source_disk_path）直接从安装
+    // 目录重读（其 name 不是 npm 包，npx 执行必然失败）；npm 包来源走 npx 重跑。
+    let (raw_content, disk_version) =
+        match existing.source_disk_path.as_deref().map(std::path::Path::new) {
+            Some(dir) if dir.is_dir() => {
+                let content = read_content_from_skill_dir(dir).ok_or_else(|| {
+                    ierr!(
+                        "安装目录 {} 中未找到 SKILL.md / README.md",
+                        "No SKILL.md / README.md found in install dir {}",
+                        dir.display()
+                    )
+                })?;
+                let (version, _) = try_read_package_meta_from_dir(dir);
+                (content, version)
+            }
+            _ => {
+                let pkg = pkg_name.to_string();
+                let raw = tokio::task::spawn_blocking(move || {
+                    run_npx_sandboxed(&[&pkg], 30, 64 * 1024)
+                })
+                .await
+                .map_err(|_| ierr!("npx 线程 panic", "npx thread panicked"))??
+                .ok_or_else(|| {
+                    ierr!(
+                        "npx {} 未返回任何内容",
+                        "npx {} returned no content",
+                        pkg_name
+                    )
+                })?;
+                (raw, String::new())
+            }
+        };
 
     let content = sanitize_skill_content(&raw_content)?;
 
@@ -1326,6 +1413,12 @@ pub async fn refresh_npx_skill(
     let (_, _, version) = tokio::task::spawn_blocking(move || try_read_package_meta(&pkg2))
         .await
         .unwrap_or_else(|_| (String::new(), String::new(), "0.0.0".to_string()));
+    // 磁盘来源的版本以安装目录为准（npm registry 查不到它们）
+    let version = if disk_version.is_empty() {
+        version
+    } else {
+        disk_version
+    };
 
     let updated = SkillConfig {
         content,

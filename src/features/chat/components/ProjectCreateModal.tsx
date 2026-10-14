@@ -89,7 +89,7 @@ export default function ProjectCreateModal(props: Props) {
         'opacity-0 pointer-events-none': isExiting() || isEntering(),
         'opacity-100': !isExiting() && !isEntering(),
       }}
-      class="fixed inset-0 z-[2000] flex items-center justify-center bg-black/60 transition-all duration-200 ease-out"
+      class="fixed inset-0 z-[2000] flex items-center justify-center bg-black/25 transition-all duration-200 ease-out"
       onClick={handleClose}
     >
       <div
@@ -100,7 +100,6 @@ export default function ProjectCreateModal(props: Props) {
         class="backdrop-blur-[24px] border border-white/15 rounded-xl shadow-2xl w-full max-w-md p-6 transition-all duration-500 ease-out transform"
         style={{
           background: 'var(--dialog-bg)',
-          'background-attachment': 'fixed',
         }}
         onClick={(e) => e.stopPropagation()}
       >

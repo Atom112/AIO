@@ -111,11 +111,10 @@
   --popup-bg: rgba(var(--surface-bg), 0.62);
   --popup-blur: blur(40px) saturate(160%);
   /* ── Dialog surfaces (modals over a dim overlay) ──
-     Light theme reuses the app background's colorful glows under a translucent
-     surface tint — paired with `background-attachment: fixed` at usage sites, so
-     the dialog shows the exact slice of the main page background it floats over. */
-  --dialog-bg:
-    linear-gradient(rgba(var(--surface-bg), 0.5), rgba(var(--surface-bg), 0.5)), var(--app-bg);
+     The dialog is a plain translucent tint: the colorful glow comes from the
+     backdrop-filter blurring the REAL main-page background behind the dialog
+     (not a self-drawn copy), so dialogs of any height share the exact same look. */
+  --dialog-bg: rgba(var(--surface-bg), 0.55);
 
   /* ── App background (light/default theme): same as VaporGit (four corner glows + #2f2f2f base) ── */
   --app-bg:
@@ -137,7 +136,7 @@
   --acrylic-border: rgba(var(--border-rgb), 0.1);
 
   --popup-bg: rgba(var(--surface-bg), 0.82);
-  --dialog-bg: rgba(var(--surface-bg), 0.92);
+  --dialog-bg: rgba(var(--surface-bg), 0.85);
 
   /* Same as VaporGit dark (faint four-corner glows + pure black base) */
   --app-bg:

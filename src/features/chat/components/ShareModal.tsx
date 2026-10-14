@@ -477,7 +477,7 @@ const ShareModal: Component<ShareModalProps> = (props) => {
             'opacity-0 pointer-events-none': isExiting() || isEntering(),
             'opacity-100': !isExiting() && !isEntering(),
           }}
-          class="fixed inset-0 z-[1100] flex items-center justify-center bg-black/60 backdrop-blur-[12px] transition-all duration-200 ease-out"
+          class="fixed inset-0 z-[1100] flex items-center justify-center bg-black/25 transition-all duration-200 ease-out"
           onClick={(e) => e.target === e.currentTarget && handleClose()}
         >
           <div
@@ -488,7 +488,6 @@ const ShareModal: Component<ShareModalProps> = (props) => {
             class="flex flex-col w-[92%] max-w-[760px] h-[88vh] max-h-[94vh] rounded-xl overflow-hidden transition-all duration-500 ease-out transform"
             style={{
               background: 'var(--dialog-bg)',
-              'background-attachment': 'fixed',
               'backdrop-filter': 'var(--popup-blur)',
               border: '1px solid var(--border-dim)',
             }}

@@ -194,10 +194,11 @@ pub struct AppConfig {
     #[serde(default = "default_true", rename = "sandboxProtectGit")]
     pub sandbox_protect_git: bool,
     /// Whether full-permission (Auto) sandbox self-heal may fall back to ONE unsandboxed
-    /// retry when the session grant cannot land (e.g. an EDR blocks the ACL write)
-    /// (default true). false = never break the sandbox boundary at runtime; denied
-    /// commands stay denied and the model must route around them.
-    #[serde(default = "default_true", rename = "sandboxUnsandboxedFallback")]
+    /// retry when a session grant cannot land for a NOT-FOUND denial (interpreter/toolchain
+    /// invisible; e.g. an EDR blocked the ACL write) — the ONLY escalation class;
+    /// access-denied denials never escalate. Default **false** (safe default: the
+    /// runtime never breaks the sandbox boundary unless explicitly opted in).
+    #[serde(default, rename = "sandboxUnsandboxedFallback")]
     pub sandbox_unsandboxed_fallback: bool,
     /// Consecutive ENVIRONMENT-class failures (missing command / permission denied /
     /// missing dependency) before a tool is disabled for the rest of the turn

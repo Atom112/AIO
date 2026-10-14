@@ -407,10 +407,7 @@ Agent 模式下提供 20+ 个内置工具，跨 6 个类别。以下总表列出
 
 多个智能体并行修改文件时，AIO 通过「worktree 物理隔离 + 共享模式文件锁」两层机制防冲突：
 
-- **隔离模式**（设置 → 应用设置 → 并行写入隔离，`subagentIsolationMode`）：
-  - **自动（默认）**：git 项目上被等待的写入类子任务（`delegate_task` `wait=true` 与 `delegate_tasks` 任务）自动获得独立 git worktree（位于项目同级 `<项目>.aio-wt/` 目录、分支 `aio/sub-<id>`、基于当前 HEAD），完成后提交到子分支并自动 `git merge` 回当前分支；非 git 项目、网络路径或创建失败时回退共享模式。
-  - **始终独立工作区**：同上，但不支持时回退并注明。
-  - **共享目录（仅文件锁）**：所有子任务直接写项目根目录。
+- **隔离模式**（固定自动策略，无设置项）：git 项目上被等待的写入类子任务（`delegate_task` `wait=true` 与 `delegate_tasks` 任务）自动获得独立 git worktree（位于项目同级 `<项目>.aio-wt/` 目录、分支 `aio/sub-<id>`、基于当前 HEAD），完成后提交到子分支并自动 `git merge` 回当前分支；非 git 项目、网络路径或创建失败时回退共享模式（文件锁保护）。可在任务上传 `isolation: "shared"` 做单任务覆盖。
 - **合并**：Auto 模式自动合并；Normal 模式整批一次审批（列出分支、变更文件与 diff 摘要）。**冲突**时合并安全中止、工作区保留，结果报告冲突文件清单，应基于最新代码串行重做该任务或手动解决。
 - **共享模式保护**：`write_file` / `replace_in_file` / `delete_file` / `make_directory` 按文件获取互斥锁（等待 120 秒超时报持有者）；文件被其他智能体修改过之后，`replace_in_file` 必须携带 `anchor_hash`、覆盖性 `write_file` 必须携带 `expect_hash`，不匹配会报错并要求重新读取——丢失更新被转换为可恢复的重读错误。
 - **范围**：`wait=false` 后台子智能体固定共享模式（文件锁仍生效）；worktree 基于主检出 HEAD，不包含主目录未提交的改动，需要基于未提交改动工作时请在任务上传 `isolation: "shared"`。

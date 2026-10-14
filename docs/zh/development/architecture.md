@@ -123,7 +123,7 @@ Plan 模式只研究并输出计划；只读模式仅保留读取/搜索/联网�
 
 `delegate_task` 和 `delegate_tasks` 复用单任务执行函数。批量委托用 Tokio 并发执行 1–10 个任务，并由 Semaphore 将实际并发限制为默认 5；结果按子任务收集后一次回灌主 Agent。
 
-**Worktree 隔离**（`subagentIsolationMode=auto` 默认，`utils/worktree.rs`）：git 项目上被等待的写入类子任务在项目同级 `<项目>.aio-wt/` 目录获得独立 git worktree + 分支（基于主检出当前 HEAD，运行期 `git worktree lock`，过期由 sweep 清理，创建时记录基线提交）；file/shell/git/LSP/project_map 工具全部限定在 worktree root（命令与编辑无法触及主检出），权限规则与项目 memory 仍绑定主项目根。完成后变更 commit 到子分支（脏工作树或相对基线的新提交都算变更，子智能体自己 commit 的成果不会丢失）：完全权限模式直接 `git merge` 回当前分支，工作区内修改模式整批一次审批；主检出存在进行中的 merge/rebase/cherry-pick 时拒绝合并并保留分支（绝不中止用户的进行中状态）；冲突则合并安全中止、worktree 保留，结果报告冲突文件清单。非 git 项目、网络路径与后台（`wait=false`）子智能体固定共享模式（文件锁兜底）。
+**Worktree 隔离**（固定自动策略，`utils/worktree.rs`）：git 项目上被等待的写入类子任务在项目同级 `<项目>.aio-wt/` 目录获得独立 git worktree + 分支（基于主检出当前 HEAD，运行期 `git worktree lock`，过期由 sweep 清理，创建时记录基线提交）；file/shell/git/LSP/project_map 工具全部限定在 worktree root（命令与编辑无法触及主检出），权限规则与项目 memory 仍绑定主项目根。完成后变更 commit 到子分支（脏工作树或相对基线的新提交都算变更，子智能体自己 commit 的成果不会丢失）：完全权限模式直接 `git merge` 回当前分支，工作区内修改模式整批一次审批；主检出存在进行中的 merge/rebase/cherry-pick 时拒绝合并并保留分支（绝不中止用户的进行中状态）；冲突则合并安全中止、worktree 保留，结果报告冲突文件清单。非 git 项目、网络路径与后台（`wait=false`）子智能体固定共享模式（文件锁兜底）。
 
 Agent 中止或流式事件失败时，已经产生的步骤、工具输出和文件变更仍会合并进当前助手消息并持久化，避免只保留空白最终回复。
 

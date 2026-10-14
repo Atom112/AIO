@@ -24,12 +24,6 @@ struct AppConfigDisk {
         rename = "maxConcurrentSubagents"
     )]
     max_concurrent_subagents: i32,
-    /// Subagent parallel write isolation mode (auto default / off / worktree)
-    #[serde(
-        default = "crate::core::models::default_subagent_isolation_mode",
-        rename = "subagentIsolationMode"
-    )]
-    subagent_isolation_mode: String,
     /// Whether read-only tools within the same response block run concurrently
     #[serde(
         default = "crate::core::models::default_true",
@@ -141,7 +135,6 @@ impl AppConfigDisk {
                 .max_tool_rounds
                 .unwrap_or(crate::core::models::DEFAULT_MAX_TOOL_ROUNDS as i32),
             max_concurrent_subagents: cfg.max_concurrent_subagents.unwrap_or(5),
-            subagent_isolation_mode: cfg.subagent_isolation_mode.clone(),
             parallel_tool_execution: cfg.parallel_tool_execution,
             model_call_retries: cfg.model_call_retries,
             sandbox_required: cfg.sandbox_required,
@@ -195,7 +188,6 @@ impl AppConfigDisk {
                 0 => 1,
                 n => n,
             }),
-            subagent_isolation_mode: self.subagent_isolation_mode.clone(),
             parallel_tool_execution: self.parallel_tool_execution,
             model_call_retries: self.model_call_retries,
             sandbox_required: self.sandbox_required,
@@ -229,7 +221,6 @@ impl Default for AppConfigDisk {
             auto_start_enabled: false,
             max_tool_rounds: crate::core::models::DEFAULT_MAX_TOOL_ROUNDS as i32,
             max_concurrent_subagents: 5,
-            subagent_isolation_mode: crate::core::models::default_subagent_isolation_mode(),
             parallel_tool_execution: crate::core::models::default_true(),
             model_call_retries: crate::core::models::default_model_call_retries(),
             sandbox_required: crate::core::models::default_true(),

@@ -389,12 +389,12 @@ pub(crate) struct DelegateOutcome {
     pub notes: Vec<String>,
 }
 
-/// Resolves the workspace isolation for a delegated task: per-task `isolation_hint`
-/// overrides the app-config `subagentIsolationMode` default. Write-capable tasks get a
-/// git worktree when supported; everything else runs on the shared project root (with
+/// Resolves the workspace isolation for a delegated task (fixed auto policy): a
+/// per-task `isolation_hint` may still override. Write-capable tasks get a git
+/// worktree when supported; everything else runs on the shared project root (with
 /// the per-file write locks from PR1 still protecting it). Returns notes for fallbacks.
 async fn resolve_task_workspace(
-    app: &AppHandle,
+    _app: &AppHandle,
     profile: &subagent::SubagentProfile,
     project_root: &str,
     isolation_hint: Option<&str>,
@@ -408,15 +408,7 @@ async fn resolve_task_workspace(
     if !write_capable {
         return (TaskWorkspace::Shared, notes); // read-only tasks never need isolation
     }
-    let app_cfg = crate::core::config::load_app_config(app).unwrap_or_default();
-    let mode = app_cfg.subagent_isolation_mode;
-    let requested = isolation_hint.map(|s| s.to_string()).unwrap_or_else(|| {
-        if mode == "off" {
-            "shared".into()
-        } else {
-            "worktree".into()
-        }
-    });
+    let requested = isolation_hint.unwrap_or("worktree").to_string();
     if requested != "worktree" {
         return (TaskWorkspace::Shared, notes);
     }

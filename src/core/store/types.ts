@@ -269,8 +269,6 @@ export interface AppConfig {
   maxConcurrentSubagents?: number;
   /** Max tool-call rounds per agent run (-1 = unlimited; 0 forbidden; undefined = default) */
   maxToolRounds?: number;
-  /** Parallel write isolation for subagents: "auto" (worktree on git projects, default) | "worktree" | "off" */
-  subagentIsolationMode?: string;
 }
 
 /* Activated model config interface holding connection info for available models */

@@ -72,7 +72,7 @@ const AppSettings: Component = () => {
   const [autoStart, setAutoStart] = createSignal(false);
   const [maxToolRounds, setMaxToolRounds] = createSignal(25); // Max tool-call rounds per agent turn (0 = unlimited; default 25)
   const [maxConcurrentSubagents, setMaxConcurrentSubagents] = createSignal(5); // Max concurrent subagents (0 = unlimited; default 5)
-  const [subagentIsolation, setSubagentIsolation] = createSignal('auto'); // Parallel write isolation (auto default)
+  
   const [version, setVersion] = createSignal(''); // App version
   const [checkUpdating, setCheckUpdating] = createSignal(false); // Manual update check in progress
   const [checkResult, setCheckResult] = createSignal<CheckUpdateResult | null>(null); // Result of the last manual check
@@ -131,9 +131,6 @@ const AppSettings: Component = () => {
       }
       if (typeof cfg?.maxConcurrentSubagents === 'number') {
         setMaxConcurrentSubagents(cfg.maxConcurrentSubagents);
-      }
-      if (typeof cfg?.subagentIsolationMode === 'string' && cfg.subagentIsolationMode) {
-        setSubagentIsolation(cfg.subagentIsolationMode);
       }
     } catch (e) {
       console.warn('Failed to load app config:', e);
@@ -479,12 +476,6 @@ const AppSettings: Component = () => {
     { value: 'en-US' as Locale, label: t('app.language.enUS') },
   ]);
 
-  const isolationOptions = createMemo(() => [
-    { value: 'auto', label: t('app.subagentIsolation.auto') },
-    { value: 'worktree', label: t('app.subagentIsolation.worktree') },
-    { value: 'off', label: t('app.subagentIsolation.off') },
-  ]);
-
   return (
     <div class="flex flex-col gap-[15px] box-border">
       <div
@@ -639,36 +630,6 @@ const AppSettings: Component = () => {
                 }
               });
             }}
-          />
-        </div>
-
-        <div class="flex justify-between items-center py-3 border-b border-white/5">
-          <div>
-            <span class="block text-[rgba(var(--text-base-rgb),0.93)] text-[14px]">
-              {t('app.subagentIsolation.title')}
-            </span>
-            <p class="text-xs text-white/35 mt-1">{t('app.subagentIsolation.description')}</p>
-          </div>
-
-          <Dropdown
-            variant="ghost"
-            class="min-w-[150px]"
-            value={subagentIsolation()}
-            onChange={(v) => {
-              setSubagentIsolation(v);
-              schedulePatch(
-                'subagentIsolationMode',
-                async () => {
-                  try {
-                    await patchAppConfig({ subagentIsolationMode: v });
-                  } catch (err) {
-                    console.warn('Failed to save parallel-write isolation config:', err);
-                  }
-                },
-                0,
-              );
-            }}
-            options={isolationOptions()}
           />
         </div>
 

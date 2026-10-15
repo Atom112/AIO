@@ -957,7 +957,7 @@ const ProviderDetail: Component = () => {
                         }
                         onClick={() => removeLocalModelFile(modelId)}
                       >
-                        ×
+                        <Icon name="x" size={12} />
                       </button>
                     </div>
                   )}
@@ -1119,7 +1119,7 @@ const ProviderDetail: Component = () => {
                         title={t('common.delete')}
                         onClick={() => removeOrphan(mid)}
                       >
-                        ×
+                        <Icon name="x" size={10} />
                       </button>
                     </span>
                   )}

@@ -57,7 +57,7 @@ const PendingFileChips: Component<PendingFileChipsProps> = (props) => {
                 props.setPendingFiles((p) => p.filter((_, idx) => idx !== currentIndex));
               }}
             >
-              ×
+              <Icon name="x" size={12} />
             </button>
           </div>
         )}

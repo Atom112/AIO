@@ -1,10 +1,12 @@
 /**
  * Background-task pull-up menu: live view of the app's running background jobs
  * (memory fact extraction / consolidation, index rebuilds, code indexing, model
- * downloads), fed by the global registry (core/store/background-tasks) which
- * backgroundTaskListeners keep current. Rows are informational — the jobs are
- * controlled from their own surfaces (memory panel, model settings). Terminal
- * entries expire on their own, so the menu hides again once everything settles.
+ * downloads, long-running shell commands the app is waiting on), fed by the
+ * global registry (core/store/background-tasks) which backgroundTaskListeners
+ * keep current. Rows are informational — the jobs are controlled from their own
+ * surfaces (memory panel, model settings; commands stop with their turn).
+ * Terminal entries expire on their own, so the menu hides again once everything
+ * settles.
  *
  * Rendered LEFT of the subagent menu in the status row; the ChatInterface
  * right-group wrapper owns the ml-auto alignment for both.
@@ -40,6 +42,7 @@ const KIND_ICON: Record<BackgroundTaskKind, Parameters<typeof Icon>[0]['name']> 
   'code-index': 'code',
   'model-download': 'download',
   'gguf-download': 'download',
+  'shell-command': 'terminal',
 };
 
 /** Download progress counters are bytes; index counters are item counts. */
@@ -207,6 +210,16 @@ const BackgroundTaskMenu: Component<BackgroundTaskMenuProps> = (props) => {
                           >
                             {progressText(task)}
                           </span>
+                        </span>
+                      </Show>
+                      <Show when={task.status === 'running' && task.elapsedMs !== undefined}>
+                        <span
+                          class="block font-mono text-[10px] mt-0.5"
+                          style={{ color: 'rgba(var(--text-base-rgb),0.4)' }}
+                        >
+                          {t('agent.background.elapsed', {
+                            duration: formatDuration(task.elapsedMs!),
+                          })}
                         </span>
                       </Show>
                       <Show when={task.status === 'error' && task.error}>

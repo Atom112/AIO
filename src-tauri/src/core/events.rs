@@ -20,6 +20,8 @@ pub const APP_UPDATE_PROGRESS: &str = "app-update-progress";
 pub const MEMORY_EXTRACT_PROGRESS: &str = "memory-extract-progress";
 /// Memory consolidation lifecycle (running / done / error; payload carries the project root)
 pub const MEMORY_CONSOLIDATE_PROGRESS: &str = "memory-consolidate-progress";
+/// Long-running agent shell command lifecycle (running heartbeat / done / error / cancelled; payload carries the run id + command)
+pub const COMMAND_PROGRESS: &str = "command-progress";
 
 /// One LLM round starts (the frontend pushes an empty assistant placeholder)
 pub const LLM_ROUND_START: &str = "llm-round-start";
@@ -101,6 +103,7 @@ mod tests {
             APP_UPDATE_PROGRESS,
             MEMORY_EXTRACT_PROGRESS,
             MEMORY_CONSOLIDATE_PROGRESS,
+            COMMAND_PROGRESS,
             LLM_ROUND_START,
             LLM_CHUNK,
             LLM_REASONING,

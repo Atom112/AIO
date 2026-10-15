@@ -7,6 +7,8 @@ import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { EVENTS } from '../../../core/api/events';
 import {
   finishBackgroundTask,
+  finishBackgroundTaskByKey,
+  heartbeatBackgroundTask,
   startBackgroundTask,
   updateBackgroundTaskProgress,
 } from '../../../core/store/background-tasks';
@@ -35,6 +37,15 @@ interface DownloadJobPayload {
   total?: number;
   done?: boolean;
   status?: string;
+  error?: string;
+}
+
+/** `command-progress` payload: running heartbeat (elapsedMs) or terminal (status). */
+interface CommandJobPayload {
+  id?: string;
+  status?: string;
+  command?: string;
+  elapsedMs?: number;
   error?: string;
 }
 
@@ -90,6 +101,20 @@ export function registerBackgroundTaskListeners(): Promise<UnlistenFn>[] {
       }
     });
 
+  // Long-running shell commands (execute_command waits > 5s, main agent or
+  // subagent): the backend keys each run by its own id — the command text is
+  // only display scope, so terminals must close by key, not scope.
+  const commandJob = listen<CommandJobPayload>(EVENTS.commandProgress, (e) => {
+    const { id, status, command, elapsedMs } = e.payload;
+    if (!id || !command) return;
+    const key = `shell-command:${id}`;
+    if (status === 'running' && elapsedMs !== undefined) {
+      heartbeatBackgroundTask('shell-command', key, command, elapsedMs);
+    } else if (status === 'done' || status === 'error' || status === 'cancelled') {
+      finishBackgroundTaskByKey(key, status);
+    }
+  });
+
   return [
     memoryJob('memory-extract'),
     memoryJob('memory-consolidate'),
@@ -97,5 +122,6 @@ export function registerBackgroundTaskListeners(): Promise<UnlistenFn>[] {
     indexJob(EVENTS.codeIndexProgress, 'code-index'),
     downloadJob(EVENTS.modelDownloadProgress, 'model-download'),
     downloadJob(EVENTS.localModelDownloadProgress, 'gguf-download'),
+    commandJob,
   ];
 }

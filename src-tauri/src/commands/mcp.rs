@@ -254,7 +254,9 @@ pub async fn save_mcp_server_secret(
 /// Deletion targets BOTH layers: the management list is the merged view, so removing
 /// only the layer `project_id` names left a global entry alive that resurfaced on the
 /// next reload ("delete didn't really delete"). Absent-layer removals are no-ops.
-/// The project trust-store entry is dropped with the project config.
+/// Also cleaned: the project trust-store entry, keyring secrets named by EITHER
+/// layer's entry, and the project's approval-derived (`auto`) allow rules bound to
+/// this server — deleting a server leaves no live grants behind.
 #[tauri::command]
 pub async fn remove_mcp_server(
     app: AppHandle,
@@ -276,9 +278,25 @@ pub async fn remove_mcp_server(
             let _ = plugin.stop(conn_owned).await;
         }
     }
-    // Delete all of this server's env secrets from the keyring
-    let cfg = mcp::get_config_merged(&app, &id, project_id.as_deref());
-    if let Some(cfg) = cfg {
+    // Resolve the project path once — reused by config removal, trust cleanup,
+    // and the permission-rule purge below.
+    let project_path = match project_id {
+        Some(ref pid) => Some(resolve_project_path_mcp(&app, pid)?),
+        None => None,
+    };
+    // Delete this server's keyring secrets referenced by EITHER layer's entry —
+    // a project override may name different env/header keys than the global entry,
+    // and the merged (project-first) view would miss the global-only accounts.
+    let mut layer_configs: Vec<McpServerConfig> = Vec::new();
+    if let Some(ref pp) = project_path {
+        if let Some(c) = mcp::load_project_mcp_servers(pp).servers.get(&id) {
+            layer_configs.push(c.clone());
+        }
+    }
+    if let Some(c) = mcp::load_mcp_servers(&app).servers.get(&id) {
+        layer_configs.push(c.clone());
+    }
+    for cfg in &layer_configs {
         for (target, values) in transport_secret_bearers(&cfg.transport) {
             for (key, value) in values {
                 let legacy = secure_store::accounts::mcp_server_env(&id, key);
@@ -295,12 +313,16 @@ pub async fn remove_mcp_server(
             }
         }
     }
-    if let Some(ref pid) = project_id {
-        let project_path = resolve_project_path_mcp(&app, pid)?;
-        mcp::remove_project_config(&project_path, &id).map_err(|e| e.to_string())?;
+    if let Some(ref pp) = project_path {
+        mcp::remove_project_config(pp, &id).map_err(|e| e.to_string())?;
         // The project trust marker (fingerprint) belongs to the deleted entry.
-        if let Err(e) = mcp::trust_store(&app).remove_trust(&project_path, &id) {
+        if let Err(e) = mcp::trust_store(&app).remove_trust(pp, &id) {
             tracing::warn!("[mcp-trust] 删除 server 信任标记失败: {e}");
+        }
+        // Approval-derived allow rules ("始终允许") bound to this server die with it;
+        // hand-written rules are never touched.
+        if let Err(e) = permission::remove_auto_rules_for_server(pp, &id) {
+            tracing::warn!("[permission] 清理派生放行规则失败: {e}");
         }
     }
     // Global layer too — no-op when the id never lived there.

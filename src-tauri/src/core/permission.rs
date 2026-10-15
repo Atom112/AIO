@@ -962,20 +962,30 @@ pub fn user_allow_rule_matches(
     })
 }
 
+/// Process-wide lock serializing every `.aio/permissions.json` mutation.
+fn persist_lock() -> &'static parking_lot::Mutex<()> {
+    static PERSIST_LOCK: std::sync::OnceLock<parking_lot::Mutex<()>> = std::sync::OnceLock::new();
+    PERSIST_LOCK.get_or_init(|| parking_lot::Mutex::new(()))
+}
+
+/// Save the whole permissions file (atomic temp + rename; creates `.aio/`).
+pub fn save_permissions(project_path: &str, file: &PermissionsFile) -> Result<(), String> {
+    let path = std::path::Path::new(project_path)
+        .join(".aio")
+        .join("permissions.json");
+    let bytes = serde_json::to_vec_pretty(file).map_err(|e| format!("序列化权限配置失败: {e}"))?;
+    crate::core::fs_util::atomic_write(&path, &bytes)
+        .map_err(|e| format!("写入 {} 失败: {e}", path.display()))
+}
+
 /// Persist an approval-derived Allow rule into the project's `.aio/permissions.json`
 /// (the approval dialog's "always allow" — the user-approved command/tool never
 /// prompts again, across restarts). Returns Ok(true) when a rule was added,
 /// Ok(false) when an identical Allow rule already exists (dedupe). The write is
 /// atomic (temp + rename) and concurrent approvals serialize on a process lock.
 pub fn persist_allow_rule(project_path: &str, rule: PermissionRule) -> Result<bool, String> {
-    static PERSIST_LOCK: std::sync::OnceLock<parking_lot::Mutex<()>> = std::sync::OnceLock::new();
-    let _guard = PERSIST_LOCK
-        .get_or_init(|| parking_lot::Mutex::new(()))
-        .lock();
+    let _guard = persist_lock().lock();
 
-    let path = std::path::Path::new(project_path)
-        .join(".aio")
-        .join("permissions.json");
     let mut file = load_permissions(Some(project_path));
     let duplicate = file.rules.iter().any(|r| {
         r.action == PermissionAction::Allow
@@ -989,8 +999,7 @@ pub fn persist_allow_rule(project_path: &str, rule: PermissionRule) -> Result<bo
         return Ok(false);
     }
     tracing::info!(
-        "[permission] 持久化放行规则到 {}: tool={} prefix={:?} path={:?} server={:?}",
-        path.display(),
+        "[permission] 持久化放行规则: tool={} prefix={:?} path={:?} server={:?}",
         rule.tool_pattern,
         rule.command_prefix,
         rule.path_pattern,
@@ -998,10 +1007,32 @@ pub fn persist_allow_rule(project_path: &str, rule: PermissionRule) -> Result<bo
     );
     file.rules.push(rule);
     file.updated_at = crate::utils::time::now_iso();
-    let bytes = serde_json::to_vec_pretty(&file).map_err(|e| format!("序列化权限配置失败: {e}"))?;
-    crate::core::fs_util::atomic_write(&path, &bytes)
-        .map_err(|e| format!("写入 {} 失败: {e}", path.display()))?;
+    save_permissions(project_path, &file)?;
     Ok(true)
+}
+
+/// Remove approval-derived (`auto: true`) allow rules bound to a deleted MCP server
+/// from the project's `.aio/permissions.json`. Hand-written rules (`auto` absent)
+/// are never touched — deleting a server must not rewrite user-authored policy.
+/// Returns the number of rules removed.
+pub fn remove_auto_rules_for_server(project_path: &str, server_id: &str) -> Result<usize, String> {
+    let _guard = persist_lock().lock();
+    let mut file = load_permissions(Some(project_path));
+    let before = file.rules.len();
+    file.rules
+        .retain(|r| !(r.auto && r.server_id.as_deref() == Some(server_id)));
+    let removed = before - file.rules.len();
+    if removed == 0 {
+        return Ok(0);
+    }
+    tracing::info!(
+        "[permission] 随 server 删除清理 {} 条派生放行规则 (server={})",
+        removed,
+        server_id
+    );
+    file.updated_at = crate::utils::time::now_iso();
+    save_permissions(project_path, &file)?;
+    Ok(removed)
 }
 
 #[cfg(test)]
@@ -1774,6 +1805,50 @@ mod tests {
         assert_eq!(loaded.rules[0].command_prefix.as_deref(), Some("npm"));
         assert!(loaded.rules[0].auto, "auto 标记必须随文件往返");
         assert!(!loaded.updated_at.is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Deleting an MCP server purges only its approval-derived (auto) rules;
+    /// hand-written rules for the same server and other servers' rules survive.
+    #[test]
+    fn remove_auto_rules_for_server_scopes_correctly() {
+        let dir =
+            std::env::temp_dir().join(format!("aio-permission-purge-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("创建临时项目目录失败");
+        let root = dir.to_string_lossy().into_owned();
+        let mk = |id: &str, tool: &str, server: Option<&str>, auto: bool| PermissionRule {
+            id: id.into(),
+            tool_pattern: tool.into(),
+            server_id: server.map(Into::into),
+            modes: vec![],
+            action: PermissionAction::Allow,
+            path_pattern: None,
+            command_prefix: None,
+            session: false,
+            auto,
+            priority: 50,
+        };
+        persist_allow_rule(&root, mk("r1", "tool_one", Some("srv-a"), true)).expect("写 r1 失败");
+        persist_allow_rule(&root, mk("r2", "tool_two", Some("srv-a"), true)).expect("写 r2 失败");
+        persist_allow_rule(&root, mk("r3", "tool_one", Some("srv-b"), true)).expect("写 r3 失败");
+        // 手写规则（auto=false）与 srv-a 同 server——绝不可被动
+        persist_allow_rule(&root, mk("r4", "tool_three", Some("srv-a"), false))
+            .expect("写 r4 失败");
+        // 无 server 绑定的命令规则
+        persist_allow_rule(&root, mk("r5", "tool_four", None, true)).expect("写 r5 失败");
+
+        let removed = remove_auto_rules_for_server(&root, "srv-a").expect("清理失败");
+        assert_eq!(removed, 2, "只删 srv-a 的派生规则");
+        let rules = load_permissions(Some(&root)).rules;
+        let ids: Vec<&str> = rules.iter().map(|r| r.id.as_str()).collect();
+        assert_eq!(
+            ids,
+            ["r3", "r4", "r5"],
+            "手写规则与其他 server 的规则必须保留"
+        );
+        // 再删一次 → no-op
+        assert_eq!(remove_auto_rules_for_server(&root, "srv-a").unwrap(), 0);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

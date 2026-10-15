@@ -979,6 +979,71 @@ pub(crate) fn is_git_repo(dir: &str) -> bool {
     std::path::Path::new(dir).join(".git").exists()
 }
 
+/// Reconstruct the crashed turn's already-generated assistant text from a checkpoint
+/// snapshot: everything after the last user message belongs to the crashed turn;
+/// concatenate the assistant rounds' text (tool-call-only rounds contribute nothing),
+/// mirroring how `accumulated_content` concatenates round texts with no separator.
+pub(crate) fn seed_accumulated_from_snapshot(msgs: &[serde_json::Value]) -> String {
+    let Some(last_user) = msgs
+        .iter()
+        .rposition(|m| m.get("role").and_then(|v| v.as_str()) == Some("user"))
+    else {
+        return String::new();
+    };
+    let mut out = String::new();
+    for m in &msgs[last_user + 1..] {
+        if m.get("role").and_then(|v| v.as_str()) != Some("assistant") {
+            continue;
+        }
+        if let Some(text) = m.get("content").and_then(|v| v.as_str()) {
+            out.push_str(text);
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod resume_seed_tests {
+    use super::seed_accumulated_from_snapshot;
+    use serde_json::json;
+
+    #[test]
+    fn seed_collects_assistant_text_after_last_user_message() {
+        let msgs = vec![
+            json!({"role": "user", "content": "第一轮"}),
+            json!({"role": "assistant", "content": "旧回合回答"}),
+            json!({"role": "user", "content": "崩溃回合的问题"}),
+            json!({"role": "assistant", "content": "崩溃前半段", "tool_calls": [{"id": "t1"}]}),
+            json!({"role": "tool", "tool_call_id": "t1", "content": "工具结果"}),
+            json!({"role": "assistant", "content": "崩溃前后半段"}),
+        ];
+        assert_eq!(
+            seed_accumulated_from_snapshot(&msgs),
+            "崩溃前半段崩溃前后半段"
+        );
+    }
+
+    #[test]
+    fn seed_is_empty_without_user_message_or_trailing_assistant() {
+        assert!(seed_accumulated_from_snapshot(&[]).is_empty());
+        let no_user = vec![json!({"role": "assistant", "content": "x"})];
+        assert!(seed_accumulated_from_snapshot(&no_user).is_empty());
+        let user_last = vec![json!({"role": "user", "content": "只有问题"})];
+        assert!(seed_accumulated_from_snapshot(&user_last).is_empty());
+    }
+
+    #[test]
+    fn seed_skips_tool_call_only_rounds() {
+        let msgs = vec![
+            json!({"role": "user", "content": "q"}),
+            json!({"role": "assistant", "content": "", "tool_calls": [{"id": "t1"}]}),
+            json!({"role": "tool", "tool_call_id": "t1", "content": "r"}),
+            json!({"role": "assistant", "content": "正文"}),
+        ];
+        assert_eq!(seed_accumulated_from_snapshot(&msgs), "正文");
+    }
+}
+
 /// Tool execution wrapper with automatic retry (used only for MCP network calls).
 pub(crate) async fn execute_tool_with_retry<F, Fut>(
     execute: F,
@@ -1254,6 +1319,15 @@ pub(crate) async fn run_agent_turn_inner(
             }
         }
     }
+    // Resume continuity seed: the crashed turn's already-generated assistant text
+    // (recovered from the checkpoint snapshot) seeds the runner's accumulated_content,
+    // so the resumed turn's terminal done rewrites the bubble with the FULL text —
+    // otherwise the done rewrite would drop everything generated before the crash.
+    let resume_seed = if resume_turn_id.is_some() {
+        seed_accumulated_from_snapshot(&messages_for_api)
+    } else {
+        String::new()
+    };
     // Defensive validation (debug builds only): release builds skip the logging cost of a full message scan
     #[cfg(debug_assertions)]
     verify_tool_messages(&messages_for_api);
@@ -1338,6 +1412,7 @@ pub(crate) async fn run_agent_turn_inner(
         max_output_tokens,
         context_budget,
         reasoning_level,
+        resume_seed,
     };
     let body_fut = runner.run();
 

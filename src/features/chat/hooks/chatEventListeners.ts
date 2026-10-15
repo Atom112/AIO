@@ -308,6 +308,9 @@ export function registerChatStreamListeners(): Promise<UnlistenFn>[] {
               }),
             );
             // Typewriter index stays unchanged (still pointing at the same message)
+            // Incremental persistence: each round boundary lands the message so a
+            // crash mid-turn keeps the finished rounds in the visible history.
+            saveSingleAssistantToBackend(assistant_id);
             return;
           }
         }
@@ -338,6 +341,9 @@ export function registerChatStreamListeners(): Promise<UnlistenFn>[] {
       const asst = datas.assistants.find((a) => a.id === assistant_id);
       const topic = asst?.topics.find((t: Topic) => t.id === topic_id);
       if (topic) setTypingIndex(topic.history.length - 1);
+      // Persist the placeholder immediately: a crash right at turn start otherwise
+      // leaves the user message without any visible trace of the turn.
+      saveSingleAssistantToBackend(assistant_id);
     }),
     listen<LlmChunkPayload>(EVENTS.llmChunk, async (e) => {
       const {
@@ -359,12 +365,15 @@ export function registerChatStreamListeners(): Promise<UnlistenFn>[] {
         clearStreamKey(assistant_id, topic_id);
         // The whole round is truly over (only the backend run_agent_turn epilogue emits done)
         if (error) {
-          // Error: append the error text to the last assistant message
+          // Error: append the error text to the last assistant message. Role-guarded:
+          // when the turn failed before any assistant placeholder exists (e.g. the
+          // pre-stream POST never came back), gluing the error onto a USER message
+          // would corrupt the user's own text — push a fresh assistant message instead.
           const asst = datas.assistants.find((a) => a.id === assistant_id);
           const topic = asst?.topics.find((t: Topic) => t.id === topic_id);
           if (topic) {
             const lastIdx = topic.history.length - 1;
-            if (lastIdx >= 0) {
+            if (lastIdx >= 0 && topic.history[lastIdx]?.role === 'assistant') {
               setDatas(
                 'assistants',
                 (a) => a.id === assistant_id,
@@ -374,6 +383,23 @@ export function registerChatStreamListeners(): Promise<UnlistenFn>[] {
                 lastIdx,
                 'content',
                 (old) => (typeof old === 'string' ? old : '') + content,
+              );
+            } else {
+              setDatas(
+                'assistants',
+                (a) => a.id === assistant_id,
+                'topics',
+                (t) => t.id === topic_id,
+                'history',
+                (h) => [
+                  ...h,
+                  {
+                    id: crypto.randomUUID(),
+                    role: 'assistant' as const,
+                    content,
+                    modelId: selectedModel()?.model_id,
+                  },
+                ],
               );
             }
           }
@@ -615,6 +641,9 @@ export function registerChatStreamListeners(): Promise<UnlistenFn>[] {
           }
         }),
       );
+      // Incremental persistence: each landed tool result is the natural "work landed"
+      // point — a crash mid-turn keeps every finished step in the visible history.
+      saveSingleAssistantToBackend(assistant_id);
     }),
     // In-run context compaction event: only main-agent compaction updates conversation memory —
     // topic.summary is overwritten and the context boundary moves so later turns stop

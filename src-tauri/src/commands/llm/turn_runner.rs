@@ -85,6 +85,11 @@ pub(crate) struct AgentTurnRunner {
     pub(crate) context_budget: usize,
     /// Reasoning effort for reasoning-capable models ("low"/"medium"/"high"); None = no reasoning parameter
     pub(crate) reasoning_level: Option<String>,
+    /// Crashed-turn assistant text recovered from the checkpoint snapshot (empty on a
+    /// normal turn). Seeds `accumulated_content` so the resumed turn's terminal done
+    /// rewrites the bubble with pre-crash + post-resume text combined — otherwise the
+    /// done rewrite would drop the pre-crash text from the visible message.
+    pub(crate) resume_seed: String,
 }
 
 impl AgentTurnRunner {
@@ -118,6 +123,7 @@ impl AgentTurnRunner {
             max_output_tokens,
             context_budget,
             reasoning_level,
+            resume_seed,
         } = self;
 
         // Unwrap Skills (the frontend passes them only in Agent mode; empty in chat mode)
@@ -204,7 +210,8 @@ impl AgentTurnRunner {
         // Peak context tokens: input_tokens of the last API call (for the context-window display)
         let mut context_input_tokens: u32 = 0;
         // Final text and generated images accumulated across rounds (sent once at done; idempotently replaces frontend chunk accumulation)
-        let mut accumulated_content = String::new();
+        // Resume turns start from the crashed turn's recovered text (see resume_seed).
+        let mut accumulated_content = resume_seed;
         let mut all_images: Vec<GeneratedImage> = Vec::new();
         // Per-turn tool circuit breaker (harness finding: environment-blocked
         // retries can burn the whole round budget probing). Threshold is

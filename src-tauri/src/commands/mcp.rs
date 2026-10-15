@@ -760,12 +760,12 @@ pub(crate) async fn execute_tool_call(
 
         // Force approval for untrusted-server tools under Auto (完全权限): autonomous mode must
         // not blanket-allow unknown external tools (auto-allow only once the server is trusted in settings).
-        // 信任判定修正（用户实测反馈：Auto 下 MCP 工具调用仍弹确认框）：项目级 server
-        // 的信任标记不在配置 JSON 里，而在项目信任存储（mcp-trust.json，与 spawn 门
-        // 同源）——用户在项目打开时确认过指纹的 server 不应逐次弹窗。全局 server 仍
-        // 以 MCP 设置页的 trusted 开关为准。
-        let project_trusted =
-            mcp::project_server_spawn_allowed(app, project_id, server_id).unwrap_or(false);
+        // 信任判定（两轮用户实测修正）：项目级 server 的信任标记不在配置 JSON 里，而在
+        // 项目信任存储（mcp-trust.json，项目打开时经指纹确认写入）——确认过的项目 server
+        // 不逐次弹窗。全局 server 以 MCP 设置页的 trusted 开关为准：它不存在于项目文件，
+        // 工具门必须拿到「项目级信任」的正向证据——不能把 spawn 门的「非项目级即放行」
+        // 当成已信任（那会让全局未信任 server 永远免弹，round21 实测回归）。
+        let project_trusted = mcp::project_server_tool_trusted(app, project_id, server_id);
         // An explicit user allow — a persisted `.aio/permissions.json` rule (e.g. from a
         // previous "always allow") or a session rule — counts as configuration: the gate
         // must not re-prompt every call for a call the user already greenlit.

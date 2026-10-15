@@ -658,6 +658,47 @@ pub fn project_server_spawn_allowed(
     Ok(trusted)
 }
 
+/// 工具调用门的项目信任信号（区别于 spawn 门）：仅当该 server **确实是项目级**
+/// （存在于项目 `.aio/mcp-servers.json`）且配置指纹已在信任存储中确认时为 true。
+///
+/// spawn 门对「不在项目文件里的 server」放行（vacuous true——全局 server 无需
+/// 项目信任即可启动）；工具门要的是「项目级信任」这个**正向证据**——全局 server
+/// 与无项目上下文一律返回 false，其信任判定回退到配置里的 `trusted` 开关。
+/// 混用两者会让全局未信任 server 的工具在完全权限档下永远不弹审批（实测回归）。
+pub fn project_server_tool_trusted(app: &AppHandle, project_id: Option<&str>, id: &str) -> bool {
+    let Some(pid) = project_id else {
+        return false;
+    };
+    let Ok(project_path) = resolve_project_path(app, pid) else {
+        return false;
+    };
+    project_server_tool_trusted_at(&project_path, &trust_store(app), id)
+}
+
+/// 纯数据路径（可测）：项目文件内命中 + 指纹匹配 → true；其余（全局 server /
+/// 项目文件缺失 / 指纹漂移）→ false。内置自生成 fs server 恒为 true。
+fn project_server_tool_trusted_at(
+    project_path: &str,
+    store: &crate::core::mcp_trust::McpTrustStore,
+    id: &str,
+) -> bool {
+    let Some(cfg) = load_project_mcp_servers(project_path)
+        .servers
+        .get(id)
+        .cloned()
+    else {
+        return false;
+    };
+    if is_self_generated_fs_server(&cfg, project_path) {
+        return true;
+    }
+    store.is_trusted(
+        project_path,
+        id,
+        &crate::core::mcp_trust::config_fingerprint(&cfg),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -701,6 +742,75 @@ mod tests {
         // 正常服务器 id → 不豁免
         let other = stdio_cfg("some-server", &exe.to_string_lossy(), vec![]);
         assert!(!is_self_generated_fs_server(&other, &project_str));
+    }
+
+    /// round21 regression: the tool-call trust gate must NOT inherit the spawn
+    /// gate's vacuous-true for ids absent from the project file — a global
+    /// untrusted server is never "project trusted"; project servers need a
+    /// fingerprint match in the trust store.
+    #[test]
+    fn tool_trust_gate_requires_positive_project_trust() {
+        fn stdio_cfg(id: &str) -> McpServerConfig {
+            McpServerConfig {
+                id: id.into(),
+                display_name: "x".into(),
+                transport: McpTransport::Stdio {
+                    command: "node".into(),
+                    args: vec![],
+                    env: BTreeMap::new(),
+                    cwd: None,
+                },
+                enabled_tools: vec![],
+                auto_start: false,
+                has_stored_secret: false,
+                trusted: false,
+                from_catalog: None,
+            }
+        }
+        let base = std::env::temp_dir().join(format!("aio-tool-trust-{}", std::process::id()));
+        let project = base.join("proj");
+        let store_dir = base.join("store");
+        std::fs::create_dir_all(&project).expect("建临时项目目录失败");
+        std::fs::create_dir_all(&store_dir).expect("建临时存储目录失败");
+        let project_str = project.to_string_lossy().into_owned();
+
+        // One project-level server in .aio/mcp-servers.json.
+        let mut file = McpServersFile::default();
+        file.servers
+            .insert("proj-srv".into(), stdio_cfg("proj-srv"));
+        save_project_mcp_servers(&project_str, &file).expect("写项目 MCP 配置失败");
+        let store = crate::core::mcp_trust::McpTrustStore::open(&store_dir);
+
+        // Global server (absent from the project file) → false; the spawn gate
+        // would vacuously say true — that gap was the round21 no-prompt bug.
+        assert!(!project_server_tool_trusted_at(
+            &project_str,
+            &store,
+            "global-srv"
+        ));
+        // Project server without a trust entry → false.
+        assert!(!project_server_tool_trusted_at(
+            &project_str,
+            &store,
+            "proj-srv"
+        ));
+        // Fingerprint confirmed → true; drifted fingerprint → false again.
+        let cfg = &file.servers["proj-srv"];
+        store
+            .set_trusted(
+                &project_str,
+                "proj-srv",
+                &crate::core::mcp_trust::config_fingerprint(cfg),
+            )
+            .expect("记录信任失败");
+        assert!(project_server_tool_trusted_at(
+            &project_str,
+            &store,
+            "proj-srv"
+        ));
+        assert!(!store.is_trusted(&project_str, "proj-srv", "deadbeef"));
+
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     /// MCP-12: pool keys fork per effective-config variant — same config is stable,

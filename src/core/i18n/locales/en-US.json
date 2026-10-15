@@ -453,6 +453,7 @@
   "mcp.detail.transport": "Transport",
   "mcp.detail.transportHttp": "HTTP+SSE (remote)",
   "mcp.detail.transportStdio": "stdio (local subprocess)",
+  "mcp.detail.transportStreamable": "Streamable HTTP (remote)",
   "mcp.detail.urlValidate": "URL must start with http:// or https://",
   "mcp.trust.title": "Project MCP Servers",
   "mcp.trust.description": "This project ships a .aio/mcp-servers.json. Servers connect only after you confirm trust; repo config changes require re-confirmation.",

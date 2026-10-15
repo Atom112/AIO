@@ -32,6 +32,7 @@ import type {
 } from '../../../core/types/mcp';
 import { statusColor, statusLabel, transportLabel } from '../../../core/utils/mcp';
 import Icon from '../../../shared/components/Icon';
+import Dropdown from '../../../shared/components/Dropdown';
 import {
   btnBadge,
   btnBadgeBar,
@@ -617,46 +618,38 @@ const McpServerList: Component = () => {
             </div>
             <label class="flex flex-col gap-1 text-xs">
               {t('mcp.installMethod')}
-              <select
-                class="px-3 py-2 rounded text-sm"
-                style={{
-                  background: 'rgba(var(--surface-alt-bg),0.95)',
-                  border: '1px solid var(--border-dim)',
-                }}
+              <Dropdown
+                variant="ghost"
+                class="w-full"
                 value={selectedDeliveryId()}
-                onChange={(event) => {
-                  const delivery = installing()!.deliveries.find(
-                    (item) => item.id === event.currentTarget.value,
-                  );
+                onChange={(id) => {
+                  const delivery = installing()!.deliveries.find((item) => item.id === id);
                   if (delivery) void chooseDelivery(delivery);
                 }}
-              >
-                <For each={installing()!.deliveries}>
-                  {(delivery) => <option value={delivery.id}>{delivery.label}</option>}
-                </For>
-              </select>
+                options={installing()!.deliveries.map((delivery) => ({
+                  value: delivery.id,
+                  label: delivery.label,
+                }))}
+              />
             </label>
             {/* Install scope (mirrors the skills market): global is the default so a
                 catalog install never silently writes into the repo's .aio/ */}
             <Show when={currentProjectId()}>
               <label class="flex flex-col gap-1 text-xs">
                 {t('mcp.installScope')}
-                <select
-                  class="px-3 py-2 rounded text-sm"
-                  style={{
-                    background: 'rgba(var(--surface-alt-bg),0.95)',
-                    border: '1px solid var(--border-dim)',
-                  }}
+                <Dropdown
+                  variant="ghost"
+                  class="w-full"
                   value={installScope()}
-                  onChange={(event) =>
-                    setInstallScope(event.currentTarget.value === 'project' ? 'project' : 'global')
-                  }
-                >
-                  <option value="global">{t('mcp.scopeGlobal')}</option>
-                  <option value="project">
-                    {t('mcp.scopeProject', { name: currentProject()?.name ?? '' })}
-                  </option>
-                </select>
+                  onChange={(v) => setInstallScope(v === 'project' ? 'project' : 'global')}
+                  options={[
+                    { value: 'global', label: t('mcp.scopeGlobal') },
+                    {
+                      value: 'project',
+                      label: t('mcp.scopeProject', { name: currentProject()?.name ?? '' }),
+                    },
+                  ]}
+                />
               </label>
             </Show>
             <Show when={selectedDelivery()?.kind !== 'http' && !runtimeAvailable()}>

@@ -163,6 +163,8 @@ src-tauri/src/
 - Utility functions go to `core/utils/`, never duplicate logic across components.
 - **样式统一使用 Tailwind CSS 工具类编写**，避免内联样式或自定义 CSS 文件，除非确有必要。Tailwind v4 无 `tailwind.config`；主题令牌是 `src/index.css` 中的 CSS 变量（`--primary-rgb`、`--surface-bg`、`--text-base-rgb`、`--border-dim` 等），暗色模式由 `isDarkMode` 信号切换，新颜色必须走 CSS 变量，禁止硬编码 `rgba(...)` 字面量。
 - **严禁在代码中使用 Emoji 字符（包括 JSX 文本、模板字符串、配置对象）。一律使用 `<Icon name="..." />` 组件替换。对于字符串上下文（`confirm()`、`alert()`），使用纯文本等价符号（`✓` / `✗` / `[!]`）。**
+- **弹窗（模态）背景统一**：所有模态弹窗的容器必须使用亚克力样式 `background: var(--dialog-bg)` + `backdrop-filter: var(--popup-blur)` + `border: 1px solid var(--border-dim)`（变量定义在 `src/index.css`），遮罩层固定为 `bg-black/25`（遮罩不加模糊）。参照实现：`src/features/chat/components/ProjectSettingsModal.tsx`。
+- **下拉菜单统一**：所有下拉选择一律使用 `src/shared/components/Dropdown.tsx`；设置页/表单行内使用 `variant="ghost"`（透明触发器 + `--border-dim` 边框，参照 `src/features/settings/components/AppSettings.tsx` 的语言选择器），工具栏使用默认 `solid` 变体。禁止原生 `<select>` 元素（`npm run check:gates` 门禁强制执行）。
 - **i18n**：所有面向用户的字符串必须通过 `t()`（`core/i18n`）取词；每个 key 必须同时存在于 `locales/zh-CN.json` 与 `locales/en-US.json`，且 `{{placeholder}}` 集合一致（`npm run check:i18n` 强制校验）。禁止在 JSX/模板字符串中硬编码 UI 文案。
 - **UI 文案克制**：界面上只放功能性文字（标签、状态、操作结果、错误提示、一句话占位符）。开发/设计阶段的解释性描述——功能介绍、原理说明、使用教程、配置字段的长说明——一律不写入 UI，它们属于 `docs/`。新增 UI 文案时先问：删掉这句话用户会不会用不了这个功能？会才留。操作状态反馈优先用控件自身的状态变化表达（如按钮文字短暂切换为「已取消/已下载」一秒后恢复、列表项消失、布局切换），而不是新增常驻状态文字行；错误信息（含失败原因）除外。
 

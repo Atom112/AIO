@@ -2,6 +2,7 @@ import { Component, createSignal, For, Show, onMount, untrack } from 'solid-js';
 import { listMcpTransports, saveMcpServerSecret } from '../../../core/api/mcp';
 import type { McpServerConfig, McpTransport, ToolSpec } from '../../../core/types/mcp';
 import { t } from '../../../core/i18n';
+import Dropdown from '../../../shared/components/Dropdown';
 import {
   btnBadge,
   btnDangerOutline,
@@ -40,6 +41,21 @@ const McpServerDetail: Component<Props> = (props) => {
         // Keep the built-in transport choices when discovery is unavailable.
       });
   });
+
+  // Transport dropdown options: registered transports (discovery may lag) plus the
+  // config's current transport, so an existing streamable_http entry still renders.
+  const TRANSPORT_LABELS: Record<string, () => string> = {
+    stdio: () => t('mcp.detail.transportStdio'),
+    http: () => t('mcp.detail.transportHttp'),
+    streamable_http: () => t('mcp.detail.transportStreamable'),
+  };
+  const transportOptions = () => {
+    const registered = transports();
+    const current = config().transport.transport as string;
+    return Object.keys(TRANSPORT_LABELS)
+      .filter((id) => registered.includes(id) || id === current)
+      .map((id) => ({ value: id as McpTransport['transport'], label: TRANSPORT_LABELS[id]() }));
+  };
 
   const updateField = <K extends keyof McpServerConfig>(key: K, value: McpServerConfig[K]) => {
     setConfig({ ...config(), [key]: value });
@@ -258,32 +274,21 @@ const McpServerDetail: Component<Props> = (props) => {
           <label class="text-xs" style={{ color: 'rgba(var(--text-base-rgb),0.6)' }}>
             {t('mcp.detail.transport')}
           </label>
-          <select
-            class="px-3 py-1.5 rounded text-sm outline-none"
-            style={{
-              background: 'rgba(0,0,0,0.3)',
-              border: '1px solid var(--border-dim)',
-              color: 'white',
-            }}
+          <Dropdown
+            variant="ghost"
+            class="w-full"
             value={config().transport.transport}
-            onChange={(e) => {
-              const t = e.currentTarget.value as 'stdio' | 'http' | 'streamable_http';
-              if (t === 'stdio') {
+            onChange={(v) => {
+              if (v === 'stdio') {
                 updateTransport({ transport: 'stdio', command: 'npx', args: [], env: {} });
-              } else if (t === 'http') {
+              } else if (v === 'http') {
                 updateTransport({ transport: 'http', url: '', headers: {} });
               } else {
                 updateTransport({ transport: 'streamable_http', url: '', headers: {} });
               }
             }}
-          >
-            <Show when={transports().includes('stdio')}>
-              <option value="stdio">{t('mcp.detail.transportStdio')}</option>
-            </Show>
-            <Show when={transports().includes('http')}>
-              <option value="http">{t('mcp.detail.transportHttp')}</option>
-            </Show>
-          </select>
+            options={transportOptions()}
+          />
         </div>
 
         {/* stdio fields */}

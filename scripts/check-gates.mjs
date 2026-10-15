@@ -9,6 +9,7 @@
 //   4. Frontend/backend layering (features/ AND core/utils must not call raw invoke; services/plugins/core/utils must not depend on commands)
 //   5. File-size caps (component/module line counts)
 //   6. Backend command registration consistency (every #[tauri::command] must be registered in lib.rs)
+//   7. Native <select> ban (all dropdowns must use shared/components/Dropdown.tsx)
 import { readFile, readdir } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
@@ -222,6 +223,22 @@ for (const { dir, ext, max } of SIZE_LIMITS) {
   }
   if (missing.length)
     push('cmd-dispatch', 'src-tauri/src/lib.rs', '未注册的命令: ' + missing.join(', '));
+}
+
+// ---------- Gate 7: native <select> ban ----------
+// Dropdowns are unified on shared/components/Dropdown.tsx (settings rows use
+// variant="ghost", matching the language selector). Native <select> elements style
+// inconsistently across platforms/themes and bypass that component's keyboard and
+// acrylic behavior — zero tolerance, no baseline.
+for await (const p of walk(path.join(root, 'src'), ['.tsx'])) {
+  const c = await read(p);
+  if (/<select[\s>]/.test(c)) {
+    push(
+      'dropdown-native-select',
+      rel(p),
+      '原生 <select> —— 统一使用 shared/components/Dropdown.tsx',
+    );
+  }
 }
 
 // ---------- Output ----------

@@ -5,6 +5,8 @@
 
 use crate::core::models::{ToolFunctionSpec, ToolResult, ToolSpec};
 use crate::ierr;
+// MEM-06: canonical single-text embedding (dimension-drift guard included)
+use crate::services::memory::embed_one;
 use crate::services::memory::judge::JudgeAction;
 use crate::services::memory::manager::MemoryStoreManager;
 use crate::services::memory::store::{MemoryStore, NewFact, SearchOptions};
@@ -48,7 +50,7 @@ fn remember_spec() -> ToolSpec {
             parameters: json!({
                 "type": "object",
                 "properties": {
-                    "key": { "type": "string", "description": "知识的简短标识（用于去重，可选）" },
+                    "key": { "type": "string", "description": "知识的简短标识，去重键（可选）。注意：同 key 的活动条目再次写入为**覆盖**（原地更新、id 不变，旧内容存档至版本历史，recall 只返回最新版）——需保留版本演进的事实请勿复用 key，改用不同 key 或事后 update_memory（按 id）" },
                     "content": { "type": "string", "description": "事实内容" },
                     "category": {
                         "type": "string",
@@ -200,11 +202,20 @@ pub async fn execute_memory_tool(
             )
         })?;
     match tool_name {
-        "remember" => execute_remember(app, &store, arguments).await,
+        "remember" | "update_memory" | "forget_memory" => {
+            // Write tools share one flow so the WAL stays reclaimed after write
+            // sessions (harness round 5: checkpoint after writes keeps the main DB
+            // durable instead of accumulating every page version in the WAL).
+            let result = match tool_name {
+                "remember" => execute_remember(app, &store, arguments).await,
+                "update_memory" => execute_update(app, &store, arguments).await,
+                _ => execute_forget(&store, arguments),
+            };
+            store.checkpoint_wal();
+            result
+        }
         "recall" => execute_recall(app, &store, arguments).await,
         "search_memory" => execute_search(app, &store, arguments).await,
-        "update_memory" => execute_update(app, &store, arguments).await,
-        "forget_memory" => execute_forget(&store, arguments),
         "search_code" => execute_search_code(app, project_root, arguments).await,
         _ => Err(ierr!(
             "未知记忆工具: {}",
@@ -259,34 +270,6 @@ async fn execute_search_code(
     Ok(tool_ok(out))
 }
 
-/// Embed a single text (per the project-level embedding config; None on failure degrades to keyword search).
-/// Returns None with a warning when the dimension mismatches existing store vectors (avoids writing/searching mismatched-dimension vectors).
-async fn embed_one(
-    app: &AppHandle,
-    store: &MemoryStore,
-    text: &str,
-) -> Option<(String, usize, Vec<f32>)> {
-    let cfg = crate::services::memory::resolve_project_embedding(app, store);
-    let embedder = crate::plugins::embed::resolve(app, &cfg).ok()?;
-    let v = embedder
-        .embed(&[text.to_string()])
-        .await
-        .ok()?
-        .into_iter()
-        .next()?;
-    if let Some(lib_dim) = store.embedding_dim_meta() {
-        if lib_dim != v.len() {
-            tracing::warn!(
-                "记忆库向量维度 {} 与当前嵌入模型维度 {} 不一致，跳过向量化（请检查嵌入模型配置）",
-                lib_dim,
-                v.len()
-            );
-            return None;
-        }
-    }
-    Some((embedder.model_key(), v.len(), v))
-}
-
 async fn execute_remember(
     app: &AppHandle,
     store: &Arc<MemoryStore>,
@@ -313,6 +296,11 @@ async fn execute_remember(
         .unwrap_or(0.92)
         .clamp(0.0, 1.0);
     let mut resolved_id: Option<String> = None;
+    // Harness round 8: how the write resolved — arbitration "update"/"merge"
+    // (cosine-NN dedup), or a key-overwrite detected below. The final result
+    // message tells the model exactly which happened; a silent in-place
+    // overwrite used to be indistinguishable from a fresh insert.
+    let mut resolved_kind: Option<&'static str> = None;
     if let Some((_, _, vec)) = &embedding {
         if let Ok(dups) = store.search_similar(vec, 3) {
             for (dup_id, cosine) in dups {
@@ -344,6 +332,7 @@ async fn execute_remember(
                                     store.set_embedding(&existing.id, Some(emb.clone()))?;
                                 }
                                 resolved_id = Some(existing.id);
+                                resolved_kind = Some("update");
                                 break;
                             }
                             JudgeAction::Merge => {
@@ -361,6 +350,7 @@ async fn execute_remember(
                                         store.set_embedding(&existing.id, Some((model, dim, vec)));
                                 }
                                 resolved_id = Some(existing.id);
+                                resolved_kind = Some("merge");
                                 break;
                             }
                             JudgeAction::Supersede => {
@@ -372,6 +362,15 @@ async fn execute_remember(
             }
         }
     }
+    let embed_available = embedding.is_some();
+    // Round 8: key-overwrite pre-check (only for the insert path — arbitration
+    // already resolved above). upsert_fact keeps the existing id and archives the
+    // old content to fact_versions; the result must SAY so instead of a uniform
+    // "已记住" (a silent in-place overwrite was indistinguishable from a insert).
+    let preexisting_key_id: Option<String> = match (&resolved_id, &key) {
+        (None, Some(k)) => store.find_active_id_by_key(k)?,
+        _ => None,
+    };
     let saved = match resolved_id {
         Some(id) => store.get_fact(&id)?,
         None => {
@@ -387,10 +386,41 @@ async fn execute_remember(
             store.upsert_fact(&fact, embedding)?
         }
     };
-    Ok(tool_ok(format!(
-        "已记住: {}（{}）",
-        saved.content, saved.category
-    )))
+    // Harness round 5 (visibility): a NULL vector must be VISIBLE — the whole
+    // project's facts had silently lost semantic retrieval (keyword-only RRF
+    // ~0.02 scores) because the configured embedding model never resolved.
+    let embed_note = if embed_available {
+        String::new()
+    } else {
+        match crate::services::memory::embedding_unavailable_reason(app, store) {
+            Some(reason) => format!(
+                "\n\n[!] 注意：本条记忆未生成语义向量（{reason}）。recall 将降级为关键词匹配，请在设置 → Embedding 模型中修复。"
+            ),
+            None => "\n\n[!] 注意：本条记忆未生成语义向量（维度与记忆库不一致，嵌入模型可能已切换），请在设置 → Embedding 模型中修复。".to_string(),
+        }
+    };
+    // Round 8: outcome-distinguishing result — insert / arbitration update /
+    // arbitration merge / key overwrite each get their own message, and the id
+    // is always surfaced (update_memory / forget_memory take ids).
+    let outcome = match resolved_kind {
+        Some("update") => format!(
+            "已更新既有记忆: {}（{}，id={}）：原内容已存档至版本历史（记忆面板可查）",
+            saved.content, saved.category, saved.id
+        ),
+        Some("merge") => format!(
+            "已合并入既有记忆: {}（{}，id={}）：合并前内容已存档至版本历史（记忆面板可查）",
+            saved.content, saved.category, saved.id
+        ),
+        _ if preexisting_key_id.is_some() => format!(
+            "已更新既有条目: {}（{}，key=\"{}\"，id={}）：同 key 写入为覆盖语义，旧内容已存档至版本历史（记忆面板可查）；需保留历史演进请勿复用 key",
+            saved.content, saved.category, saved.key.as_deref().unwrap_or_default(), saved.id
+        ),
+        _ => format!(
+            "已记住: {}（{}，id={}）",
+            saved.content, saved.category, saved.id
+        ),
+    };
+    Ok(tool_ok(format!("{outcome}{embed_note}")))
 }
 
 async fn execute_recall(
@@ -422,6 +452,11 @@ async fn execute_recall(
             r.category,
             r.content,
             r.score,
+        ));
+    }
+    if let Some(reason) = crate::services::memory::embedding_unavailable_reason(app, store) {
+        out.push_str(&format!(
+            "\n（当前为关键词降级检索：嵌入不可用——{reason}。相关度是关键词排名分，无语义区分度。）"
         ));
     }
     Ok(tool_ok(out))
@@ -466,6 +501,11 @@ async fn execute_search(
             r.content,
             r.score,
             r.id,
+        ));
+    }
+    if let Some(reason) = crate::services::memory::embedding_unavailable_reason(app, store) {
+        out.push_str(&format!(
+            "\n（当前为关键词降级检索：嵌入不可用——{reason}。相关度是关键词排名分，无语义区分度。）"
         ));
     }
     Ok(tool_ok(out))
@@ -532,18 +572,41 @@ async fn execute_update(
         .get("category")
         .and_then(|v| v.as_str())
         .map(|s| s.to_string())
-        .unwrap_or(existing.category);
-    let fact = NewFact {
-        key: existing.key.clone(),
-        content: new_content.clone(),
-        category: new_category,
-        importance: existing.importance,
-        source_type: existing.source_type.clone(),
-        source_refs: existing.source_refs.clone(),
-        pinned: existing.pinned,
+        .unwrap_or_else(|| existing.category.clone());
+    // MEM-01: keyless 事实（自动提取的事实全部如此）必须**原地**更新——
+    // upsert_fact(key: None) 必走 INSERT，每次"更新"都复制一条新事实、旧事实
+    // 仍 active，工具还报告"已更新"（对齐 commands::memory::memory_update 的
+    // keyless 分支语义）
+    let saved = if existing.key.is_some() {
+        let fact = NewFact {
+            key: existing.key.clone(),
+            content: new_content.clone(),
+            category: new_category,
+            importance: existing.importance,
+            source_type: existing.source_type.clone(),
+            source_refs: existing.source_refs.clone(),
+            pinned: existing.pinned,
+        };
+        let embedding = embed_one(app, store, &new_content).await;
+        let embed_note = if embedding.is_none() {
+            "\n\n[!] 注意：本条记忆未生成语义向量（嵌入不可用或维度不一致），请在设置 → Embedding 模型中修复。"
+        } else {
+            ""
+        };
+        let saved = store.upsert_fact(&fact, embedding)?;
+        return Ok(tool_ok(format!("已更新记忆: {}{embed_note}", saved.id)));
+    } else {
+        let mut updated = store.update_content(id, &new_content, "update")?;
+        if new_category != existing.category {
+            updated = store.set_category(id, &new_category)?;
+        }
+        if let Some(embedding) = embed_one(app, store, &new_content).await {
+            if let Err(e) = store.set_embedding(id, Some(embedding)) {
+                tracing::warn!("记忆 {id} 向量重写失败（保留旧向量）: {e}");
+            }
+        }
+        updated
     };
-    let embedding = embed_one(app, store, &new_content).await;
-    let saved = store.upsert_fact(&fact, embedding)?;
     Ok(tool_ok(format!("已更新记忆: {}", saved.id)))
 }
 

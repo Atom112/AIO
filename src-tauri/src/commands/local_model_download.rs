@@ -14,13 +14,17 @@
 
 use crate::core::events as ev;
 use crate::ierr;
+// 阶段4: 控制表/注销守卫/流复制尾段——与嵌入模型下载器共享（services::download，
+// 本文件此前自持一份同构副本，且 ENG-5 身份匹配注销曾只存在于这一侧）
+use crate::services::download::{
+    signal_download, stream_to_checkpoint, DownloadControl, DownloadInterrupt, UnregisterGuard,
+};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
-use std::time::{Duration, Instant};
+use std::sync::{Arc, OnceLock};
+use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager, Window};
-use tokio::io::AsyncWriteExt;
 
 use crate::commands::local_model_market::MarketFile;
 
@@ -72,30 +76,16 @@ pub struct InstalledLocalModel {
     pub size_bytes: u64,
 }
 
-/// Control flags for an in-flight download (registered per id).
-#[derive(Clone)]
-struct DownloadControl {
-    cancel: Arc<AtomicBool>,
-    pause: Arc<AtomicBool>,
-}
+// 阶段4: DownloadControl / download_controls / UnregisterGuard / signal_download
+// moved to services::download (shared with the embedding downloader).
 
-fn download_controls() -> &'static Mutex<std::collections::HashMap<String, DownloadControl>> {
-    static CONTROLS: OnceLock<Mutex<std::collections::HashMap<String, DownloadControl>>> =
-        OnceLock::new();
-    CONTROLS.get_or_init(|| Mutex::new(std::collections::HashMap::new()))
-}
+/// ENG-11: repo-wide concurrent download cap — unbounded parallel model downloads
+/// thrash the disk and the network; two at a time keeps large models from starving
+/// everything else.
+static DOWNLOAD_SLOTS: OnceLock<tokio::sync::Semaphore> = OnceLock::new();
 
-fn signal_download(id: &str, set: impl Fn(&DownloadControl)) -> bool {
-    match download_controls().lock() {
-        Ok(map) => match map.get(id) {
-            Some(c) => {
-                set(c);
-                true
-            }
-            None => false,
-        },
-        Err(_) => false,
-    }
+fn download_slots() -> &'static tokio::sync::Semaphore {
+    DOWNLOAD_SLOTS.get_or_init(|| tokio::sync::Semaphore::new(2))
 }
 
 /// Default install directory for local models: `<app_data_dir>/models/local`.
@@ -153,11 +143,15 @@ fn source_candidates(
     if source != "huggingface" {
         if let Some(repo) = req.ms_repo.as_deref().filter(|r| !r.trim().is_empty()) {
             let repo = crate::commands::local_model_market::encode_repo_path(repo.trim());
-            out.push(SourceCandidate {
-                name: "modelscope",
-                url: format!("https://modelscope.cn/models/{repo}/resolve/master/{encoded}"),
-                token: None,
-            });
+            // ENG-18: ModelScope's default branch is not always "master" (newer repos
+            // use "main") — the alternate-branch candidate retries instead of 404ing.
+            for branch in ["master", "main"] {
+                out.push(SourceCandidate {
+                    name: "modelscope",
+                    url: format!("https://modelscope.cn/models/{repo}/resolve/{branch}/{encoded}"),
+                    token: None,
+                });
+            }
         }
     }
     if source != "modelscope" {
@@ -167,11 +161,16 @@ fn source_candidates(
                 ("hf-mirror", "https://hf-mirror.com"),
                 ("huggingface", "https://huggingface.co"),
             ] {
-                out.push(SourceCandidate {
-                    name,
-                    url: format!("{base}/{repo}/resolve/main/{encoded}"),
-                    token: hf_token.clone(),
-                });
+                // ENG-18: most HF repos default to "main", but some still use
+                // "master" — try the alternate branch as a fallback candidate.
+                for branch in ["main", "master"] {
+                    out.push(SourceCandidate {
+                        name,
+                        url: format!("{base}/{repo}/resolve/{branch}/{encoded}"),
+                        // ENG-02: Token 仅附于 huggingface.co 官方域；镜像候选匿名访问
+                        token: hf_token.clone().filter(|_| name == "huggingface"),
+                    });
+                }
             }
         }
     }
@@ -208,10 +207,36 @@ fn available_space(dir: &Path) -> Option<u64> {
 
 /// Downloads all requested files. Ends in ok / paused / cancelled; network and write
 /// errors keep the `.part` checkpoint (resumed next time). Progress events:
-/// `local-model-download-progress` `{id, file, downloaded, total, source}` + `{id, done}`
-/// at the end.
+/// `local-model-download-progress` `{id, file, downloaded, total, source}`.
+///
+/// Terminal states (ok / paused / cancelled / error) are additionally announced with a
+/// `{id, done: true, status}` event so the background-task menu can close its entry;
+/// `done: true` alone remains the legacy contract the settings page clears rows on.
 #[tauri::command]
 pub async fn local_model_download(
+    window: Window,
+    app: AppHandle,
+    request: LocalModelDownloadRequest,
+) -> Result<LocalModelDownloadOutcome, String> {
+    let task_id = request.id.trim().to_string();
+    let result = local_model_download_inner(window, app.clone(), request).await;
+    let _ = app.emit(
+        ev::LOCAL_MODEL_DOWNLOAD_PROGRESS,
+        match &result {
+            Ok(outcome) => {
+                serde_json::json!({ "id": task_id, "done": true, "status": outcome.status })
+            }
+            Err(e) => {
+                serde_json::json!({ "id": task_id, "done": true, "status": "error", "error": e })
+            }
+        },
+    );
+    result
+}
+
+/// Body of [`local_model_download`] (the command layer wraps it to emit the
+/// terminal lifecycle event on every exit path).
+async fn local_model_download_inner(
     window: Window,
     app: AppHandle,
     request: LocalModelDownloadRequest,
@@ -226,7 +251,15 @@ pub async fn local_model_download(
     let mut request = request;
     request.id = id.clone();
 
-    let dir = local_models_dir(&app).join(&request.id);
+    // P0-2：前端传入的 id / file.name 一律经 safe_join 校验——拒绝绝对路径（含
+    // Windows 盘符 / UNC）、`..` 回溯与保留字符，防止任意目录写入与递归删除
+    let dir = crate::core::path_safety::safe_join(&local_models_dir(&app), &id)?;
+    let dests: Vec<PathBuf> = request
+        .files
+        .iter()
+        .map(|f| crate::core::path_safety::safe_join(&dir, &f.name))
+        .collect::<Result<_, _>>()?;
+
     std::fs::create_dir_all(&dir).map_err(|e| {
         ierr!(
             "创建模型目录失败: {}",
@@ -239,8 +272,9 @@ pub async fn local_model_download(
     let pending: u64 = request
         .files
         .iter()
-        .filter(|f| !dir.join(&f.name).exists())
-        .map(|f| f.size)
+        .zip(dests.iter())
+        .filter(|(_, dest)| !dest.exists())
+        .map(|(f, _)| f.size)
         .sum();
     if pending > 0 {
         if let Some(avail) = available_space(&dir) {
@@ -260,18 +294,43 @@ pub async fn local_model_download(
         cancel: Arc::new(AtomicBool::new(false)),
         pause: Arc::new(AtomicBool::new(false)),
     };
-    if let Ok(mut map) = download_controls().lock() {
+    // ENG-5: same-id downloads must not overlap — the old unconditional insert let a
+    // second task overwrite the first's control (making the first unstoppable) and
+    // the first task's Drop guard then removed the SECOND's entry on exit.
+    {
+        let mut map = crate::services::download::download_controls()
+            .lock()
+            .map_err(|e| e.to_string())?;
+        if map.contains_key(&id) {
+            return Err(ierr!(
+                "该模型已有下载任务在进行中（不可并行下载同一模型）",
+                "A download for this model is already in progress (parallel downloads of the same model are not allowed)"
+            ));
+        }
         map.insert(id.clone(), control.clone());
     }
-    struct UnregisterGuard(String);
-    impl Drop for UnregisterGuard {
-        fn drop(&mut self) {
-            if let Ok(mut map) = download_controls().lock() {
-                map.remove(&self.0);
+    // ENG-5: the unregister guard removes only OUR entry (identity-matched by the
+    // cancel flag's Arc pointer), never a successor's.
+    let _guard = UnregisterGuard::new(&id, &control);
+
+    // ENG-11: wait for a global download slot; a queued task still honors cancel
+    // (the flags are polled while waiting instead of blocking uninteruptibly).
+    {
+        let sem = download_slots();
+        loop {
+            tokio::select! {
+                permit = sem.acquire() => {
+                    let _permit = permit.map_err(|_| "下载并发闸门已关闭".to_string())?;
+                    break;
+                }
+                _ = tokio::time::sleep(Duration::from_millis(400)) => {
+                    if control.cancel.load(Ordering::Relaxed) {
+                        return Err("cancelled".into());
+                    }
+                }
             }
         }
     }
-    let _guard = UnregisterGuard(id.clone());
 
     let client = download_client(request.proxy_url.as_deref())?;
     let hf_token =
@@ -279,10 +338,22 @@ pub async fn local_model_download(
             .ok()
             .flatten();
 
-    for file in &request.files {
-        let dest = dir.join(&file.name);
+    for (file, dest) in request.files.iter().zip(dests.iter()) {
         if dest.exists() {
-            continue;
+            // ENG-04: 盲信跳过使半截文件永久视为完成——已知大小时核对长度，
+            // 并校验 GGUF 魔数；不符则删除重下
+            let size_ok = file.size == 0
+                || std::fs::metadata(dest)
+                    .map(|m| m.len() == file.size)
+                    .unwrap_or(false);
+            if size_ok && verify_gguf_magic(dest).is_ok() {
+                continue;
+            }
+            tracing::warn!(
+                "[download] 已存在的 {} 未通过完整性校验，删除重下",
+                dest.display()
+            );
+            let _ = std::fs::remove_file(dest);
         }
         if let Some(parent) = dest.parent() {
             std::fs::create_dir_all(parent).map_err(|e| {
@@ -310,6 +381,15 @@ pub async fn local_model_download(
                 let mut req = client.get(&cand.url);
                 if attempt_from > 0 {
                     req = req.header(reqwest::header::RANGE, format!("bytes={attempt_from}-"));
+                    // ENG-04: 续传附 If-Range（上次响应的 ETag）——跨源/远端版本变更时
+                    // 服务器改回 200，上面"server ignored Range"分支会清零重下，
+                    // 不再把不同版本的字节拼接成静默损坏的文件
+                    if let Ok(etag) = std::fs::read_to_string(etag_path(&tmp)) {
+                        let etag = etag.trim().to_string();
+                        if !etag.is_empty() {
+                            req = req.header(reqwest::header::IF_RANGE, etag);
+                        }
+                    }
                 }
                 if let Some(t) = cand.token.as_deref() {
                     req = req.bearer_auth(t);
@@ -320,6 +400,7 @@ pub async fn local_model_download(
                         if status == reqwest::StatusCode::RANGE_NOT_SATISFIABLE {
                             // Corrupt checkpoint larger than the remote file: restart clean
                             let _ = tokio::fs::remove_file(&tmp).await;
+                            let _ = tokio::fs::remove_file(etag_path(&tmp)).await;
                             attempt_from = 0;
                             resume_from = 0;
                             continue; // retry this source from scratch
@@ -344,8 +425,34 @@ pub async fn local_model_download(
                             last_err = format!("HTTP {status}");
                             break; // next candidate
                         }
+                        // ENG-04: 206 的 Content-Range 起点必须与续传起点一致——
+                        // 起点不符仍按 206 追加会拼接出错位的损坏文件
+                        if status == reqwest::StatusCode::PARTIAL_CONTENT && attempt_from > 0 {
+                            let range_ok = resp
+                                .headers()
+                                .get(reqwest::header::CONTENT_RANGE)
+                                .and_then(|v| v.to_str().ok())
+                                .and_then(|cr| cr.split_once(' '))
+                                .map(|(_, rest)| rest.starts_with(&format!("{attempt_from}-")))
+                                .unwrap_or(false);
+                            if !range_ok {
+                                let _ = tokio::fs::remove_file(&tmp).await;
+                                let _ = tokio::fs::remove_file(etag_path(&tmp)).await;
+                                attempt_from = 0;
+                                resume_from = 0;
+                                continue; // restart this source from scratch
+                            }
+                        }
                         if status != reqwest::StatusCode::PARTIAL_CONTENT {
                             resume_from = 0; // server ignored Range -> full restart
+                        }
+                        // ENG-04: 记录本次响应的 ETag 供下次续传 If-Range 使用
+                        if let Some(etag) = resp
+                            .headers()
+                            .get(reqwest::header::ETAG)
+                            .and_then(|v| v.to_str().ok())
+                        {
+                            let _ = std::fs::write(etag_path(&tmp), etag);
                         }
                         response = Some((cand.name.to_string(), resp));
                         break;
@@ -370,93 +477,79 @@ pub async fn local_model_download(
         })?;
 
         let total = resume_from + resp.content_length().unwrap_or(0);
-        let mut stream = resp.bytes_stream();
-        let mut out = if resume_from > 0 {
-            tokio::fs::OpenOptions::new().append(true).open(&tmp).await
-        } else {
-            tokio::fs::OpenOptions::new()
-                .create(true)
-                .write(true)
-                .truncate(true)
-                .open(&tmp)
-                .await
-        }
-        .map_err(|e| {
-            ierr!(
-                "创建临时文件失败: {}",
-                "Failed to create temporary file: {}",
-                e
-            )
-        })?;
-        let mut downloaded: u64 = resume_from;
-        let mut interrupted: Option<&'static str> = None;
-        let mut last_emit: Option<Instant> = None;
-        use futures_util::StreamExt as _;
-        while let Some(chunk) = stream.next().await {
-            let chunk = chunk.map_err(|e| ierr!("下载中断: {}", "Download interrupted: {}", e))?;
-            out.write_all(&chunk)
-                .await
-                .map_err(|e| ierr!("写入失败: {}", "Write failed: {}", e))?;
-            downloaded += chunk.len() as u64;
-            if last_emit.is_none_or(|t| t.elapsed() >= Duration::from_millis(200)) {
-                last_emit = Some(Instant::now());
-                let _ = window.emit(
-                    ev::LOCAL_MODEL_DOWNLOAD_PROGRESS,
-                    serde_json::json!({
-                        "id": request.id,
-                        "file": file.name,
-                        "downloaded": downloaded,
-                        "total": total,
-                        "source": source,
-                    }),
-                );
-            }
-            if control.cancel.load(Ordering::Relaxed) {
-                interrupted = Some("cancelled");
-                break;
-            }
-            if control.pause.load(Ordering::Relaxed) {
-                interrupted = Some("paused");
-                break;
+        // ENG-11: per-file space check at the point where the true size is known.
+        // The aggregate pre-check at task start is advisory only (TOCTOU: other
+        // processes consume space during a multi-GB download; and metadata-less
+        // files with size=0 bypassed it entirely — Content-Length here is
+        // authoritative).
+        let file_needed = total.saturating_sub(resume_from);
+        if file_needed > 0 {
+            if let Some(parent) = dest.parent() {
+                if let Some(avail) = available_space(parent) {
+                    if file_needed > avail {
+                        return Err(ierr!(
+                            "磁盘空间不足：{} 还需 {}，仅剩 {}（清理空间后重试）",
+                            "Insufficient disk space: {} needs {} more, only {} left (free space and retry)",
+                            file.name,
+                            format_bytes(file_needed),
+                            format_bytes(avail)
+                        ));
+                    }
+                }
             }
         }
-        out.flush()
-            .await
-            .map_err(|e| ierr!("落盘失败: {}", "Failed to flush to disk: {}", e))?;
-        drop(out);
-        match interrupted {
-            Some("cancelled") => {
-                let _ = tokio::fs::remove_file(&tmp).await;
+        // 阶段4: streamed copy tail — shared implementation (services::download).
+        // The GGUF downloader keeps only its domain specifics: the ENG-11 space
+        // pre-check above, the `.etag` sidecar cleanup (passed to the engine so it
+        // is removed on cancel and after the atomic rename) and the ENG-04 GGUF
+        // magic verify below.
+        match stream_to_checkpoint(
+            // 阶段5: the engine takes an emit closure (testable without a Tauri app);
+            // the command layer wraps its window here.
+            |event, payload| {
+                let _ = window.emit(event, payload);
+            },
+            ev::LOCAL_MODEL_DOWNLOAD_PROGRESS,
+            &serde_json::json!({ "id": request.id, "source": source }),
+            &file.name,
+            resp,
+            &tmp,
+            dest,
+            resume_from,
+            &control,
+            Some(&etag_path(&tmp)),
+        )
+        .await?
+        {
+            Some(DownloadInterrupt::Cancelled) => {
                 return Ok(LocalModelDownloadOutcome {
                     status: "cancelled".into(),
                     id: request.id,
                     entry_path: None,
                 });
             }
-            Some("paused") => {
+            Some(DownloadInterrupt::Paused) => {
                 return Ok(LocalModelDownloadOutcome {
                     status: "paused".into(),
                     id: request.id,
                     entry_path: None,
                 });
             }
-            _ => {
-                std::fs::rename(&tmp, &dest)
-                    .map_err(|e| ierr!("重命名失败: {}", "Failed to rename: {}", e))?;
+            None => {
+                // ENG-04: GGUF 魔数校验（跨源续传/截断的最后一道兜底防线）
+                if let Err(e) = verify_gguf_magic(dest) {
+                    let _ = std::fs::remove_file(dest);
+                    return Err(e);
+                }
             }
         }
     }
-    let entry = dir
-        .join(request.files[0].name.as_str())
-        .to_string_lossy()
-        .to_string();
+    let entry = dests[0].to_string_lossy().to_string();
     // Record the market marker so the installed-list scan recognizes this directory as a
     // market-managed model (recursive scan + exact entry file, even for nested layouts)
     write_model_marker(&dir, &request.files[0].name);
-    let _ = window.emit(
-        ev::LOCAL_MODEL_DOWNLOAD_PROGRESS,
-        serde_json::json!({ "id": request.id, "done": true }),
-    );
+    // Terminal event moved to the command-layer wrapper (local_model_download):
+    // it fires on every exit path with the outcome status.
     Ok(LocalModelDownloadOutcome {
         status: "ok".into(),
         id: request.id,
@@ -466,21 +559,30 @@ pub async fn local_model_download(
 
 /// Pauses an in-flight local model download. `id`: install folder name. Returns whether a
 /// download was in flight.
+/// ENG-14: trim the id — the download task registers its control entry under the
+/// TRIMMED id, so untrimmed lookups (pause/cancel) silently missed active downloads.
 #[tauri::command]
 pub fn local_model_pause_download(id: String) -> bool {
-    signal_download(&id, |c| c.pause.store(true, Ordering::Relaxed))
+    signal_download(id.trim(), |c| c.pause.store(true, Ordering::Relaxed))
 }
 
 /// Cancels a local model download (deletes the checkpoint; with no active download,
 /// cleans up `.part` files under the model's directory directly).
+/// HOR-4: the no-download cleanup walks the model dir — off the main thread.
 #[tauri::command]
-pub fn local_model_cancel_download(app: AppHandle, id: String) -> Result<bool, String> {
-    let active = signal_download(&id, |c| c.cancel.store(true, Ordering::Relaxed));
+pub async fn local_model_cancel_download(app: AppHandle, id: String) -> Result<bool, String> {
+    // ENG-14: same trimmed-id lookup as the download task's registration
+    let active = signal_download(id.trim(), |c| c.cancel.store(true, Ordering::Relaxed));
     if !active {
-        let dir = local_models_dir(&app).join(id.trim());
-        if dir.is_dir() {
-            remove_part_files(&dir);
-        }
+        // P0-2：id 经 safe_join 校验后再定位目录
+        let dir = crate::core::path_safety::safe_join(&local_models_dir(&app), id.trim())?;
+        tokio::task::spawn_blocking(move || {
+            if dir.is_dir() {
+                remove_part_files(&dir);
+            }
+        })
+        .await
+        .map_err(|e| e.to_string())?;
     }
     Ok(active)
 }
@@ -502,7 +604,7 @@ fn write_model_marker(dir: &Path, entry_file: &str) {
         entry_file: entry_file.to_string(),
     };
     if let Ok(bytes) = serde_json::to_vec(&marker) {
-        let _ = std::fs::write(dir.join(MODEL_MARKER), bytes);
+        let _ = crate::core::fs_util::atomic_write(&dir.join(MODEL_MARKER), &bytes);
     }
 }
 
@@ -514,17 +616,26 @@ fn read_model_marker(dir: &Path) -> Option<ModelMarker> {
 
 /// Deletes an installed local model (removes its install directory, or the loose
 /// `.gguf` file itself when the id refers to a top-level file).
+/// HOR-4: recursive removal of a multi-GB model dir must not run on the main
+/// thread (Tauri executes sync commands there) — the removal runs on the
+/// blocking pool.
 #[tauri::command]
-pub fn local_model_delete(app: AppHandle, id: String) -> Result<(), String> {
-    let path = local_models_dir(&app).join(id.trim());
-    if path.is_dir() {
-        std::fs::remove_dir_all(&path)
-            .map_err(|e| ierr!("删除模型失败: {}", "Failed to delete model: {}", e))?;
-    } else if path.is_file() {
-        std::fs::remove_file(&path)
-            .map_err(|e| ierr!("删除模型失败: {}", "Failed to delete model: {}", e))?;
-    }
-    Ok(())
+pub async fn local_model_delete(app: AppHandle, id: String) -> Result<(), String> {
+    // P0-2：id 经 safe_join 校验——`Path::join` 对绝对路径参数会整体替换基路径，
+    // `..` 组件在 syscall 时逃逸；这里杜绝「任意目录递归删除」原语
+    let path = crate::core::path_safety::safe_join(&local_models_dir(&app), id.trim())?;
+    tokio::task::spawn_blocking(move || {
+        if path.is_dir() {
+            std::fs::remove_dir_all(&path)
+                .map_err(|e| ierr!("删除模型失败: {}", "Failed to delete model: {}", e))?;
+        } else if path.is_file() {
+            std::fs::remove_file(&path)
+                .map_err(|e| ierr!("删除模型失败: {}", "Failed to delete model: {}", e))?;
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Lists installed local models by scanning the install directory for GGUF content:
@@ -533,18 +644,37 @@ pub fn local_model_delete(app: AppHandle, id: String) -> Result<(), String> {
 ///   scan, marker's entry file) or when it DIRECTLY contains `*.gguf` files (no
 ///   recursion) — foreign directories (caches, tool folders with deeply nested
 ///   models) are never mistaken for downloaded models.
+/// HOR-4: the recursive disk scan runs on the blocking pool (sync commands would
+/// execute it on the main thread).
 #[tauri::command]
-pub fn local_model_installed_list(app: AppHandle) -> Result<Vec<InstalledLocalModel>, String> {
+pub async fn local_model_installed_list(
+    app: AppHandle,
+) -> Result<Vec<InstalledLocalModel>, String> {
     let root = local_models_dir(&app);
+    tokio::task::spawn_blocking(move || Ok(installed_list_inner(root)))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Synchronous body of [`local_model_installed_list`] (runs on the blocking pool).
+fn installed_list_inner(root: PathBuf) -> Vec<InstalledLocalModel> {
     let mut out = Vec::new();
     let entries = match std::fs::read_dir(&root) {
         Ok(e) => e,
-        Err(_) => return Ok(out),
+        Err(_) => return out,
     };
     for entry in entries.flatten() {
         let path = entry.path();
         let name = entry.file_name().to_string_lossy().to_string();
-        if path.is_file() {
+        // ENG-19: never follow symlinks at the top level either — a linked model
+        // dir/file would alias/double-count the same shards (or loop).
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+        if file_type.is_symlink() {
+            continue;
+        }
+        if file_type.is_file() {
             // Top-level loose GGUF: a single-file model
             if !name.to_lowercase().ends_with(".gguf") {
                 continue;
@@ -566,7 +696,7 @@ pub fn local_model_installed_list(app: AppHandle) -> Result<Vec<InstalledLocalMo
             });
             continue;
         }
-        if !path.is_dir() {
+        if !file_type.is_dir() {
             continue;
         }
         // Model directory: marker (market install, recursive) or direct GGUF files only
@@ -596,7 +726,7 @@ pub fn local_model_installed_list(app: AppHandle) -> Result<Vec<InstalledLocalMo
         });
     }
     out.sort_by(|a, b| a.id.cmp(&b.id));
-    Ok(out)
+    out
 }
 
 /// Current local model install directory.
@@ -608,17 +738,23 @@ pub fn local_models_get_dir(app: AppHandle) -> Result<String, String> {
 /// Sets the local model install directory (empty `dir` restores the default). Downloaded
 /// models are migrated to the new directory, and every provider's localModelPaths entry
 /// pointing into the old directory is rewritten (best-effort, failures are logged only).
+/// HOR-4: the migration renames/copies multi-GB model dirs — it runs on the blocking
+/// pool so the main thread (and the UI) stays responsive.
 #[tauri::command]
-pub fn local_models_set_dir(app: AppHandle, dir: String) -> Result<String, String> {
+pub async fn local_models_set_dir(app: AppHandle, dir: String) -> Result<String, String> {
     let old = local_models_dir(&app);
     let mut cfg = crate::core::config::load_app_config(&app)
         .map_err(|e| ierr!("读取配置失败: {}", "Failed to read config: {}", e))?;
     cfg.local_models_dir = dir.trim().to_string();
-    crate::commands::config::save_app_config(app.clone(), cfg)
+    crate::core::config::save_app_config(&app, &cfg)
         .map_err(|e| ierr!("保存配置失败: {}", "Failed to save config: {}", e))?;
     let new = local_models_dir(&app);
     if !same_path(&old, &new) {
-        migrate_local_models(&app, &old, &new);
+        let app_c = app.clone();
+        let new_c = new.clone();
+        tokio::task::spawn_blocking(move || migrate_local_models(&app_c, &old, &new_c))
+            .await
+            .map_err(|e| e.to_string())?;
     }
     Ok(new.to_string_lossy().to_string())
 }
@@ -681,14 +817,23 @@ fn collect_gguf_files_shallow(dir: &Path, out: &mut Vec<MarketFile>) {
 
 /// Recursively collects `*.gguf` files under `root`, returning repo-relative names + sizes.
 /// Only used for market-managed directories (marker present).
+/// ENG-19: symlinked entries are skipped — `Path::is_dir()` follows symlinks, so a
+/// linked directory (or a symlink loop a user created inside a model dir) would be
+/// traversed endlessly / double-count aliased shards.
 fn collect_gguf_files(base: &Path, dir: &Path, out: &mut Vec<MarketFile>) {
     let entries = match std::fs::read_dir(dir) {
         Ok(e) => e,
         Err(_) => return,
     };
     for entry in entries.flatten() {
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+        if file_type.is_symlink() {
+            continue;
+        }
         let path = entry.path();
-        if path.is_dir() {
+        if file_type.is_dir() {
             collect_gguf_files(base, &path, out);
         } else if entry
             .file_name()
@@ -707,29 +852,67 @@ fn collect_gguf_files(base: &Path, dir: &Path, out: &mut Vec<MarketFile>) {
     }
 }
 
-/// Removes `*.part` checkpoint files under `dir` (recursive).
+/// Removes `*.part` checkpoint files (and their `.etag` sidecars) under `dir` (recursive).
+/// ENG-19: same symlink skip as collect_gguf_files (is_dir() follows links → loops).
 fn remove_part_files(dir: &Path) {
     let entries = match std::fs::read_dir(dir) {
         Ok(e) => e,
         Err(_) => return,
     };
     for entry in entries.flatten() {
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+        if file_type.is_symlink() {
+            continue;
+        }
         let path = entry.path();
-        if path.is_dir() {
+        if file_type.is_dir() {
             remove_part_files(&path);
-        } else if entry
-            .file_name()
-            .to_string_lossy()
-            .to_lowercase()
-            .ends_with(".part")
-        {
-            let _ = std::fs::remove_file(&path);
+        } else {
+            let name = entry.file_name().to_string_lossy().to_lowercase();
+            if name.ends_with(".part") || name.ends_with(".part.etag") {
+                let _ = std::fs::remove_file(&path);
+            }
         }
     }
 }
+
+/// ENG-04: 续传检查点旁的 ETag sidecar 路径（`<tmp>.etag`）。
+fn etag_path(tmp: &Path) -> PathBuf {
+    PathBuf::from(format!("{}.etag", tmp.display()))
+}
+
+/// ENG-04: 校验文件头 4 字节为 "GGUF"——下载完成/已存在跳过前的完整性兜底
+/// （跨源续传拼接或截断的文件在此被拦下，成本近零）。
+fn verify_gguf_magic(path: &Path) -> Result<(), String> {
+    use std::io::Read;
+    let mut f = std::fs::File::open(path)
+        .map_err(|e| ierr!("校验模型文件失败: {}", "Failed to verify model file: {}", e))?;
+    let mut magic = [0u8; 4];
+    f.read_exact(&mut magic).map_err(|e| {
+        ierr!(
+            "读取模型文件头失败: {}",
+            "Failed to read model file header: {}",
+            e
+        )
+    })?;
+    if &magic != b"GGUF" {
+        return Err(ierr!(
+            "模型文件校验失败：文件头不是 GGUF 格式（下载可能损坏，已删除请重试）",
+            "Model file verification failed: header is not GGUF format (download may be corrupt; deleted, please retry)"
+        ));
+    }
+    Ok(())
+}
+
 /// Moves every model directory from `old` to `new` (rename first, cross-volume copy
-/// fallback), then rewrites provider localModelPaths entries under `old` to `new`.
+/// fallback), then rewrites provider localModelPaths entries under `old` to `new` —
+/// ENG-10: only for entries that actually migrated (failed/skipped copies keep their
+/// old-path references; rewriting them would create dangling pointers).
 fn migrate_local_models(app: &AppHandle, old: &Path, new: &Path) {
+    // ENG-10: names that actually landed under `new` (drive the path rewrite below)
+    let mut migrated: std::collections::HashSet<String> = std::collections::HashSet::new();
     if old.is_dir() {
         if let Err(e) = std::fs::create_dir_all(new) {
             tracing::warn!(
@@ -773,15 +956,24 @@ fn migrate_local_models(app: &AppHandle, old: &Path, new: &Path) {
                     continue;
                 }
                 if std::fs::rename(&src, &dst).is_err() {
-                    if let Err(e) = copy_dir_recursive(&src, &dst) {
-                        tracing::warn!(
-                            "[local-models] 迁移 {} 失败: {e}",
-                            entry.file_name().to_string_lossy()
-                        );
-                        continue;
+                    match copy_dir_recursive(&src, &dst) {
+                        Ok(()) => {
+                            // Copy succeeded only if the source is fully removable
+                            // afterwards; a failed removal leaves duplicates, which
+                            // the provider rewrite still treats as migrated (the
+                            // file exists at the new path).
+                            let _ = std::fs::remove_dir_all(&src);
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                "[local-models] 迁移 {} 失败: {e}",
+                                entry.file_name().to_string_lossy()
+                            );
+                            continue;
+                        }
                     }
-                    let _ = std::fs::remove_dir_all(&src);
                 }
+                migrated.insert(entry.file_name().to_string_lossy().into_owned());
                 tracing::info!(
                     "[local-models] 已迁移本地模型 {} → {}",
                     entry.file_name().to_string_lossy(),
@@ -790,14 +982,26 @@ fn migrate_local_models(app: &AppHandle, old: &Path, new: &Path) {
             }
         }
     }
-    // Rewrite provider localModelPaths entries pointing into the old directory
-    if let Ok(mut file) = crate::commands::provider_config::load_provider_configs(app.clone()) {
+    // Rewrite provider localModelPaths entries pointing into the old directory —
+    // ENG-10: only entries whose model actually migrated; the old unconditional
+    // rewrite stranded references to models that stayed behind at the old path.
+    if let Ok(mut file) = crate::commands::provider_config::load_provider_configs_internal(app) {
         let mut changed = false;
         for cfg in file.providers.values_mut() {
             if let Some(map) = cfg.local_model_paths.as_mut() {
                 for path in map.values_mut() {
                     if let Some(rest) = path_under(path, old) {
-                        let next = new.join(rest).to_string_lossy().to_string();
+                        // The first path component under `old` identifies the entry
+                        // that had to migrate (model directory or loose GGUF name).
+                        let top = std::path::Path::new(&rest)
+                            .components()
+                            .next()
+                            .map(|c| c.as_os_str().to_string_lossy().into_owned())
+                            .unwrap_or_default();
+                        if !migrated.contains(&top) {
+                            continue;
+                        }
+                        let next = new.join(&rest).to_string_lossy().to_string();
                         tracing::info!("[local-models] 路径重写 {} → {next}", path);
                         *path = next;
                         changed = true;
@@ -807,7 +1011,7 @@ fn migrate_local_models(app: &AppHandle, old: &Path, new: &Path) {
         }
         if changed {
             if let Err(e) =
-                crate::commands::provider_config::save_provider_configs(app.clone(), file)
+                crate::commands::provider_config::save_provider_configs_internal(app, &file)
             {
                 tracing::warn!("[local-models] 迁移后保存供应商配置失败: {e}");
             }
@@ -834,6 +1038,23 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
 mod tests {
     use super::*;
 
+    /// ENG-04 回归：GGUF 魔数校验拦下非 GGUF 文件，正确文件放行。
+    #[test]
+    fn gguf_magic_verification() {
+        let dir = std::env::temp_dir().join(format!("aio-magic-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).expect("创建临时目录失败");
+        let good = dir.join("good.gguf");
+        std::fs::write(&good, b"GGUF\x03\x00\x00\x00rest").unwrap();
+        assert!(verify_gguf_magic(&good).is_ok());
+        let bad = dir.join("bad.gguf");
+        std::fs::write(&bad, b"HTML error page payload").unwrap();
+        assert!(verify_gguf_magic(&bad).is_err());
+        // ETag sidecar 路径与 .part 检查点成对
+        let tmp = dir.join("model.gguf.part");
+        assert_eq!(etag_path(&tmp).file_name().unwrap(), "model.gguf.part.etag");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
     #[test]
     fn path_under_matches_case_insensitive_windows_prefix() {
         let base = Path::new("C:\\Data\\Models");
@@ -845,6 +1066,10 @@ mod tests {
         assert_eq!(path_under("C:\\Data\\ModelsOther\\a.gguf", base), None);
         assert_eq!(path_under("D:\\Elsewhere\\a.gguf", base), None);
     }
+
+    /// ENG-5: the unregister-guard identity-match regression now lives in
+    /// services::download::tests::control_unregister_is_identity_matched
+    /// (the guard itself moved to the shared engine in 阶段4).
 
     #[test]
     fn format_bytes_units() {

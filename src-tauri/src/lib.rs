@@ -19,7 +19,6 @@ use crate::plugins::engine::EngineManager;
 use crate::plugins::lsp::LspManager;
 use crate::plugins::mcp::{McpRequestManager, McpServerManager, McpServerState, PendingApprovals};
 use crate::services::memory::MemoryStoreManager;
-use std::sync::Arc;
 use tauri::Manager;
 use tracing_subscriber::EnvFilter;
 
@@ -86,10 +85,13 @@ pub fn run() {
             Ok(())
         })
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_fs::init())
-        .plugin(tauri_plugin_shell::init())
+        // HOR-2: opener registered (the frontend openSafeUrl path targets
+        // plugin:opener|open_url, which was never registered — the call failed at
+        // runtime). The fs and shell plugins are gone: the frontend never invokes
+        // fs, and the single shell open() usage now goes through opener.
+        .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
-        .manage(StreamManager(Arc::new(dashmap::DashMap::new())))
+        .manage(StreamManager::new())
         .manage(LocalEngineState::new())
         .manage(EngineManager::new())
         .manage(McpServerManager::builtin())
@@ -99,6 +101,11 @@ pub fn run() {
         .manage(PendingApprovals::new())
         .manage(SubagentHandles::new())
         .manage(SubagentCompletions::new())
+        .manage(std::sync::Arc::new(
+            core::file_locks::FileLockRegistry::new(),
+        ))
+        .manage(core::state::AgentTaskBoard::new())
+        .manage(core::state::PendingAgentQuestions::new())
         .manage(MemoryStoreManager::new())
         .invoke_handler(tauri::generate_handler![
             commands::config::load_assistants,
@@ -107,6 +114,7 @@ pub fn run() {
             commands::config::set_locale,
             commands::config::save_app_config,
             commands::config::load_app_config,
+            commands::config::patch_app_config,
             commands::config::save_activated_models,
             commands::config::load_activated_models,
             commands::config::save_fetched_models,
@@ -115,9 +123,12 @@ pub fn run() {
             commands::attachment::discard_chat_attachment,
             commands::export::save_binary_file,
             commands::export::copy_stored_image,
+            commands::export::pick_save_path,
+            commands::export::pick_open_path,
             commands::llm::call_llm_stream,
             commands::image_gen::generate_image,
             commands::llm::stop_llm_stream,
+            commands::llm::list_active_streams,
             commands::llm::run_agent_turn,
             commands::llm::stop_subagent,
             commands::llm::checkpoints::get_active_checkpoint,
@@ -128,15 +139,16 @@ pub fn run() {
             commands::engine::scan_installed_engines,
             commands::engine::list_engine_models,
             commands::attachment::process_file_content,
-            commands::llm::summarize_history,
-            commands::llm::archive_history,
-            commands::llm::vision_analyze_images,
-            commands::llm::append_message,
+            commands::llm::titles::summarize_history,
+            commands::llm::titles::archive_history,
+            commands::llm::vision::vision_analyze_images,
+            commands::llm::messages::append_message,
             commands::llm::btw::ask_btw_question,
-            commands::llm::delete_topic_message,
-            commands::llm::generate_topic_title,
-            commands::llm::get_usage_summary,
-            commands::llm::get_usage_summary_by_model,
+            commands::llm::tasks::respond_agent_question,
+            commands::llm::messages::delete_topic_message,
+            commands::llm::titles::generate_topic_title,
+            commands::llm::usage::get_usage_summary,
+            commands::llm::usage::get_usage_summary_by_model,
             commands::update::check_app_update,
             commands::update::install_app_update,
             commands::update::restart_app,
@@ -170,12 +182,15 @@ pub fn run() {
             commands::skill::save_skill,
             commands::skill::delete_skill,
             commands::skill::list_skill_market,
+            commands::skill::search_skill_market,
             commands::skill::download_market_skill,
             commands::skill::discover_npx_skills,
             commands::skill::import_npx_skill,
             commands::skill::refresh_npx_skill,
             // MCP server management
             commands::mcp::list_mcp_servers,
+            commands::mcp::list_untrusted_project_mcp_servers,
+            commands::mcp::trust_project_mcp_server,
             commands::mcp::add_mcp_server,
             commands::mcp::save_mcp_server_secret,
             commands::mcp::remove_mcp_server,
@@ -186,7 +201,6 @@ pub fn run() {
             commands::mcp::list_mcp_tools_for_assistant,
             commands::mcp::call_mcp_tool,
             commands::mcp::test_mcp_server_connection,
-            commands::mcp::check_tool_permission,
             commands::mcp::respond_tool_approval,
             commands::mcp::list_mcp_transports,
             commands::mcp::list_mcp_resources,
@@ -194,6 +208,7 @@ pub fn run() {
             commands::mcp::list_mcp_prompts,
             commands::mcp::get_mcp_prompt,
             commands::mcp_catalog::list_mcp_catalog,
+            commands::mcp_catalog::list_mcp_catalog_all,
             commands::mcp_catalog::check_mcp_catalog_runtime,
             commands::mcp_catalog::install_mcp_catalog_server,
             // LSP language server management
@@ -216,7 +231,7 @@ pub fn run() {
             // Topic branching
             commands::config::branch_topic,
             // Token counting
-            commands::llm::count_tokens_cmd,
+            commands::llm::usage::count_tokens_cmd,
             // Project memory (RAG)
             commands::memory::memory_get_status,
             commands::memory::memory_get_versions,
@@ -276,7 +291,9 @@ pub fn run() {
                     let mut engines = state.lock();
                     for (_, mut inner) in engines.drain() {
                         if let Some(mut child) = inner.child_process.take() {
+                            // ENG-06: kill 后 wait，避免 Unix 僵尸进程
                             let _ = child.kill();
+                            let _ = child.wait();
                         }
                     }
                 }
@@ -286,11 +303,33 @@ pub fn run() {
                     entry.value().1.cancel();
                 }
                 stream_mgr.0.clear();
-                // Clean up MCP state (abort in-flight calls + clear the connection pool)
+                // Clean up MCP state: abort in-flight calls for real (MCP-2 made abort
+                // actually work), then stop every connection via its transport plugin
+                // (stdio children are killed explicitly — relying on stdin-EOF is not
+                // reliable on Windows, MCP-15).
                 let req_mgr = window.state::<McpRequestManager>();
                 req_mgr.abort_all();
                 let mcp_state = window.state::<McpServerState>();
-                mcp_state.lock().clear();
+                let mcp_mgr = window.state::<crate::plugins::mcp::McpServerManager>();
+                let jobs: Vec<(
+                    std::sync::Arc<dyn crate::plugins::mcp::McpServerPlugin>,
+                    std::sync::Arc<crate::plugins::mcp::connection::McpConnection>,
+                )> = {
+                    let mut map = mcp_state.lock();
+                    map.drain()
+                        .filter_map(|(_, conn)| {
+                            let plugin = mcp_mgr.get(&conn.transport_kind)?;
+                            Some((plugin, conn))
+                        })
+                        .collect()
+                };
+                if !jobs.is_empty() {
+                    tauri::async_runtime::spawn(async move {
+                        for (plugin, conn) in jobs {
+                            let _ = plugin.stop((*conn).clone()).await;
+                        }
+                    });
+                }
             }
         })
         .run(tauri::generate_context!())

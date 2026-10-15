@@ -132,6 +132,11 @@ pub struct McpCatalogInstallRequest {
     pub values: BTreeMap<String, String>,
     #[serde(default)]
     pub secrets: BTreeMap<String, String>,
+    /// Install scope: `Some(project_id)` writes the server into the project's
+    /// `.aio/mcp-servers.json` (and records trust — the install dialog click IS the
+    /// user authorization); `None` installs to the global config.
+    #[serde(default)]
+    pub project_id: Option<String>,
 }
 
 /// MCP server runtime status

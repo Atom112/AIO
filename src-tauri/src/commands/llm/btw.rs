@@ -47,12 +47,12 @@ pub async fn ask_btw_question(
         &crate::utils::url_validation::HttpUrlOptions::local_engine(),
     )?;
 
-    let client = super::streaming_http_client();
+    let client = super::client::streaming_http_client();
     let body = json!({ "model": model, "messages": messages, "stream": true });
 
     let (res, is_anthropic) = match tokio::time::timeout(
         std::time::Duration::from_secs(60),
-        super::post_chat_completion(&client, &api_url, &api_key, &body),
+        super::client::post_chat_completion(&client, &api_url, &api_key, &body),
     )
     .await
     {
@@ -90,7 +90,12 @@ pub async fn ask_btw_question(
     }
 
     let mut stream = res.bytes_stream();
-    let mut line_buffer = String::new();
+    // PROV-1/LOOP-9: byte-level line buffering with a hard cap — shared with the
+    // main agent stream (sse_lines module). The historic per-chunk
+    // `from_utf8_lossy` corrupted multi-byte UTF-8 split across chunks (Chinese
+    // BTW answers garbled) and had no runaway-line cap.
+    const BTW_LINE_BUFFER_LIMIT: usize = 4 * 1024 * 1024;
+    let mut line_buffer = super::sse_lines::SseLineBuffer::new(BTW_LINE_BUFFER_LIMIT);
 
     loop {
         let next = tokio::select! {
@@ -120,12 +125,15 @@ pub async fn ask_btw_question(
             None => break,
         };
 
-        line_buffer.push_str(&String::from_utf8_lossy(&chunk));
+        if let Err(e) = line_buffer.push(&chunk) {
+            let _ = window.emit(
+                ev::BTW_CHUNK,
+                json!({ "overlay_id": overlay_id, "content": "", "done": true, "error": e }),
+            );
+            return Err(e);
+        }
 
-        while let Some(pos) = line_buffer.find('\n') {
-            let line = line_buffer[..pos].trim().to_string();
-            line_buffer.drain(..pos + 1);
-
+        while let Some(line) = line_buffer.next_line() {
             if line.is_empty() {
                 continue;
             }
@@ -171,6 +179,13 @@ pub async fn ask_btw_question(
                             json!({ "overlay_id": overlay_id, "content": content, "done": false }),
                         );
                     }
+                } else {
+                    // PROV-1 companion (parity with the main loop): malformed SSE
+                    // data lines are logged, never silently dropped.
+                    tracing::warn!(
+                        "[btw] 无法解析的 SSE 数据行: {}",
+                        json_str.chars().take(120).collect::<String>()
+                    );
                 }
             }
         }

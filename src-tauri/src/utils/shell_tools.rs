@@ -32,7 +32,67 @@ const MAX_COMMAND_LEN: usize = 4096;
 pub use crate::utils::tool_result::{tool_err, tool_ok};
 
 // Truncation is provided by utils::truncate (name matches semantics)
-use crate::utils::truncate::truncate_bytes_lossy as truncate_output;
+use crate::core::tool_names;
+
+// ====== Console output decoding (harness round 3, hidden P0) =====
+//
+// cmd.exe on zh-CN Windows emits localized messages in GBK (code page 936); the
+// previous lossy-UTF-8 conversion rendered "拒绝访问。" as mojibake, which
+// silently KILLED every text-signature feature built on command output:
+// sandbox-expansion detection (is_sandbox_access_denied), not-found detection,
+// and env-class failure classification. Decode UTF-8-first (most modern tools
+// speak UTF-8), falling back to the system ANSI code page.
+
+/// Converts raw command output bytes to text: strict UTF-8 first, then the
+/// Windows ANSI code page (CP_ACP → GBK on zh-CN), then lossy UTF-8 as the
+/// last resort. Pure given the injected decoder — unit-tested.
+pub(crate) fn decode_console_output(bytes: &[u8]) -> String {
+    if std::str::from_utf8(bytes).is_ok() {
+        return String::from_utf8_lossy(bytes).into_owned();
+    }
+    match decode_ansi_codepage(bytes) {
+        Some(s) => s,
+        None => String::from_utf8_lossy(bytes).into_owned(),
+    }
+}
+
+/// ANSI-code-page decode via kernel32 `MultiByteToWideChar(CP_ACP)` (Windows
+/// only). Returns None on conversion failure so the caller can fall back.
+#[cfg(windows)]
+fn decode_ansi_codepage(bytes: &[u8]) -> Option<String> {
+    const CP_ACP: u32 = 0;
+    extern "system" {
+        fn MultiByteToWideChar(
+            code_page: u32,
+            dw_flags: u32,
+            lp_multi_byte_str: *const u8,
+            cb_multi_byte: i32,
+            lp_wide_char_str: *mut u16,
+            cch_wide_char: i32,
+        ) -> i32;
+    }
+    if bytes.is_empty() {
+        return Some(String::new());
+    }
+    let len = bytes.len().min(i32::MAX as usize) as i32;
+    let wide_len =
+        unsafe { MultiByteToWideChar(CP_ACP, 0, bytes.as_ptr(), len, std::ptr::null_mut(), 0) };
+    if wide_len <= 0 {
+        return None;
+    }
+    let mut wide = vec![0u16; wide_len as usize];
+    let written =
+        unsafe { MultiByteToWideChar(CP_ACP, 0, bytes.as_ptr(), len, wide.as_mut_ptr(), wide_len) };
+    if written <= 0 {
+        return None;
+    }
+    String::from_utf16(&wide[..written as usize]).ok()
+}
+
+#[cfg(not(windows))]
+fn decode_ansi_codepage(_bytes: &[u8]) -> Option<String> {
+    None // no ANSI code page outside Windows; lossy UTF-8 is the fallback
+}
 
 // ====== Dangerous-command detection ======
 
@@ -78,8 +138,10 @@ fn tokenize_command(command: &str) -> Vec<String> {
                 // toggle double-quote (inside single-quote = literal)
                 in_double = !in_double;
             }
-            ('\\', _, _) => {
-                // skip escaped characters inside quotes
+            ('\\', true, _) | ('\\', _, true) => {
+                // SEC-10 配套：反斜杠只在引号内作转义符；引号外它是 Windows 路径
+                // 分隔符，必须原样保留——原先无条件剥反斜杠使 `C:\Windows\Temp`
+                // 被切成 `c:windowstemp`，全部 `c:\` 前缀检查沦为死代码
                 if i + 1 < bytes.len() {
                     i += 1;
                     current.push(bytes[i] as char);
@@ -174,12 +236,44 @@ pub fn check_dangerous_command(command: &str) -> Option<DangerInfo> {
     let lower_tokens: Vec<String> = tokens.iter().map(|t| t.to_lowercase()).collect();
 
     // --- 1. System destruction: rm -rf + critical system paths ---
-    // detect `rm` immediately followed by `-rf`/`-fr`/`-r`/`-f` + a system path
-    let system_paths = [
-        "/", "/*", "/bin", "/boot", "/dev", "/etc", "/home", "/lib", "/lib64", "/media", "/mnt",
-        "/opt", "/proc", "/root", "/run", "/sbin", "/srv", "/sys", "/usr", "/var", "~", "~/",
-        "/tmp", "/var/tmp",
+    // SEC-10: two-tier matching. (a) The directory ITSELF (exact) is always
+    // catastrophic — `rm -rf /etc`, `rm -rf /home`, `rm -rf ~`, `rm -rf /`.
+    // (b) Prefix matching applies ONLY to OS-critical trees (/etc, /usr, ...)
+    // where any depth IS the system. Paths under /home/<user>/..., /tmp/...,
+    // ~/..., /opt/... are USER data: the old prefix list hard-blocked e.g.
+    // `rm -rf /home/u/proj/build` and `rm -rf ~/build` in every mode (Critical
+    // bypasses approvals entirely) — those now go through the normal sandbox +
+    // approval flow instead.
+    let os_critical_prefixes: &[&str] = &[
+        "/etc",
+        "/bin",
+        "/boot",
+        "/dev",
+        "/lib",
+        "/lib64",
+        "/proc",
+        "/root",
+        "/run",
+        "/sbin",
+        "/sys",
+        "/usr",
+        "c:\\windows",
     ];
+    let exact_catastrophic: &[&str] = &[
+        "/", "/*", "/home", "/opt", "/mnt", "/media", "/srv", "/var", "/tmp", "/var/tmp", "~",
+        "/bin", "/boot", "/dev", "/etc", "/lib", "/lib64", "/proc", "/root", "/run", "/sbin",
+        "/sys", "/usr", "c:", "c:\\", "c:/",
+    ];
+    // SEC-10: normalize trailing slashes so `/etc/` and `~/` hit the exact list
+    // (`//` collapses to `/`); a leading-slash-only string normalizes to `/`.
+    let norm_path = |p: &str| -> String {
+        let n = p.trim_end_matches('/');
+        if n.is_empty() && p.starts_with('/') {
+            "/".to_string()
+        } else {
+            n.to_string()
+        }
+    };
 
     for i in 0..tokens.len() {
         if is_rm_command(&lower_tokens[i]) {
@@ -189,15 +283,20 @@ pub fn check_dangerous_command(command: &str) -> Option<DangerInfo> {
                 .any(|a| *a == "-rf" || *a == "-fr" || *a == "-r" || *a == "-f");
             if has_force {
                 for arg in &args {
-                    if !arg.starts_with('-') {
-                        for sp in &system_paths {
-                            if *arg == *sp || arg.starts_with(sp) && *arg != "/tmp/" {
-                                return Some(DangerInfo {
-                                    risk: "危险：递归删除系统关键路径",
-                                    category: DangerCategory::Critical,
-                                });
-                            }
-                        }
+                    if arg.starts_with('-') || arg.is_empty() {
+                        continue;
+                    }
+                    let norm = norm_path(arg);
+                    let is_system = exact_catastrophic.contains(&norm.as_str())
+                        || os_critical_prefixes.iter().any(|p| {
+                            norm.starts_with(&format!("{p}/"))
+                                || norm.starts_with(&format!("{p}\\"))
+                        });
+                    if is_system {
+                        return Some(DangerInfo {
+                            risk: "危险：递归删除系统关键路径",
+                            category: DangerCategory::Critical,
+                        });
                     }
                 }
             }
@@ -229,6 +328,42 @@ pub fn check_dangerous_command(command: &str) -> Option<DangerInfo> {
                         risk: "危险：删除/格式化系统盘",
                         category: DangerCategory::Critical,
                     });
+                }
+            }
+        }
+    }
+
+    // PowerShell 递归删除：`Remove-Item -Recurse [-Force] <系统路径/~>`。
+    // §11a 递归会把引号载荷送进本函数（SEC-07 旗标修复后可达），这里补 cmdlet 词法。
+    // SEC-10: same two-tier rule as the rm section — exact system-dir targets or
+    // OS-critical-tree prefixes are Critical; user subpaths (/home/u/..., ~/build,
+    // C:\Users\...) go through sandbox + approval instead of a hard block.
+    for i in 0..lower_tokens.len() {
+        if lower_tokens[i] == "remove-item" {
+            let args = &tokens[i + 1..];
+            let has_recurse = args.iter().any(|a| {
+                let la = a.to_lowercase();
+                la == "-recurse" || la == "-r" || la == "-recurse:$true"
+            });
+            if has_recurse {
+                for arg in args {
+                    if arg.starts_with('-') {
+                        continue;
+                    }
+                    let lowered = arg.to_lowercase();
+                    let target = lowered.trim_matches('"').trim_matches('\'');
+                    let norm = norm_path(target);
+                    let is_system = exact_catastrophic.contains(&norm.as_str())
+                        || os_critical_prefixes.iter().any(|p| {
+                            norm.starts_with(&format!("{p}/"))
+                                || norm.starts_with(&format!("{p}\\"))
+                        });
+                    if is_system {
+                        return Some(DangerInfo {
+                            risk: "危险：PowerShell 递归删除系统关键路径",
+                            category: DangerCategory::Critical,
+                        });
+                    }
                 }
             }
         }
@@ -519,12 +654,14 @@ pub fn check_dangerous_command(command: &str) -> Option<DangerInfo> {
         // 11a. Interpreter -c quoted payloads: after tokenization the payload is a
         //      single token, bypassing the lexical checks above (e.g. bash -c "rm -rf ~").
         //      Strip the quotes and recursively check the payload itself.
+        //      SEC-07: PowerShell 的单横线长项 `-Command`（小写化后 "-command"）也必须
+        //      视为载荷旗标——缺了它，`powershell -Command "rm -rf ~"` 逃过递归检查。
         let shells = ["bash", "sh", "zsh", "dash", "ksh", "pwsh", "powershell"];
         for i in 0..lower_tokens.len() {
             if shells.contains(&lower_tokens[i].as_str())
                 && lower_tokens
                     .get(i + 1)
-                    .is_some_and(|a| a == "-c" || a == "--command")
+                    .is_some_and(|a| a == "-c" || a == "--command" || a == "-command")
             {
                 if let Some(payload) = tokens.get(i + 2) {
                     let stripped = payload.trim_matches(|c| c == '"' || c == '\'');
@@ -624,7 +761,7 @@ pub fn get_command_tool_spec() -> ToolSpec {
     ToolSpec {
         kind: "function".into(),
         function: ToolFunctionSpec {
-            name: "execute_command".into(),
+            name: tool_names::EXECUTE_COMMAND.into(),
             description: "在项目目录中执行系统命令，返回 stdout/stderr 和退出码。沙箱内默认**无网络**（Linux/macOS OS 级隔离）：命令需要联网（下载依赖、API 调用、访问 localhost 服务）时必须显式设 network=true（审批时向用户标注）。用于运行构建、测试、git 命令等。".into(),
             parameters: json!({
                 "type": "object",
@@ -653,6 +790,147 @@ pub fn get_command_tool_spec() -> ToolSpec {
 }
 
 // ====== Command execution ======
+
+/// Executable names eligible for host-PATH forwarding. Harness findings:
+/// round 2 — the sandboxed shell sees a stripped environment (`python`/`node`
+/// probes exit 9009) while the host AIO process has them on PATH; round 3 —
+/// the same holds for `git` (report: shell has no git either). `git`/`cargo`
+/// installs usually live under Program Files, whose default ALL APPLICATION
+/// PACKAGES ACE makes the forwarded absolute path genuinely executable inside
+/// the AppContainer (unlike user-dir interpreters, which the expansion
+/// dialog then mediates).
+const FORWARDED_INTERPRETERS: &[&str] = &[
+    "python", "python3", "py", "pip", "node", "npm", "npx", "git", "cargo",
+];
+
+/// Whether a command result text carries the Windows sandbox (AppContainer)
+/// access-denied signature: WinError 5 surfaces as "Access is denied" (en) or
+/// "拒绝访问" (zh) from cmd, PowerShell (UnauthorizedAccessException maps here),
+/// and Python ([WinError 5]). Harness round 3: this signature triggers the
+/// sandbox-expansion request (one-click grant / unsandboxed-once / ignore).
+/// Depends on [`decode_console_output`] — GBK mojibake previously made the
+/// Chinese half of this matcher dead on zh-CN systems.
+pub(crate) fn is_sandbox_access_denied(result_text: &str) -> bool {
+    result_text.contains("Access is denied")
+        || result_text.contains("拒绝访问")
+        || result_text.contains("Access to the path is denied")
+}
+
+/// Whether a command result text says the command was NOT FOUND (as opposed to
+/// found-and-failed): cmd's "'x' 不是内部或外部命令" / "'x' is not recognized",
+/// plus the 9009 exit marker. Environment-class failure signature (harness
+/// round 3: the breaker must distinguish env-blocked from business failures).
+pub(crate) fn is_command_not_found_result(result_text: &str) -> bool {
+    result_text.contains("不是内部或外部命令")
+        || result_text.contains("is not recognized")
+        || result_text.contains("无法将")
+        || result_text.contains("exit code: 9009")
+}
+
+/// Whether a command result text is an ENVIRONMENT-class failure (missing
+/// command / missing dependency / permission denied) rather than a business
+/// failure (command ran and returned nonzero). Used by the tool failure
+/// breaker: only env-class consecutive failures trip the disable.
+pub(crate) fn is_env_blocked_failure(result_text: &str) -> bool {
+    is_sandbox_access_denied(result_text)
+        || is_command_not_found_result(result_text)
+        || result_text.contains("系统找不到指定的文件")
+        || result_text.contains("The system cannot find the file specified")
+        || result_text.contains("ModuleNotFoundError")
+        || result_text.contains("command not found")
+}
+
+/// Splits the command into whitespace tokens, returning (byte offset of the
+/// operation token, token text). The operation token is the first token after
+/// unwrapping `cmd`/`cmd.exe` + its `/x` flags — i.e. what actually runs:
+/// `cmd /c python -V` → `python`; `cmd /c del x` → `del`; `cargo build` → `cargo`.
+/// Bails (None) when a quote appears before the operation token (conservative).
+fn operation_token_span(command: &str) -> Option<(usize, &str)> {
+    let trimmed = command.trim_start();
+    let offset = command.len() - trimmed.len();
+    let mut pos = 0usize;
+    let mut first = true;
+    let mut in_cmd_header = false;
+    for tok in trimmed.split_whitespace() {
+        let tok_start = trimmed[pos..].find(tok).unwrap_or(0) + pos;
+        let lower = tok.to_ascii_lowercase();
+        if first {
+            first = false;
+            if lower == "cmd" || lower == "cmd.exe" {
+                in_cmd_header = true;
+                pos = tok_start + tok.len();
+                continue;
+            }
+        }
+        if in_cmd_header && tok.starts_with('/') {
+            pos = tok_start + tok.len();
+            continue; // cmd flags: /c /k /s ...
+        }
+        if tok.contains('"') {
+            return None; // quoted payload — do not guess inside quotes
+        }
+        return Some((offset + tok_start, tok));
+    }
+    None
+}
+
+/// The forwarded-executable name this command targets, if any: `python -V` →
+/// "python", `cmd /c npm install` → "npm". None for non-forwarded operations
+/// (`cmd /c del x` → None; `del` is not in the list). Quoted/absolute/relative
+/// operation tokens are never forwarded.
+pub(crate) fn forwarded_interpreter_of(command: &str) -> Option<String> {
+    let (_, tok) = operation_token_span(command)?;
+    let lower = tok.to_ascii_lowercase();
+    let base = lower.strip_suffix(".exe").unwrap_or(&lower);
+    let bare = !base.is_empty()
+        && !base.contains(['/', '\\', ':'])
+        && !base.contains('"')
+        && FORWARDED_INTERPRETERS.contains(&base);
+    bare.then(|| base.to_string())
+}
+
+/// Dedup key for the sandbox-expansion ask-once window: the OPERATION the
+/// command performs (post cmd-unwrap), not the raw first token — `cmd /c del x`
+/// and `del x` share the key "del"; `cmd /c python -V` and `python -V` share
+/// "python"; unrelated cmd invocations do not collide.
+pub(crate) fn expansion_key(command: &str) -> String {
+    operation_token_span(command)
+        .map(|(_, tok)| tok.to_ascii_lowercase())
+        .unwrap_or_default()
+}
+
+/// Rewrites a command whose operation token (first token, or the token after
+/// `cmd /c`-style flags) is a bare known-executable name into the host-process-
+/// resolved absolute path, returning the rewritten command plus the executable's
+/// directory (for best-effort R+X granting inside the AppContainer sandbox —
+/// the tree is normally invisible to the AC token, e.g. a D:\Anaconda3 without
+/// an ALL APPLICATION PACKAGES ACE).
+///
+/// Fires only on a literally bare operation token (no quotes, path separators,
+/// or drive colons): `python tests/x.py`, `node -e "..."`, `npm install`, and —
+/// harness round 3, the gap the LLM testers actually hit — `cmd /c python -V`.
+/// Anything else (`cd x && python y`, absolute paths) passes through untouched.
+/// Resolution is PATH-only via [`crate::utils::exec_resolve`] (SEC-06: the
+/// project cwd is never consulted, so a planted interpreter is not picked up).
+/// When resolution fails the command passes through unchanged. Pure — unit-tested.
+pub(crate) fn forward_script_interpreter(command: &str) -> (String, Option<std::path::PathBuf>) {
+    let Some((tok_start, tok)) = operation_token_span(command) else {
+        return (command.to_string(), None);
+    };
+    if forwarded_interpreter_of(command).is_none() {
+        return (command.to_string(), None);
+    }
+    let Some(resolved) = crate::utils::exec_resolve::resolve_executable(tok) else {
+        return (command.to_string(), None);
+    };
+    let mut rewritten = String::with_capacity(command.len() + 16);
+    rewritten.push_str(&command[..tok_start]);
+    rewritten.push('"');
+    rewritten.push_str(&resolved.display().to_string());
+    rewritten.push('"');
+    rewritten.push_str(&command[tok_start + tok.len()..]);
+    (rewritten, resolved.parent().map(|p| p.to_path_buf()))
+}
 
 /// Checks the command for dangerous shell metacharacter sequences.
 fn check_shell_metacharacters(command: &str) -> Option<&'static str> {
@@ -707,6 +985,90 @@ fn drain_pipe_capped<R: std::io::Read>(mut pipe: R, cap: usize) -> (Vec<u8>, usi
     (kept, total)
 }
 
+/// Windows shell selection (config `shellWindows`): `"powershell"` (default —
+/// pwsh 7 with a `powershell.exe` 5.1 fallback) or `"cmd"`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WindowsShell {
+    Cmd,
+    PowerShell,
+}
+
+/// Parses the config value; unknown values fall back to PowerShell (the default).
+pub fn parse_windows_shell(value: &str) -> WindowsShell {
+    match value {
+        "cmd" => WindowsShell::Cmd,
+        _ => WindowsShell::PowerShell,
+    }
+}
+
+/// Resolved shell executable.
+struct ShellInvocation {
+    program: String,
+    is_powershell: bool,
+}
+
+/// Resolves the Windows shell binary: cmd via ComSpec/PATH; PowerShell prefers
+/// pwsh 7 (App Execution Alias on PATH) and falls back to `powershell.exe` 5.1
+/// (System32, always present).
+fn resolve_windows_shell(kind: WindowsShell) -> Result<ShellInvocation, String> {
+    match kind {
+        WindowsShell::Cmd => {
+            let program = std::env::var("ComSpec")
+                .ok()
+                .filter(|s| !s.is_empty())
+                .or_else(|| {
+                    crate::utils::exec_resolve::resolve_executable("cmd")
+                        .map(|p| p.to_string_lossy().into_owned())
+                })
+                .unwrap_or_else(|| "cmd.exe".to_string());
+            Ok(ShellInvocation {
+                program,
+                is_powershell: false,
+            })
+        }
+        WindowsShell::PowerShell => {
+            if let Some(p) = crate::utils::exec_resolve::resolve_executable("pwsh") {
+                return Ok(ShellInvocation {
+                    program: p.to_string_lossy().into_owned(),
+                    is_powershell: true,
+                });
+            }
+            if let Some(p) = crate::utils::exec_resolve::resolve_executable("powershell") {
+                return Ok(ShellInvocation {
+                    program: p.to_string_lossy().into_owned(),
+                    is_powershell: true,
+                });
+            }
+            Err(
+                "未找到 PowerShell（pwsh / powershell 均不可解析）/ PowerShell not found"
+                    .to_string(),
+            )
+        }
+    }
+}
+
+/// Builds the pwsh script for one command: a leading quoted string needs the `&`
+/// call operator (pwsh treats a bare quoted string as output, not invocation), and
+/// the trailing lines propagate the exit code — `pwsh -Command` otherwise always
+/// exits 0, which would break error detection / the breaker / sandbox expansion.
+fn pwsh_script(command: &str) -> String {
+    let body = if command.trim_start().starts_with('"') {
+        format!("& {command}")
+    } else {
+        command.to_string()
+    };
+    format!("{body}\nif ($null -ne $LASTEXITCODE) {{ exit $LASTEXITCODE }} elseif (-not $?) {{ exit 1 }}")
+}
+
+/// `-EncodedCommand` payload: UTF-16LE base64 — immune to every quote-escaping
+/// problem on both the argv and raw-command-line invocation paths.
+fn pwsh_encoded(script: &str) -> String {
+    use base64::Engine as _;
+    let utf16: Vec<u16> = script.encode_utf16().collect();
+    let bytes: Vec<u8> = utf16.iter().flat_map(|w| w.to_le_bytes()).collect();
+    base64::engine::general_purpose::STANDARD.encode(bytes)
+}
+
 /// Executes a system command in the project root directory.
 ///
 /// # Arguments
@@ -718,15 +1080,31 @@ fn drain_pipe_capped<R: std::io::Read>(mut pipe: R, cap: usize) -> (Vec<u8>, usi
 ///   parameter, default false)
 /// - `ac_dirs` - Windows AppContainer config (Some = enabled + toolchain R+X dirs;
 ///   resolved by the caller from the app config; always None on non-Windows)
+/// - `protect_git_ro` - Codex-style `<root>/.git` deny-write inside whichever sandbox
+///   runs (Windows AppContainer deny ACE / Linux ro-bind / macOS SBPL deny); the
+///   builtin git_* tools run in the host process and are unaffected
+/// - `shell` - Windows shell selection (`shellWindows` config: powershell default / cmd)
+///
+/// - `cancel` — user-stop token (agent loop). The wait loop polls it in 500ms slices;
+///   on cancellation the process tree is torn down exactly like the timeout path and
+///   the call returns a "stopped by user" ToolResult. `None` = uncancellable (tests,
+///   non-agent callers).
 ///
 /// # Returns
 /// A ToolResult carrying stdout, stderr, exit_code and timed_out.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "explicit execution context (sandbox, shell kind, cancellation token)"
+)]
 pub fn execute_command(
     command: &str,
     project_root: &str,
     timeout_ms: Option<u64>,
     allow_network: bool,
     ac_dirs: Option<Vec<String>>,
+    protect_git_ro: bool,
+    shell: WindowsShell,
+    cancel: Option<tokio_util::sync::CancellationToken>,
 ) -> ToolResult {
     if command.trim().is_empty() {
         return tool_err("命令为空");
@@ -741,17 +1119,24 @@ pub fn execute_command(
         ));
     }
 
+    // Harness follow-up (round 2, issue 2): bare interpreter names resolve against
+    // the HOST PATH (the sandbox shell's stripped PATH can't see them).
+    let (command, interpreter_dir) = forward_script_interpreter(command);
+    let command = command.as_str();
+    #[cfg(not(windows))]
+    let _ = &interpreter_dir; // only the AppContainer branch consumes the dir
+
     // dangerous shell metacharacter check
     if let Some(reason) = check_shell_metacharacters(command) {
         return tool_err(&format!("安全拦截: {reason}"));
     }
 
     // Dangerous-command detection: Critical findings (system destruction / privilege
-    // escalation / fork bomb) are **rejected in every agent mode** - in Auto/Workflow
-    // mode the execute_command permission is Allow and skips the approval prompt, so
-    // without this interception there would be no protection at all. High/Medium
-    // findings only log a warning (in Ask mode the approval prompt shows the risk
-    // description to the user).
+    // escalation / fork bomb) are **rejected in every agent mode** - in Auto
+    // (完全权限) mode the execute_command permission is Allow and skips the approval
+    // prompt, so without this interception there would be no protection at all.
+    // High/Medium findings only log a warning (in Ask mode the approval prompt shows
+    // the risk description to the user).
     if let Some(danger) = check_dangerous_command(command) {
         if danger.category == DangerCategory::Critical {
             return tool_err(&format!("已拒绝执行高危命令: {}", danger.risk));
@@ -766,37 +1151,91 @@ pub fn execute_command(
     // network blocked by default; any failure fails closed with an error.
     #[cfg(windows)]
     if let Some(dirs) = ac_dirs {
+        // The forwarded interpreter's tree needs R+X inside the AC (its directory
+        // usually has no ALL APPLICATION PACKAGES ACE, e.g. D:\Anaconda3). Granted
+        // best-effort: a system location (C:\Windows py.exe) may deny the ACL write
+        // while already being readable — that must not kill the command.
+        let dirs_lower: Vec<String> = dirs.iter().map(|d| d.to_ascii_lowercase()).collect();
+        let interpreter_extra: Vec<String> = interpreter_dir
+            .filter(|d| {
+                let dl = d.to_string_lossy().to_ascii_lowercase();
+                !dirs_lower.iter().any(|x| x.eq_ignore_ascii_case(&dl))
+            })
+            .map(|d| vec![d.to_string_lossy().into_owned()])
+            .unwrap_or_default();
         return execute_command_in_appcontainer(
             command,
             project_root,
             timeout,
             allow_network,
             &dirs,
+            &interpreter_extra,
+            protect_git_ro,
+            shell,
+            cancel,
         );
     }
 
-    // pick the shell per platform
-    let (shell, shell_arg) = if cfg!(windows) {
-        ("cmd", "/C")
-    } else {
-        ("sh", "-c")
+    // Shell resolution per platform. Windows: config-selected (powershell default /
+    // cmd); Unix: sh, wrapped by bwrap/SBPL when available.
+    #[cfg(windows)]
+    let (sandbox_argv, shell_program, shell_is_powershell) = {
+        let inv = match resolve_windows_shell(shell) {
+            Ok(i) => i,
+            Err(e) => return tool_err(&e),
+        };
+        (None::<Vec<String>>, inv.program, inv.is_powershell)
     };
-
-    // Sandbox wrapping (Linux/macOS best-effort): replace the launch argv when available; otherwise run natively
-    let sandbox_argv = crate::utils::sandbox::sandbox_command_prefix(
-        shell,
-        shell_arg,
-        command,
-        project_root,
-        allow_network,
-    );
+    #[cfg(not(windows))]
+    let (sandbox_argv, shell_program, shell_is_powershell) = {
+        let Some(shell) = crate::utils::exec_resolve::resolve_executable("sh") else {
+            return tool_err("无法定位系统 shell（PATH 中未找到 sh），拒绝执行");
+        };
+        let shell = shell.to_string_lossy().into_owned();
+        let argv = crate::utils::sandbox::sandbox_command_prefix(
+            &shell,
+            "-c",
+            command,
+            project_root,
+            allow_network,
+            protect_git_ro,
+        );
+        let program = match &argv {
+            Some(a) => a[0].clone(),
+            None => shell,
+        };
+        (argv, program, false)
+    };
     let mut cmd = if let Some(argv) = sandbox_argv {
         let mut c = Command::new(&argv[0]);
         c.args(&argv[1..]);
         c
     } else {
-        let mut c = Command::new(shell);
-        c.arg(shell_arg).arg(command);
+        let mut c = Command::new(&shell_program);
+        #[cfg(windows)]
+        {
+            if shell_is_powershell {
+                // pwsh：-EncodedCommand（UTF-16LE base64）免疫一切引号转义问题；
+                // 脚本尾部传播退出码（pwsh -Command 默认退出 0，不做此层则所有
+                // 失败命令都会被当成成功，错误检测/熔断/扩权全失效）。
+                c.args([
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-NoLogo",
+                    "-EncodedCommand",
+                    &pwsh_encoded(&pwsh_script(command)),
+                ]);
+            } else {
+                // cmd：/S /C "<命令>" 规范形态——/S 下只剥最外层包裹引号，内部
+                // 引号（转发解释器的带引号路径 + 参数内引号）原样保留。
+                use std::os::windows::process::CommandExt;
+                c.raw_arg("/S")
+                    .raw_arg("/C")
+                    .raw_arg(format!("\"{command}\""));
+            }
+        }
+        #[cfg(not(windows))]
+        c.arg("-c").arg(command);
         c
     };
     cmd.current_dir(project_root)
@@ -819,9 +1258,16 @@ pub fn execute_command(
     let mut job_guard = match crate::utils::sandbox::assign_to_job(&child) {
         Ok(g) => Some(g),
         Err(e) => {
-            // sandbox assignment failure must not block execution, but log the error
-            tracing::warn!("[shell] 无法分配 Job Object 沙箱: {e}");
-            None
+            // SEC-15: fail-closed. The Job Object is the only process-tree containment
+            // on the native Windows path — without it, a timeout kill would take down
+            // only the direct child and leak every grandchild. Running unsandboxed
+            // after a failed assignment (the historic fail-open) silently dropped the
+            // tree-teardown guarantee. Kill the just-spawned child and error instead.
+            let _ = child.kill();
+            let _ = child.wait();
+            return tool_err(&format!(
+                "无法分配 Job Object 沙箱（fail-closed，命令未执行）: {e}"
+            ));
         }
     };
 
@@ -844,8 +1290,16 @@ pub fn execute_command(
         });
     }
 
-    // wait with timeout via a channel, avoiding a dependency on the unstable wait_timeout
+    // wait with timeout via a channel, avoiding a dependency on the unstable wait_timeout.
+    // The wait is sliced (500ms) so user cancellation (stop button -> CancellationToken)
+    // interrupts a running command mid-flight instead of waiting out its full timeout —
+    // mainstream-parity behavior (Claude Code's Esc kills the running process tree).
+    // Cancel teardown is identical to the timeout path.
     use std::sync::{Arc, Mutex};
+    // unix-only: the process-group kill in the teardown path runs BEFORE the lock
+    // (the waiter thread holds it until exit) — captured here so the kill needs no lock.
+    #[cfg(unix)]
+    let child_pid = child.id();
     let child_arc = Arc::new(Mutex::new(child));
     let child_clone = Arc::clone(&child_arc);
 
@@ -856,33 +1310,63 @@ pub fn execute_command(
         let _ = tx.send(status);
     });
 
-    let (exit_code, timed_out) = match rx.recv_timeout(Duration::from_millis(timeout)) {
-        Ok(Ok(status)) => (status.code(), false),
-        Ok(Err(_)) => return tool_err("等待命令进程失败"),
-        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
-            // timeout -> tear down the whole process tree immediately:
-            // - Windows: dropping the Job guard triggers KILL_ON_JOB_CLOSE (all grandchildren included)
-            // - non-Windows: kill the process group (process_group(0) put the subtree in its own group)
-            drop(job_guard.take());
-            if let Ok(mut c) = child_arc.lock() {
-                #[cfg(unix)]
-                {
-                    let pid = c.id();
-                    if pid > 0 {
-                        let _ = std::process::Command::new("kill")
-                            .args(["-KILL", &format!("-{pid}")])
-                            .status();
-                    }
-                }
-                let _ = c.kill();
-                let _ = c.wait();
+    const WAIT_SLICE: Duration = Duration::from_millis(500);
+    let budget = Duration::from_millis(timeout);
+    let wait_started = std::time::Instant::now();
+    let mut exit_status: Option<std::process::ExitStatus> = None;
+    let mut timed_out = false;
+    let mut cancelled = false;
+    loop {
+        if cancel.as_ref().is_some_and(|t| t.is_cancelled()) {
+            cancelled = true;
+            break;
+        }
+        let elapsed = wait_started.elapsed();
+        if elapsed >= budget {
+            timed_out = true;
+            break;
+        }
+        match rx.recv_timeout(WAIT_SLICE.min(budget - elapsed)) {
+            Ok(Ok(status)) => {
+                exit_status = Some(status);
+                break;
             }
-            (None, true)
+            Ok(Err(_)) => return tool_err("等待命令进程失败"),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                return tool_err("命令进程意外终止");
+            }
         }
-        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
-            return tool_err("命令进程意外终止");
+    }
+
+    if timed_out || cancelled {
+        // timeout/cancel -> tear down the whole process tree immediately:
+        // - Windows: dropping the Job guard triggers KILL_ON_JOB_CLOSE (all grandchildren included)
+        // - non-Windows: kill the process group (process_group(0) put the subtree in its own group).
+        //   The group kill must precede the lock: the waiter thread holds it until the child exits,
+        //   so acquiring it before killing would deadlock on Unix.
+        drop(job_guard.take());
+        #[cfg(unix)]
+        {
+            if child_pid > 0 {
+                // PATH-only resolution (SEC-06): never spawn a bare `kill`
+                if let Some(kill) = crate::utils::exec_resolve::resolve_executable("kill") {
+                    let _ = std::process::Command::new(kill)
+                        .arg("-KILL")
+                        .arg(format!("-{child_pid}"))
+                        .status();
+                }
+            }
         }
-    };
+        if let Ok(mut c) = child_arc.lock() {
+            let _ = c.kill();
+            let _ = c.wait();
+        }
+    }
+    if cancelled {
+        return tool_err("命令已被用户停止");
+    }
+    let exit_code = exit_status.and_then(|s| s.code());
 
     // collect reader results: the process has exited or been torn down, so the pipes
     // close and the readers finish shortly; in the extreme case (a leftover process
@@ -916,24 +1400,60 @@ pub fn execute_command(
 /// All other semantics (drain-to-avoid-deadlock, truncation, result building)
 /// match the native path.
 #[cfg(windows)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "explicit sandbox execution context (shell kind, git protection, grant lists)"
+)]
 fn execute_command_in_appcontainer(
     command: &str,
     project_root: &str,
     timeout: u64,
     allow_network: bool,
     toolchain_dirs: &[String],
+    best_effort_rx_dirs: &[String],
+    protect_git_ro: bool,
+    shell: WindowsShell,
+    cancel: Option<tokio_util::sync::CancellationToken>,
 ) -> ToolResult {
-    // Same command-line shape as the native path: cmd /C <command> (cwd is set to
-    // the project root by the AC module). With the AppContainer attribute present,
-    // executable resolution runs under the low-privilege token - the full path
-    // (ComSpec) must be used; a bare "cmd" fails with ERROR_FILE_NOT_FOUND.
-    let cmd_path = std::env::var("ComSpec").unwrap_or_else(|_| "cmd.exe".to_string());
-    let cmdline = format!("{cmd_path} /C {command}");
+    // Shell resolution for the AppContainer: pwsh 7 的 Store App Execution Alias
+    //（WindowsApps 下的 reparse point）在 AppContainer 内不可执行——解析结果落在
+    // WindowsApps 下时回退 System32 的 powershell.exe 5.1（ALL APPLICATION PACKAGES
+    // ACE 覆盖，恒可用）；pwsh 的 MSI 安装（Program Files）无此问题。
+    let invocation = match resolve_windows_shell(shell) {
+        Ok(i) => i,
+        Err(e) => return tool_err(&e),
+    };
+    let program = if invocation.is_powershell
+        && invocation
+            .program
+            .to_ascii_lowercase()
+            .contains("windowsapps")
+    {
+        crate::utils::exec_resolve::resolve_executable("powershell")
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_else(|| {
+                r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe".to_string()
+            })
+    } else {
+        invocation.program
+    };
+    let cmdline = if invocation.is_powershell {
+        // -EncodedCommand：UTF-16LE base64，免疫命令行引号转义问题
+        format!(
+            "\"{program}\" -NoProfile -NonInteractive -NoLogo -EncodedCommand {}",
+            pwsh_encoded(&pwsh_script(command))
+        )
+    } else {
+        // /S + 包裹引号：cmd 只剥最外层包裹引号，多引号命令不触发「剥首尾引号」规则
+        format!("\"{program}\" /S /C \"{command}\"")
+    };
     let (mut child, job) = match crate::utils::sandbox::spawn_in_appcontainer(
         &cmdline,
         project_root,
         allow_network,
         toolchain_dirs,
+        best_effort_rx_dirs,
+        protect_git_ro,
     ) {
         Ok(v) => v,
         Err(e) => {
@@ -960,17 +1480,36 @@ fn execute_command_in_appcontainer(
         });
     }
 
-    // wait (blocking; this function runs on a spawn_blocking thread). Timeout -> Job kills the whole tree + terminate as backstop
-    let (exit_code, timed_out) = {
-        let (code, to) = crate::utils::sandbox::wait_with_timeout(&child, timeout as u32);
-        if to {
+    // wait (blocking; this function runs on a spawn_blocking thread), sliced so user
+    // cancellation interrupts a running command mid-flight. Timeout/cancel -> Job kills
+    // the whole tree + terminate as backstop.
+    let (exit_code, timed_out, cancelled) = {
+        const WAIT_SLICE_MS: u64 = 500;
+        let budget = timeout;
+        let wait_started = std::time::Instant::now();
+        let outcome: (Option<i32>, bool, bool) = loop {
+            if cancel.as_ref().is_some_and(|t| t.is_cancelled()) {
+                break (None, false, true);
+            }
+            let elapsed = wait_started.elapsed().as_millis() as u64;
+            if elapsed >= budget {
+                break (None, true, false);
+            }
+            let slice = (budget - elapsed).min(WAIT_SLICE_MS) as u32;
+            let (code, to) = crate::utils::sandbox::wait_with_timeout(&child, slice);
+            if !to {
+                break (code, false, false);
+            }
+        };
+        if outcome.1 || outcome.2 {
             drop(job.take());
             crate::utils::sandbox::terminate(&child);
-            (None, true)
-        } else {
-            (code, false)
         }
+        outcome
     };
+    if cancelled {
+        return tool_err("命令已被用户停止");
+    }
 
     let (stdout, stdout_total) = stdout_rx
         .recv_timeout(Duration::from_secs(10))
@@ -1017,9 +1556,12 @@ fn build_command_result(
     }
 
     if !stdout.is_empty() || stdout_total > 0 {
+        // Decode BEFORE truncation: GBK/ANSI console messages must reach the
+        // model (and the signature detectors) as readable text (harness round 3).
+        let decoded = decode_console_output(&stdout);
         result.push_str(&format!(
             "\n[stdout]:\n{}\n",
-            truncate_output(&stdout, MAX_OUTPUT_BYTES)
+            crate::utils::truncate::truncate_bytes_head(&decoded, MAX_OUTPUT_BYTES)
         ));
         if stdout_total > stdout.len() {
             result.push_str(&format!(
@@ -1030,9 +1572,10 @@ fn build_command_result(
         }
     }
     if !stderr.is_empty() || stderr_total > 0 {
+        let decoded = decode_console_output(&stderr);
         result.push_str(&format!(
             "\n[stderr]:\n{}\n",
-            truncate_output(&stderr, MAX_OUTPUT_BYTES)
+            crate::utils::truncate::truncate_bytes_head(&decoded, MAX_OUTPUT_BYTES)
         ));
         if stderr_total > stderr.len() {
             result.push_str(&format!(
@@ -1065,7 +1608,7 @@ mod tests {
 
     /// Critical-level dangerous commands must be rejected directly inside
     /// execute_command, without relying on the approval prompt. Covers the
-    /// protection gap of Auto/Workflow mode (execute_command permission is
+    /// protection gap of Auto (完全权限) mode (execute_command permission is
     /// Allow, no Ask prompt). Note: these samples are all lexically matched -
     /// detection returns before anything actually runs.
     #[test]
@@ -1076,7 +1619,16 @@ mod tests {
             // targets a nonexistent device name: harmless even if the guard fails
             "dd if=/dev/zero of=/dev/aio_test_nonexistent_device",
         ] {
-            let r = execute_command(cmd, &root, Some(5_000), false, None);
+            let r = execute_command(
+                cmd,
+                &root,
+                Some(5_000),
+                false,
+                None,
+                false,
+                WindowsShell::Cmd,
+                None,
+            );
             assert!(r.is_error, "命令应被拒绝: {cmd}");
             assert!(
                 text_of(&r).contains("高危命令"),
@@ -1128,8 +1680,26 @@ mod tests {
             "git clean -n",
             "bash -c 'cargo test'",
             "powershell -Command Get-Date",
+            "powershell -Command Get-ChildItem",
         ] {
             assert!(check_dangerous_command(cmd).is_none(), "假阳性: {cmd}");
+        }
+    }
+
+    /// Regression (SEC-07): `powershell -Command "<payload>"` is a quoted payload the
+    /// §11a recursion must inspect — the flag set used to miss the single-dash long
+    /// form, letting `rm -rf ~` slip through as one quoted token.
+    #[test]
+    fn powershell_single_dash_command_flag_is_inspected() {
+        for cmd in [
+            "powershell -Command \"Remove-Item -Recurse -Force ~\"",
+            "pwsh -command 'rm -rf ~'",
+        ] {
+            let danger = check_dangerous_command(cmd);
+            assert!(
+                danger.is_some_and(|d| d.category == DangerCategory::Critical),
+                "应识别载荷危险: {cmd}"
+            );
         }
     }
 
@@ -1137,9 +1707,66 @@ mod tests {
     #[test]
     fn benign_command_still_runs() {
         let root = std::env::temp_dir().to_string_lossy().to_string();
-        let r = execute_command("echo aio_benign_check", &root, Some(10_000), false, None);
+        let r = execute_command(
+            "echo aio_benign_check",
+            &root,
+            Some(10_000),
+            false,
+            None,
+            false,
+            WindowsShell::Cmd,
+            None,
+        );
         assert!(!r.is_error, "普通命令不应被拦截: {}", text_of(&r));
         assert!(text_of(&r).contains("aio_benign_check"));
+    }
+
+    /// SEC-10: user absolute paths under /home, /tmp, ~ are NOT system destruction —
+    /// the old prefix list hard-blocked them as Critical in every mode (Critical
+    /// bypasses approvals entirely), breaking legitimate `rm -rf` cleanup.
+    #[test]
+    fn rm_rf_user_subpaths_are_not_critical() {
+        for cmd in [
+            "rm -rf /home/user/project/build",
+            "rm -rf /tmp/cache-dir",
+            "rm -rf ~/build",
+            "rm -rf /opt/myapp/cache",
+            "rm -rf C:\\Users\\me\\proj\\target",
+            "Remove-Item -Recurse C:\\Users\\me\\proj\\node_modules",
+        ] {
+            assert!(
+                check_dangerous_command(cmd).is_none(),
+                "用户路径误判系统销毁: {cmd}"
+            );
+        }
+    }
+
+    /// SEC-10: the system directories themselves and OS-critical trees stay Critical.
+    #[test]
+    fn rm_rf_system_targets_stay_critical() {
+        for cmd in [
+            "rm -rf /",
+            "rm -rf /*",
+            "rm -rf /etc",
+            "rm -rf /etc/",
+            "rm -rf /etc/nginx",
+            "rm -rf /usr",
+            "rm -rf /usr/share/data",
+            "rm -rf /home",
+            "rm -rf /tmp",
+            "rm -rf /var",
+            "rm -rf ~",
+            "rm -rf ~/",
+            "rm -rf /",
+            "Remove-Item -Recurse C:\\Windows\\Temp",
+            "Remove-Item -Recurse ~",
+        ] {
+            let info = check_dangerous_command(cmd);
+            assert!(
+                info.is_some_and(|d| d.category == DangerCategory::Critical),
+                "系统路径应保持 Critical: {cmd}"
+            );
+        }
     }
 
     /// Large-output commands must not deadlock: stdout/stderr must be read before
@@ -1156,10 +1783,462 @@ mod tests {
         } else {
             "yes 0123456789ABCDEF | head -n 20000"
         };
-        let r = execute_command(cmd, &root, Some(30_000), false, None);
+        let r = execute_command(
+            cmd,
+            &root,
+            Some(30_000),
+            false,
+            None,
+            false,
+            WindowsShell::Cmd,
+            None,
+        );
         let text = text_of(&r);
         assert!(!r.is_error, "大输出命令应正常完成: {text}");
         assert!(!text.contains("超时"), "不应被超时误杀: {text}");
         assert!(text.contains("0123456789ABCDEF"), "输出内容缺失");
+    }
+
+    /// Access-denied signature detection (harness round 3): WinError 5 renders as
+    /// either locale string, from cmd, PowerShell, or Python tracebacks.
+    #[test]
+    fn sandbox_access_denied_signature() {
+        for text in [
+            "[Error] $ cmd\nexit code: 1\n[stderr]:\nAccess is denied.\n",
+            "Remove-Item : 拒绝访问",
+            "PermissionError: [WinError 5] 拒绝访问",
+        ] {
+            assert!(is_sandbox_access_denied(text), "应识别: {text}");
+        }
+        for text in [
+            "exit code: 1\n[stderr]:\n不是内部或外部命令", // 9009: missing, not denied
+            "cargo build finished",
+            "",
+            "错误: 文件不存在",
+        ] {
+            assert!(!is_sandbox_access_denied(text), "不应误报: {text}");
+        }
+    }
+
+    // ====== forward_script_interpreter (harness round 2 + round 3) ======
+
+    /// Commands that must pass through untouched: operators, absolute/quoted
+    /// first tokens, unknown names, sub-commands after another command.
+    /// (Round 3: `cmd /c python run.py` MOVED OUT of this list — it is now
+    /// forwarded, which is exactly the gap the LLM testers hit; `cargo` and
+    /// `python.exe` are also forwarded now, so they are rewrite cases.)
+    #[test]
+    fn forward_interpreter_passthrough_cases() {
+        for cmd in [
+            "cd tests && python run.py",
+            "cmd /c del abc.txt", // del is not a forwarded executable
+            "cmd /c nosuchcmd_r3_1",
+            "\"python\" run.py",
+            "D:\\Anaconda3\\python.exe run.py",
+            "./scripts/python.sh",
+            "echo python",
+            "",
+            "   ",
+        ] {
+            let (rewritten, dir) = forward_script_interpreter(cmd);
+            assert_eq!(rewritten, cmd, "不应改写: {cmd}");
+            assert!(dir.is_none(), "不应产生授权目录: {cmd}");
+        }
+    }
+
+    /// A bare known interpreter first token is rewritten to the quoted
+    /// host-resolved absolute path, preserving the rest and leading whitespace.
+    #[test]
+    fn forward_interpreter_rewrites_bare_names() {
+        // python is on the test machine's PATH (the AIO dev environment guarantees it)
+        if crate::utils::exec_resolve::resolve_executable("python").is_none() {
+            return; // PATH-less CI runner: nothing to forward, skip
+        }
+        let (rewritten, dir) = forward_script_interpreter("python tests/run.py");
+        assert!(
+            rewritten.starts_with('"'),
+            "应改写为带引号绝对路径: {rewritten}"
+        );
+        assert!(
+            rewritten.ends_with("tests/run.py"),
+            "参数应保留: {rewritten}"
+        );
+        assert!(
+            !rewritten.contains(" python"),
+            "首 token 应被整体替换: {rewritten}"
+        );
+        assert!(dir.is_some(), "应返回解释器目录用于 R+X 授权");
+        let (rewritten2, _) = forward_script_interpreter("  npm  install --no-audit");
+        assert!(
+            rewritten2.starts_with("  \""),
+            "前导空白应保留: {rewritten2}"
+        );
+        assert!(
+            rewritten2.ends_with(" install --no-audit"),
+            "参数与中间空白应保留: {rewritten2}"
+        );
+    }
+
+    /// Harness round 3 (the actual tester form): `cmd /c <interp> …` unwraps
+    /// the cmd header and its flags, then forwards the operation token. The
+    /// `python.exe` suffix form forwards too.
+    #[test]
+    fn forward_interpreter_rewrites_cmd_wrapped() {
+        if crate::utils::exec_resolve::resolve_executable("python").is_none() {
+            return;
+        }
+        let (rewritten, dir) = forward_script_interpreter("cmd /c python --version");
+        assert!(
+            rewritten.starts_with("cmd /c \"") && rewritten.ends_with("--version"),
+            "应改写 cmd 包裹内的解释器: {rewritten}"
+        );
+        assert!(
+            !rewritten.contains(" python "),
+            "内部 token 应被整体替换: {rewritten}"
+        );
+        assert!(dir.is_some(), "cmd 包裹也应返回解释器目录");
+
+        // Uppercase CMD.EXE header + multiple flags
+        let (rewritten2, _) = forward_script_interpreter("CMD.EXE /C /F python -V");
+        assert!(
+            rewritten2.starts_with("CMD.EXE /C /F \""),
+            "大小写与多 flag 都应解包: {rewritten2}"
+        );
+
+        // .exe-suffixed operation token
+        let (rewritten3, dir3) = forward_script_interpreter("cmd /c python.exe tests/run.py");
+        assert!(
+            rewritten3.starts_with("cmd /c \"") && dir3.is_some(),
+            "python.exe 形态也应转发: {rewritten3}"
+        );
+    }
+
+    /// forwarded_interpreter_of: what the command targets, for expansion triggering.
+    #[test]
+    fn forwarded_interpreter_of_forms() {
+        assert_eq!(
+            forwarded_interpreter_of("cmd /c python --version").as_deref(),
+            Some("python"),
+            "cmd 包裹应识别"
+        );
+        assert_eq!(
+            forwarded_interpreter_of("python -V").as_deref(),
+            Some("python")
+        );
+        assert_eq!(
+            forwarded_interpreter_of("PYTHON.EXE -V").as_deref(),
+            Some("python"),
+            "大小写与 .exe 后缀应归一"
+        );
+        assert_eq!(
+            forwarded_interpreter_of("cmd /c npm install").as_deref(),
+            Some("npm")
+        );
+        assert_eq!(
+            forwarded_interpreter_of("git status").as_deref(),
+            Some("git")
+        );
+        assert_eq!(
+            forwarded_interpreter_of("cmd /c del abc.txt"),
+            None,
+            "del 不在转发列表"
+        );
+        assert_eq!(forwarded_interpreter_of("cd x && python y"), None);
+        assert_eq!(forwarded_interpreter_of("\"python\" x"), None);
+    }
+
+    /// expansion_key: operation-level dedup for the sandbox-expansion window —
+    /// `cmd /c X` and bare `X` share one key; unrelated operations do not.
+    #[test]
+    fn expansion_key_is_operation_level() {
+        assert_eq!(expansion_key("cmd /c python --version"), "python");
+        assert_eq!(expansion_key("python -V"), "python");
+        assert_eq!(expansion_key("cmd /c del x"), "del");
+        assert_eq!(expansion_key("del x"), "del");
+        assert_eq!(expansion_key("  cmd /c ver"), "ver");
+        assert_eq!(expansion_key(""), "");
+    }
+
+    /// Case-insensitive on the interpreter name (Windows shells are).
+    #[test]
+    fn forward_interpreter_matches_case_insensitive() {
+        if crate::utils::exec_resolve::resolve_executable("python").is_none() {
+            return;
+        }
+        let (rewritten, _) = forward_script_interpreter("PYTHON -V");
+        assert!(rewritten.starts_with('"'), "大写名也应转发: {rewritten}");
+    }
+
+    // ====== console output decoding (harness round 3, hidden P0) ======
+
+    /// UTF-8 output passes through untouched; invalid-UTF-8 GBK bytes decode to
+    /// readable Chinese via the ANSI code page (zh-CN CP936) — the case that
+    /// previously turned "拒绝访问。" into mojibake and killed signature matching.
+    #[test]
+    fn decode_console_output_utf8_and_gbk() {
+        assert_eq!(decode_console_output(b"plain ascii"), "plain ascii");
+        assert_eq!(decode_console_output("中文 utf-8".as_bytes()), "中文 utf-8");
+        // GBK bytes of "拒绝访问。" (BE DC BE F8 B7 C3 CE CA A1 A3)
+        let gbk_denied = [0xBEu8, 0xDC, 0xBE, 0xF8, 0xB7, 0xC3, 0xCE, 0xCA, 0xA1, 0xA3];
+        if cfg!(windows) {
+            let decoded = decode_console_output(&gbk_denied);
+            assert!(
+                decoded.contains("拒绝访问"),
+                "GBK 拒绝访问应正确解码（ACP=936 系统），got: {decoded:?}"
+            );
+            // The signature matcher must now see the real text
+            assert!(is_sandbox_access_denied(&decoded), "解码后签名应可识别");
+        }
+        // On non-Windows there is no ANSI fallback: lossy UTF-8, no panic
+        let _ = decode_console_output(&gbk_denied);
+    }
+
+    /// Not-found + env-class signatures (harness round 3): the breaker's
+    /// env/business distinction and the 9009-expansion trigger depend on these.
+    #[test]
+    fn not_found_and_env_class_signatures() {
+        for text in [
+            "'python' 不是内部或外部命令，也不是可运行的程序或批处理文件",
+            "'x' is not recognized as an internal or external command",
+            "exit code: 9009",
+        ] {
+            assert!(is_command_not_found_result(text), "应识别未找到: {text}");
+            assert!(is_env_blocked_failure(text), "未找到属环境类: {text}");
+        }
+        for text in [
+            "拒绝访问。",
+            "Access is denied.",
+            "ModuleNotFoundError: No module named 'numpy'",
+            "/bin/sh: 1: git: command not found",
+        ] {
+            assert!(is_env_blocked_failure(text), "应识别环境类: {text}");
+        }
+        // Business failures: command RAN and failed — must NOT be env-class
+        for text in [
+            "exit code: 1\n[stderr]:\n1 test failed",
+            "assert False: assertion failed",
+            "error: could not compile `aio`",
+        ] {
+            assert!(
+                !is_env_blocked_failure(text),
+                "业务失败不应判为环境类: {text}"
+            );
+            assert!(!is_command_not_found_result(text));
+        }
+    }
+
+    /// E2E decode verification (harness round 3): a real cmd.exe run whose console
+    /// code page is GBK (zh-CN default) must surface readable Chinese in the tool
+    /// result — previously "拒绝访问。" arrived as mojibake and killed the
+    /// signature detectors (expansion dialog / env-class breaker).
+    #[test]
+    #[cfg(windows)]
+    fn gbk_console_output_decodes_e2e() {
+        let root = std::env::temp_dir().to_string_lossy().to_string();
+        let r = execute_command(
+            "cmd /c echo 拒绝访问测试OK",
+            &root,
+            Some(15_000),
+            false,
+            None,
+            false,
+            WindowsShell::Cmd,
+            None,
+        );
+        let text = text_of(&r);
+        assert!(
+            !r.is_error && text.contains("拒绝访问测试OK"),
+            "GBK 控制台输出应正确解码: {text}"
+        );
+    }
+
+    /// E2E (harness round 2, issue 2): a bare `python` command must run inside
+    /// the Windows AppContainer sandbox — forwarding rewrites it to the host-PATH
+    /// absolute path and the best-effort R+X grant makes the interpreter tree
+    /// (normally invisible: no ALL APPLICATION PACKAGES ACE) readable/executable.
+    ///
+    /// Ignored by default: on machines with path-level security filtering beyond
+    /// the DACL (the dev box's EDR-layer denies exec/dir-list on its Anaconda
+    /// install even WITH the R+X grant in place — reads pass, exec is refused),
+    /// the assertion fails despite a correct grant. Rerun manually on a clean
+    /// machine: `cargo test ac_python_forwarding -- --ignored`. Skipped silently
+    /// when the host has no python on PATH.
+    #[test]
+    #[cfg(windows)]
+    #[ignore = "interpreter exec is subject to machine-level path filtering; run manually on clean machines"]
+    fn ac_python_forwarding_end_to_end() {
+        if crate::utils::exec_resolve::resolve_executable("python").is_none() {
+            return; // host has no python — nothing to forward
+        }
+        let project = std::env::temp_dir().join("aio-ac-test-python-fwd");
+        let _ = std::fs::remove_dir_all(&project);
+        std::fs::create_dir_all(&project).unwrap();
+        let r = execute_command(
+            "python -c \"print('aio_py_ok')\"",
+            project.to_str().unwrap(),
+            Some(30_000),
+            false,
+            Some(vec![]), // AppContainer enabled, empty toolchain list
+            false,
+            WindowsShell::Cmd,
+            None,
+        );
+        let text = text_of(&r);
+        assert!(
+            !r.is_error && text.contains("aio_py_ok"),
+            "AC 内 python 转发应成功: {text}"
+        );
+        let _ = std::fs::remove_dir_all(&project);
+    }
+
+    /// 本机全权/native 路径引号保真 e2e：整条命令文本必须**原样**到达 cmd——参数内
+    /// 双引号不被剥、不转义。回归背景：native 路径曾用 arg() 把整条命令按 MSVCRT
+    /// 规则包成单参数（含空格加引号、内部引号转义 \"），cmd 收到双重引号包裹的
+    /// 文本 → 引号丢失、含空格参数被拆散（本机全权档实测）。
+    #[test]
+    #[cfg(windows)]
+    fn native_path_preserves_quotes() {
+        let root = std::env::temp_dir().to_string_lossy().to_string();
+        let r = execute_command(
+            "echo \"A B\" end",
+            &root,
+            Some(15_000),
+            false,
+            None,
+            false,
+            WindowsShell::Cmd,
+            None,
+        );
+        let text = text_of(&r);
+        assert!(
+            !r.is_error && text.contains("\"A B\""),
+            "引号应原样保留: {text}"
+        );
+    }
+
+    /// native 路径的转发解释器 e2e：裸名 python 改写为绝对路径后经 raw 命令行执行，
+    /// cmd 的 /C 引号规则应正确剥离路径引号（与沙箱路径同语义）。
+    #[test]
+    #[cfg(windows)]
+    fn native_path_forwarded_interpreter_runs() {
+        if crate::utils::exec_resolve::resolve_executable("python").is_none() {
+            return; // host has no python on PATH
+        }
+        let root = std::env::temp_dir().to_string_lossy().to_string();
+        let r = execute_command(
+            "python -c \"print('aio_native_ok')\"",
+            &root,
+            Some(30_000),
+            false,
+            None,
+            false,
+            WindowsShell::Cmd,
+            None,
+        );
+        let text = text_of(&r);
+        assert!(
+            !r.is_error && text.contains("aio_native_ok"),
+            "native 转发解释器应成功: {text}"
+        );
+    }
+
+    /// PowerShell 默认 shell e2e（native 路径）：基本执行 + 退出码传播——pwsh
+    /// -Command 默认退出 0，脚本尾部的 `exit $LASTEXITCODE` 包装必须把 native
+    /// 命令的失败码透传出来（错误检测/熔断/扩权都依赖它）。
+    #[test]
+    #[cfg(windows)]
+    fn powershell_native_runs_and_propagates_exit_code() {
+        let root = std::env::temp_dir().to_string_lossy().to_string();
+        let ok = execute_command(
+            "Write-Output 'aio_pwsh_ok'",
+            &root,
+            Some(30_000),
+            false,
+            None,
+            false,
+            WindowsShell::PowerShell,
+            None,
+        );
+        let ok_text = text_of(&ok);
+        assert!(
+            !ok.is_error && ok_text.contains("aio_pwsh_ok"),
+            "pwsh 基本执行应成功: {ok_text}"
+        );
+        let fail = execute_command(
+            "cmd /c exit 7",
+            &root,
+            Some(30_000),
+            false,
+            None,
+            false,
+            WindowsShell::PowerShell,
+            None,
+        );
+        assert!(
+            fail.is_error,
+            "退出码 7 应传播为错误 (exit={:?}, text={})",
+            text_of(&fail),
+            text_of(&fail)
+        );
+    }
+
+    /// PowerShell 默认 shell e2e（AppContainer 路径）：pwsh 的 Store 别名在 AC 内
+    /// 不可执行 → 自动回退 System32 的 powershell.exe 5.1；只读命令 + 引号参数
+    /// 在沙箱内均应可用。
+    #[test]
+    #[cfg(windows)]
+    fn appcontainer_powershell_runs() {
+        let project = std::env::temp_dir().join("aio-ac-test-pwsh");
+        let _ = std::fs::remove_dir_all(&project);
+        std::fs::create_dir_all(&project).unwrap();
+        let r = execute_command(
+            "Write-Output ('ac_pwsh_' + (6*7))",
+            project.to_str().unwrap(),
+            Some(30_000),
+            false,
+            Some(vec![]), // AppContainer enabled
+            false,
+            WindowsShell::PowerShell,
+            None,
+        );
+        let text = text_of(&r);
+        assert!(
+            !r.is_error && text.contains("ac_pwsh_42"),
+            "AC 内 pwsh 应可用: {text}"
+        );
+        let _ = std::fs::remove_dir_all(&project);
+    }
+
+    /// 取消令牌（用户点停止）必须在命令执行中途打断它并拆毁进程树——主流对齐
+    /// （Claude Code 的 Esc 会杀掉正在运行的命令）；协作取消只查 select! 分支时，
+    /// 长命令期间停止按钮形同虚设。30s 睡眠命令 + 300ms 后取消 → 秒级返回。
+    #[test]
+    #[cfg(windows)]
+    fn cancel_token_interrupts_running_command_promptly() {
+        let root = std::env::temp_dir().to_string_lossy().to_string();
+        let token = tokio_util::sync::CancellationToken::new();
+        let cancel = token.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(300));
+            cancel.cancel();
+        });
+        let started = std::time::Instant::now();
+        let r = execute_command(
+            "ping 127.0.0.1 -n 30 >nul",
+            &root,
+            Some(60_000),
+            false,
+            None,
+            false,
+            WindowsShell::Cmd,
+            Some(token),
+        );
+        let elapsed = started.elapsed();
+        assert!(r.is_error, "被取消的命令应返回错误结果");
+        assert!(
+            elapsed < std::time::Duration::from_secs(10),
+            "取消应秒级生效（实际 {:?}）",
+            elapsed
+        );
     }
 }

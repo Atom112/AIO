@@ -16,10 +16,13 @@ import { Component, createSignal, For, Show, onMount, createMemo } from 'solid-j
 import { useNavigate } from '@solidjs/router';
 import { saveProviderMap } from '../../../core/api/providers';
 import Icon from '../../../shared/components/Icon';
+import Switch from '../../../shared/components/Switch';
+// 阶段4（设置样板收敛）: shared toast state + bubble
+import { ToastBubble, useToast } from '../../../shared/components/Toast';
 import {
   btnBadge,
-  btnDanger,
-  btnPrimary,
+  btnDangerOutline,
+  btnPrimaryOutline,
   btnSecondary,
   btnSecondarySm,
 } from '../../../shared/components/buttonStyles';
@@ -108,7 +111,8 @@ const ProviderList: Component = () => {
   const navigate = useNavigate();
 
   const [search, setSearch] = createSignal('');
-  const [toast, setToast] = createSignal<{ msg: string; ok: boolean } | null>(null);
+  // 阶段4（设置样板收敛）: shared toast state
+  const { toast, showToast } = useToast();
 
   const [showAddCustom, setShowAddCustom] = createSignal(false);
   const [newCustomName, setNewCustomName] = createSignal('');
@@ -167,12 +171,10 @@ const ProviderList: Component = () => {
       await saveProviderMap(next);
       setProviderConfigs(next);
       if (okMsg) {
-        setToast({ msg: okMsg, ok: true });
-        setTimeout(() => setToast(null), 2000);
+        showToast(okMsg, true, 2000);
       }
     } catch (e) {
-      setToast({ msg: reportError('error.save', e), ok: false });
-      setTimeout(() => setToast(null), 3000);
+      showToast(reportError('error.save', e), false);
     }
   };
 
@@ -228,8 +230,7 @@ const ProviderList: Component = () => {
         setShowAddCustom(false);
         setNewCustomName('');
         setNewCustomUrl('');
-        setToast({ msg: t('provider.customAdded', { name }), ok: true });
-        setTimeout(() => setToast(null), 2000);
+        showToast(t('provider.customAdded', { name }), true, 2000);
       })
       .catch((e) => alert(reportError('error.save', e)));
   };
@@ -334,11 +335,37 @@ const ProviderList: Component = () => {
               >
                 {t('common.cancel')}
               </button>
-              <button type="button" class={btnPrimary} onClick={addCustomProvider}>
+              <button type="button" class={btnPrimaryOutline} onClick={addCustomProvider}>
                 {t('common.add')}
               </button>
             </div>
           </div>
+        </div>
+      </Show>
+
+      {/* Enabled custom providers (above the catalog; the count covers enabled only).
+          mb-5 = the section seam matching the mt-5 headers below — the catalog group
+          has no header of its own, so without it the two groups merge. */}
+      <Show when={sortedCustom().enabled.length > 0}>
+        <div class="flex items-center gap-3 mt-5 mb-2">
+          <div class="flex-1 h-px bg-white/[0.06]" />
+          <span class="text-[10px] text-white/45 uppercase tracking-[1.5px] font-semibold shrink-0">
+            {t('provider.enabledCount', { count: formatNumber(sortedCustom().enabled.length) })}
+          </span>
+          <div class="flex-1 h-px bg-white/[0.06]" />
+        </div>
+        <div class="space-y-1.5 mb-5">
+          <For each={sortedCustom().enabled}>
+            {(cfg, i) => (
+              <CustomProviderRow
+                cfg={cfg}
+                i={i()}
+                onToggle={toggleEnabled}
+                onDelete={removeCustomProvider}
+                onClick={() => navigate('/settings/provider/' + encodeURIComponent(cfg.id))}
+              />
+            )}
+          </For>
         </div>
       </Show>
 
@@ -393,8 +420,33 @@ const ProviderList: Component = () => {
           </For>
         </div>
 
-        {/* Divider */}
-        <Show when={sortedCatalog().enabled.length > 0 && sortedCatalog().disabled.length > 0}>
+        {/* Disabled custom providers: own group between local engines and the catalog's not-enabled rows */}
+        <Show when={sortedCustom().disabled.length > 0}>
+          <div class="flex items-center gap-3 mt-5 mb-2">
+            <div class="flex-1 h-px bg-white/[0.06]" />
+            <span class="text-[10px] text-white/30 uppercase tracking-[1.5px] font-semibold shrink-0">
+              {t('provider.customNotEnabled')}
+            </span>
+            <div class="flex-1 h-px bg-white/[0.06]" />
+          </div>
+          <div class="space-y-1.5">
+            <For each={sortedCustom().disabled}>
+              {(cfg, i) => (
+                <CustomProviderRow
+                  cfg={cfg}
+                  i={i()}
+                  onToggle={toggleEnabled}
+                  onDelete={removeCustomProvider}
+                  onClick={() => navigate('/settings/provider/' + encodeURIComponent(cfg.id))}
+                />
+              )}
+            </For>
+          </div>
+        </Show>
+
+        {/* Divider — always shown when disabled catalog rows exist (local engines and/or
+            the disabled-custom group always render above; without the divider they merge) */}
+        <Show when={sortedCatalog().disabled.length > 0}>
           <div class="flex items-center gap-3 my-4">
             <div class="flex-1 h-px bg-white/[0.06]" />
             <span class="text-[10px] text-white/30 uppercase tracking-[1.5px] font-semibold shrink-0">
@@ -419,183 +471,61 @@ const ProviderList: Component = () => {
             </For>
           </div>
         </Show>
-
-        {/* Custom provider section */}
-        <Show when={sortedCustom().enabled.length > 0 || sortedCustom().disabled.length > 0}>
-          <div class="flex items-center gap-3 mt-5 mb-2">
-            <div class="flex-1 h-px bg-white/[0.06]" />
-            <span class="text-[10px] text-white/45 uppercase tracking-[1.5px] font-semibold shrink-0">
-              {t('provider.custom')} ({formatNumber(customProviders().length)})
-            </span>
-            <div class="flex-1 h-px bg-white/[0.06]" />
-          </div>
-          {/* Enabled */}
-          <Show when={sortedCustom().enabled.length > 0}>
-            <div class="space-y-1.5">
-              <For each={sortedCustom().enabled}>
-                {(cfg, i) => (
-                  <div
-                    class="relative bg-white/[0.025] border border-white/[0.05] rounded-[10px] transition-all duration-[250ms] hover:bg-pri-5 hover:border-pri hover:translate-x-0.5 hover:shadow-[0_4px_16px_rgba(0,0,0,0.25)] active:translate-x-0.5 active:scale-[0.995] flex items-center gap-3 px-3 py-2.5 cursor-pointer animate-row-in"
-                    style={{ 'animation-delay': `${(i() + 1) * 30}ms` }}
-                    onClick={() => navigate('/settings/provider/' + encodeURIComponent(cfg.id))}
-                  >
-                    <div
-                      class="flex items-center justify-center w-9 h-9 rounded-lg bg-white border border-white/85 shadow-[0_1px_3px_rgba(0,0,0,0.15)] overflow-hidden shrink-0 transition-[border-color,box-shadow] duration-200 text-[var(--color-dark-700)] font-bold text-[15px]"
-                      style={{ color: 'var(--color-dark-700)' }}
-                    >
-                      {cfg.displayName.charAt(0).toUpperCase()}
-                    </div>
-                    <div class="grow min-w-0">
-                      <div class="text-sm text-white truncate font-medium">{cfg.displayName}</div>
-                      <div class="text-[10px] text-[rgba(var(--text-base-rgb),0.55)] font-mono truncate mt-0.5">
-                        {cfg.apiUrl || `(${t('provider.notConfigured')})`} · {t('provider.custom')}
-                      </div>
-                    </div>
-                    <span class="text-[10px] text-[rgba(var(--text-base-rgb),0.4)] hidden sm:inline">
-                      {t('provider.enabledModels', {
-                        count: formatNumber(cfg.enabledModels.length),
-                      })}
-                    </span>
-                    <button
-                      type="button"
-                      class="relative inline-flex items-center h-[22px] w-[40px] rounded-full bg-white/[0.08] border border-white/[0.08] cursor-pointer shrink-0 focus:outline-none focus-visible:shadow-[0_0_0_3px_rgba(var(--primary-rgb),0.25)]"
-                      style={{
-                        transition:
-                          'background 0.3s cubic-bezier(0.4, 0, 0.2, 1), border-color 0.3s ease, box-shadow 0.3s ease',
-                        ...(cfg.enabled
-                          ? {
-                              background: 'rgba(var(--primary-rgb), 0.7)',
-                              'border-color': 'rgba(var(--primary-rgb), 0.5)',
-                              'box-shadow': '0 0 12px rgba(var(--primary-rgb), 0.35)',
-                            }
-                          : {}),
-                      }}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        toggleEnabled(cfg.id, cfg.enabled);
-                      }}
-                      title={cfg.enabled ? t('common.disable') : t('common.enable')}
-                    >
-                      <span
-                        class="inline-block h-4 w-4 rounded-full bg-white transition-transform duration-300 shadow-[0_2px_6px_rgba(0,0,0,0.4)]"
-                        style={{ transform: cfg.enabled ? 'translateX(21px)' : 'translateX(3px)' }}
-                      />
-                    </button>
-                    <button
-                      type="button"
-                      class={btnDanger}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        removeCustomProvider(cfg.id);
-                      }}
-                    >
-                      {t('common.delete')}
-                    </button>
-                  </div>
-                )}
-              </For>
-            </div>
-          </Show>
-          {/* Custom divider */}
-          <Show when={sortedCustom().enabled.length > 0 && sortedCustom().disabled.length > 0}>
-            <div class="flex items-center gap-3 my-3">
-              <div class="flex-1 h-px bg-white/[0.06]" />
-              <span class="text-[10px] text-white/30 uppercase tracking-[1.5px] font-semibold shrink-0">
-                {t('provider.notEnabled')}
-              </span>
-              <div class="flex-1 h-px bg-white/[0.06]" />
-            </div>
-          </Show>
-          {/* Not enabled */}
-          <Show when={sortedCustom().disabled.length > 0}>
-            <div class="space-y-1.5">
-              <For each={sortedCustom().disabled}>
-                {(cfg, i) => (
-                  <div
-                    class="relative bg-white/[0.025] border border-white/[0.05] rounded-[10px] transition-all duration-[250ms] hover:bg-pri-5 hover:border-pri hover:translate-x-0.5 hover:shadow-[0_4px_16px_rgba(0,0,0,0.25)] active:translate-x-0.5 active:scale-[0.995] flex items-center gap-3 px-3 py-2.5 cursor-pointer animate-row-in"
-                    style={{ 'animation-delay': `${(i() + 1) * 30}ms` }}
-                    onClick={() => navigate('/settings/provider/' + encodeURIComponent(cfg.id))}
-                  >
-                    <div
-                      class="flex items-center justify-center w-9 h-9 rounded-lg bg-white border border-white/85 shadow-[0_1px_3px_rgba(0,0,0,0.15)] overflow-hidden shrink-0 transition-[border-color,box-shadow] duration-200 text-[var(--color-dark-700)] font-bold text-[15px]"
-                      style={{ color: 'var(--color-dark-700)' }}
-                    >
-                      {cfg.displayName.charAt(0).toUpperCase()}
-                    </div>
-                    <div class="grow min-w-0">
-                      <div class="text-sm text-white truncate font-medium">{cfg.displayName}</div>
-                      <div class="text-[10px] text-[rgba(var(--text-base-rgb),0.55)] font-mono truncate mt-0.5">
-                        {cfg.apiUrl || `(${t('provider.notConfigured')})`} · {t('provider.custom')}
-                      </div>
-                    </div>
-                    <span class="text-[10px] text-[rgba(var(--text-base-rgb),0.4)] hidden sm:inline">
-                      {t('provider.enabledModels', {
-                        count: formatNumber(cfg.enabledModels.length),
-                      })}
-                    </span>
-                    <button
-                      type="button"
-                      class="relative inline-flex items-center h-[22px] w-[40px] rounded-full bg-white/[0.08] border border-white/[0.08] cursor-pointer shrink-0 focus:outline-none focus-visible:shadow-[0_0_0_3px_rgba(var(--primary-rgb),0.25)]"
-                      style={{
-                        transition:
-                          'background 0.3s cubic-bezier(0.4, 0, 0.2, 1), border-color 0.3s ease, box-shadow 0.3s ease',
-                        ...(cfg.enabled
-                          ? {
-                              background: 'rgba(var(--primary-rgb), 0.7)',
-                              'border-color': 'rgba(var(--primary-rgb), 0.5)',
-                              'box-shadow': '0 0 12px rgba(var(--primary-rgb), 0.35)',
-                            }
-                          : {}),
-                      }}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        toggleEnabled(cfg.id, cfg.enabled);
-                      }}
-                      title={cfg.enabled ? t('common.disable') : t('common.enable')}
-                    >
-                      <span
-                        class="inline-block h-4 w-4 rounded-full bg-white transition-transform duration-300 shadow-[0_2px_6px_rgba(0,0,0,0.4)]"
-                        style={{ transform: cfg.enabled ? 'translateX(21px)' : 'translateX(3px)' }}
-                      />
-                    </button>
-                    <button
-                      type="button"
-                      class={btnDanger}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        removeCustomProvider(cfg.id);
-                      }}
-                    >
-                      {t('common.delete')}
-                    </button>
-                  </div>
-                )}
-              </For>
-            </div>
-          </Show>
-        </Show>
       </Show>
 
-      {/* Toast notification */}
-      <Show when={toast()}>
-        <div
-          class="border border-white/[0.08] rounded-xl px-[18px] py-[10px] text-white text-[13px] font-medium shadow-[0_8px_32px_rgba(0,0,0,0.45)] fixed bottom-6 left-1/2 z-50"
-          classList={{
-            'text-green-300': toast()!.ok,
-            'text-red-300': !toast()!.ok,
-          }}
-          style={{
-            background: 'rgba(var(--surface-bg), 0.88)',
-            'backdrop-filter': 'blur(20px) saturate(150%)',
-            animation: 'toastIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards',
-          }}
-        >
-          {toast()!.msg}
-        </div>
-      </Show>
+      {/* 阶段4（设置样板收敛）: shared toast bubble */}
+      <ToastBubble toast={toast()} />
     </div>
   );
 };
+
+// Custom provider row (enabled + disabled sections share it; i = stagger index)
+const CustomProviderRow: Component<{
+  cfg: ProviderConfig;
+  i: number;
+  onToggle: (id: string, currentVal: boolean) => void;
+  onDelete: (id: string) => void;
+  onClick: () => void;
+}> = (props) => (
+  <div
+    class="relative bg-white/[0.025] border border-white/[0.05] rounded-[10px] transition-all duration-[250ms] hover:bg-pri-5 hover:border-pri hover:translate-x-0.5 hover:shadow-[0_4px_16px_rgba(0,0,0,0.25)] active:translate-x-0.5 active:scale-[0.995] flex items-center gap-3 px-3 py-2.5 cursor-pointer animate-row-in"
+    style={{ 'animation-delay': `${(props.i + 1) * 30}ms` }}
+    onClick={() => props.onClick()}
+  >
+    <div
+      class="flex items-center justify-center w-9 h-9 rounded-lg bg-white border border-white/85 shadow-[0_1px_3px_rgba(0,0,0,0.15)] overflow-hidden shrink-0 transition-[border-color,box-shadow] duration-200 text-[var(--color-dark-700)] font-bold text-[15px]"
+      style={{ color: 'var(--color-dark-700)' }}
+    >
+      {props.cfg.displayName.charAt(0).toUpperCase()}
+    </div>
+    <div class="grow min-w-0">
+      <div class="text-sm text-white truncate font-medium">{props.cfg.displayName}</div>
+      <div class="text-[10px] text-[rgba(var(--text-base-rgb),0.55)] font-mono truncate mt-0.5">
+        {props.cfg.apiUrl || `(${t('provider.notConfigured')})`} · {t('provider.custom')}
+      </div>
+    </div>
+    <span class="text-[10px] text-[rgba(var(--text-base-rgb),0.4)] hidden sm:inline">
+      {t('provider.enabledModels', { count: formatNumber(props.cfg.enabledModels.length) })}
+    </span>
+    <Switch
+      variant="glow"
+      checked={props.cfg.enabled}
+      onChange={() => props.onToggle(props.cfg.id, props.cfg.enabled)}
+      stopPropagation
+      label={props.cfg.enabled ? t('common.disable') : t('common.enable')}
+    />
+    <button
+      type="button"
+      class={btnDangerOutline}
+      onClick={(e) => {
+        e.stopPropagation();
+        props.onDelete(props.cfg.id);
+      }}
+    >
+      {t('common.delete')}
+    </button>
+  </div>
+);
 
 // Single provider row
 const ProviderRow: Component<{
@@ -679,31 +609,13 @@ const ProviderRow: Component<{
           </Show>
         </div>
       </div>
-      <button
-        type="button"
-        class="relative inline-flex items-center h-[22px] w-[40px] rounded-full bg-white/[0.08] border border-white/[0.08] cursor-pointer shrink-0 focus:outline-none focus-visible:shadow-[0_0_0_3px_rgba(var(--primary-rgb),0.25)]"
-        style={{
-          transition:
-            'background 0.3s cubic-bezier(0.4, 0, 0.2, 1), border-color 0.3s ease, box-shadow 0.3s ease',
-          ...(isEnabled()
-            ? {
-                background: 'rgba(var(--primary-rgb), 0.7)',
-                'border-color': 'rgba(var(--primary-rgb), 0.5)',
-                'box-shadow': '0 0 12px rgba(var(--primary-rgb), 0.35)',
-              }
-            : {}),
-        }}
-        onClick={(e) => {
-          e.stopPropagation();
-          props.onToggleEnabled(props.provider.id, isEnabled());
-        }}
-        title={isEnabled() ? t('mcp.detail.clickToDisable') : t('mcp.detail.clickToEnable')}
-      >
-        <span
-          class="inline-block h-4 w-4 rounded-full bg-white transition-transform duration-300 shadow-[0_2px_6px_rgba(0,0,0,0.4)]"
-          style={{ transform: isEnabled() ? 'translateX(21px)' : 'translateX(3px)' }}
-        />
-      </button>
+      <Switch
+        variant="glow"
+        checked={isEnabled()}
+        onChange={() => props.onToggleEnabled(props.provider.id, isEnabled())}
+        stopPropagation
+        label={isEnabled() ? t('mcp.detail.clickToDisable') : t('mcp.detail.clickToEnable')}
+      />
       <span class="text-[rgba(var(--text-base-rgb),0.4)] text-lg transition-transform duration-200 group-hover:translate-x-0.5">
         ›
       </span>

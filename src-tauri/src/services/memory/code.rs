@@ -3,7 +3,6 @@
 //! Coexists with the facts store in the same memory.sqlite: code_chunks + fts_code + vec_code.
 //! Indexing is on-demand (memory_code_index / memory panel button) and incremental via file mtime/size.
 
-use crate::core::events as ev;
 use crate::core::models::MemoryEmbeddingConfig;
 use crate::ierr;
 use crate::services::memory::CollectRowsWarn;
@@ -11,7 +10,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::path::PathBuf;
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Manager};
 
 /// Index result statistics.
 #[derive(Serialize, Clone, Debug)]
@@ -107,7 +106,12 @@ pub async fn index_code(
     let started = std::time::Instant::now();
     let conn = open_conn(project_root)?;
     ensure_code_vec_table(app, project_root, &conn)?;
-    let files = collect_files(project_root);
+    // MEM-08: the directory walk (full recursive stat sweep) runs on the blocking
+    // pool — it must not tie up an async worker thread for the whole project.
+    let root_walk = project_root.to_string();
+    let files = tokio::task::spawn_blocking(move || collect_files(&root_walk))
+        .await
+        .map_err(|e| e.to_string())?;
     let mut result = CodeIndexResult {
         files: files.len(),
         chunks: 0,
@@ -119,20 +123,35 @@ pub async fn index_code(
     };
     let mut done = 0usize;
     for f in &files {
-        let meta = std::fs::metadata(f).map_err(|e| {
+        // MEM-08: metadata (and the content read below) are disk I/O — keep them off
+        // the async worker threads; the SQLite statements are tiny WAL writes and stay
+        // inline (they are far cheaper than one spawn_blocking handoff each).
+        let f_meta = f.clone();
+        let (mtime, size) = tokio::task::spawn_blocking(move || {
+            let meta = std::fs::metadata(&f_meta).map_err(|e| e.to_string())?;
+            let mtime = meta
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_nanos() as i64)
+                .unwrap_or(0);
+            Ok::<(i64, u64), String>((mtime, meta.len()))
+        })
+        .await
+        .map_err(|e| {
+            ierr!(
+                "索引元数据读取线程失败: {}",
+                "Index metadata thread failed: {}",
+                e
+            )
+        })?
+        .map_err(|e| {
             ierr!(
                 "读取文件元数据失败: {}",
                 "Failed to read file metadata: {}",
                 e
             )
         })?;
-        let mtime = meta
-            .modified()
-            .ok()
-            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-            .map(|d| d.as_nanos() as i64)
-            .unwrap_or(0);
-        let size = meta.len();
         if !force {
             let unchanged = conn
                 .query_row(
@@ -150,24 +169,23 @@ pub async fn index_code(
                 continue;
             }
         }
-        let content = match std::fs::read_to_string(f) {
-            Ok(c) => c,
-            Err(_) => {
+        let f_read = f.clone();
+        let content = match tokio::task::spawn_blocking(move || std::fs::read_to_string(&f_read))
+            .await
+            .map_err(|e| e.to_string())
+        {
+            Ok(Ok(c)) => c,
+            _ => {
                 result.failed += 1;
                 done += 1;
                 continue;
             }
         };
-        conn.execute(
-            "DELETE FROM fts_code WHERE file_path = ?1",
-            [f.to_string_lossy()],
-        )
-        .map_err(|e| e.to_string())?;
-        conn.execute(
-            "DELETE FROM code_chunks WHERE file_path = ?1",
-            [f.to_string_lossy()],
-        )
-        .map_err(|e| e.to_string())?;
+        // MEM-04: 先按旧 chunk_id 清理 vec_code——重建会生成全新 uuid，旧 id 的
+        // 幽灵向量若不清理将永远留在 vec_code 里，持续消耗向量召回的 top-k 候选
+        // 名额（检索腿退化为纯 FTS）。必须先于 code_chunks 的删除执行（子查询
+        // 依赖旧 chunks 行）；表按需建，删除前确认存在。
+        delete_chunks_for_file(&conn, f.to_string_lossy().as_ref())?;
         // Contextual retrieval: the embedded text carries the relative path to improve semantic
         // chunk localization; display and FTS still use the raw code content
         let rel_path = std::path::Path::new(f)
@@ -229,16 +247,21 @@ pub async fn index_code(
         done += 1;
         on_progress(done, files.len().max(1));
     }
+    // MEM-08: prune chunks/state of files that no longer exist on disk — previously
+    // they stayed forever, permanently polluting retrieval with ghost chunks.
+    let removed = prune_deleted_files(&conn, &files)?;
+    if removed > 0 {
+        tracing::debug!("[code-index] 清理已删除文件的残留索引: {removed} 个文件");
+    }
     conn.execute(
         "INSERT OR REPLACE INTO meta (k, v) VALUES (?1, ?2)",
         params![META_CODE_LAST_INDEX, crate::utils::time::now_iso()],
     )
     .map_err(|e| e.to_string())?;
     result.elapsed_ms = started.elapsed().as_millis() as u64;
-    let _ = app.emit(
-        ev::CODE_INDEX_PROGRESS,
-        serde_json::json!({ "status": "done", "chunks": result.chunks, "files": result.files, "elapsedMs": result.elapsed_ms }),
-    );
+    // Terminal lifecycle event moved to the command layer (memory_code_index):
+    // it owns the project identity and also reports the error path, which this
+    // core fn would miss via its `?` returns.
     Ok(result)
 }
 
@@ -528,8 +551,126 @@ fn chunk_content_symbol_aware(content: &str, symbols: &[(String, i64, i64)]) -> 
     out
 }
 
-/// Collect indexable files (recursive; skips blacklisted directories and oversized files).
+/// Delete every stored row belonging to one file (vec_code ghosts first — the
+/// subquery needs the old code_chunks rows — then FTS, chunks and state).
+fn delete_chunks_for_file(conn: &Connection, file_path: &str) -> Result<(), String> {
+    let vec_code_exists: bool = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name = 'vec_code'",
+            [],
+            |r| r.get::<_, i64>(0),
+        )
+        .map(|n| n > 0)
+        .unwrap_or(false);
+    if vec_code_exists {
+        conn.execute(
+            "DELETE FROM vec_code WHERE chunk_id IN (SELECT id FROM code_chunks WHERE file_path = ?1)",
+            [file_path],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    conn.execute("DELETE FROM fts_code WHERE file_path = ?1", [file_path])
+        .map_err(|e| e.to_string())?;
+    conn.execute("DELETE FROM code_chunks WHERE file_path = ?1", [file_path])
+        .map_err(|e| e.to_string())?;
+    conn.execute(
+        "DELETE FROM code_file_state WHERE file_path = ?1",
+        [file_path],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// MEM-08: remove stored chunks of files that vanished from disk. Returns how many
+/// files were pruned.
+fn prune_deleted_files(conn: &Connection, current: &[PathBuf]) -> Result<usize, String> {
+    let known: Vec<String> = {
+        let mut stmt = conn
+            .prepare("SELECT file_path FROM code_file_state")
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([], |r| r.get::<_, String>(0))
+            .map_err(|e| e.to_string())?;
+        rows.collect_rows("code_file_state")
+    };
+    let current_set: std::collections::HashSet<String> = current
+        .iter()
+        .map(|p| p.to_string_lossy().into_owned())
+        .collect();
+    let mut removed = 0usize;
+    for path in known {
+        if !current_set.contains(&path) {
+            delete_chunks_for_file(conn, &path)?;
+            removed += 1;
+        }
+    }
+    Ok(removed)
+}
+
+/// Root .gitignore lines (MEM-08): non-empty, non-comment, non-negated. Full gitignore
+/// semantics (nested files, `**`, negation) are out of scope; the common shapes are
+/// honored by [`gitignore_matches`].
+fn load_gitignore(root: &str) -> Vec<String> {
+    std::fs::read_to_string(std::path::Path::new(root).join(".gitignore"))
+        .map(|content| {
+            content
+                .lines()
+                .map(str::trim)
+                .filter(|l| !l.is_empty() && !l.starts_with('#') && !l.starts_with('!'))
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// MEM-08: minimal .gitignore matching for the root file's lines:
+/// - name-level patterns (no `/`, e.g. `target`, `*.log`) match any path component;
+/// - trailing-slash paths (e.g. `docs/generated/`) prefix-match whole directories;
+/// - plain paths (e.g. `docs/README.md`) glob-match the relative path.
+fn gitignore_matches(patterns: &[String], rel: &str) -> bool {
+    if patterns.is_empty() {
+        return false;
+    }
+    let rel = rel.replace('\\', "/");
+    let components: Vec<&str> = rel.split('/').collect();
+    for pat in patterns {
+        let is_dir_pat = pat.ends_with('/');
+        let body = pat.trim_end_matches('/');
+        if !body.contains('/') {
+            let Ok(gp) = glob::Pattern::new(body) else {
+                // Non-glob characters: fall back to exact-name comparison
+                if components.contains(&body) {
+                    return true;
+                }
+                continue;
+            };
+            if components.iter().any(|c| gp.matches(c)) {
+                return true;
+            }
+        } else if is_dir_pat {
+            if rel.starts_with(&format!("{body}/")) {
+                return true;
+            }
+        } else {
+            let Ok(gp) = glob::Pattern::new(body) else {
+                if rel == *body {
+                    return true;
+                }
+                continue;
+            };
+            if gp.matches(&rel) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Collect indexable files (recursive; skips blacklisted directories, .gitignore
+/// entries, symlinks and oversized files).
 fn collect_files(root: &str) -> Vec<PathBuf> {
+    let gitignore = load_gitignore(root);
+    let root_path = PathBuf::from(root);
     let mut out = Vec::new();
     let mut stack = vec![PathBuf::from(root)];
     while let Some(dir) = stack.pop() {
@@ -537,10 +678,27 @@ fn collect_files(root: &str) -> Vec<PathBuf> {
             continue;
         };
         for entry in entries.flatten() {
+            // MEM-08: file_type() does NOT follow symlinks (Path::is_dir does). A
+            // symlinked directory cycle would otherwise loop the walk forever, and
+            // symlinked files double-index aliased content — both are skipped.
+            let Ok(file_type) = entry.file_type() else {
+                continue;
+            };
+            if file_type.is_symlink() {
+                continue;
+            }
             let path = entry.path();
-            if path.is_dir() {
+            let rel = path
+                .strip_prefix(&root_path)
+                .unwrap_or(&path)
+                .to_string_lossy()
+                .into_owned();
+            if file_type.is_dir() {
                 let name = entry.file_name().to_string_lossy().to_string();
                 if SKIP_DIRS.contains(&name.as_str()) {
+                    continue;
+                }
+                if gitignore_matches(&gitignore, &rel) {
                     continue;
                 }
                 stack.push(path);
@@ -552,6 +710,9 @@ fn collect_files(root: &str) -> Vec<PathBuf> {
                 .unwrap_or("")
                 .to_lowercase();
             if !ALLOWED_EXT.contains(&ext.as_str()) {
+                continue;
+            }
+            if gitignore_matches(&gitignore, &rel) {
                 continue;
             }
             if let Ok(meta) = std::fs::metadata(&path) {
@@ -676,5 +837,113 @@ mod tests {
         assert!(chunks
             .windows(2)
             .all(|w| w[0].start_line <= w[1].start_line));
+    }
+
+    /// MEM-08: root .gitignore lines filter the walk — name-level, dir-path, and
+    /// whole-path patterns; negated lines and comments are ignored.
+    #[test]
+    fn gitignore_rules_filter_walked_files() {
+        let dir = std::env::temp_dir().join(format!("aio-codeignore-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("target").join("nested")).unwrap();
+        std::fs::create_dir_all(dir.join("docs").join("generated")).unwrap();
+        std::fs::write(dir.join("target").join("lib.rs"), "x").unwrap();
+        std::fs::write(dir.join("target").join("nested").join("lib.rs"), "x").unwrap();
+        std::fs::write(dir.join("docs").join("generated").join("a.md"), "x").unwrap();
+        std::fs::write(dir.join("debug.log"), "x").unwrap();
+        std::fs::write(dir.join("docs").join("README.md"), "x").unwrap();
+        std::fs::write(
+            dir.join(".gitignore"),
+            "target\n*.log\ndocs/generated/\n# comment\n!important\n",
+        )
+        .unwrap();
+
+        let files = collect_files(&dir.to_string_lossy());
+        let rels: Vec<String> = files
+            .iter()
+            .map(|f| {
+                f.strip_prefix(&dir)
+                    .unwrap()
+                    .to_string_lossy()
+                    .replace('\\', "/")
+            })
+            .collect();
+        assert!(
+            !rels.iter().any(|r| r.starts_with("target")),
+            "target 目录整体应被忽略: {rels:?}"
+        );
+        assert!(
+            !rels.iter().any(|r| r.starts_with("docs/generated")),
+            "带尾斜杠的目录前缀应被忽略: {rels:?}"
+        );
+        assert!(
+            !rels.iter().any(|r| r.ends_with("debug.log")),
+            "*.log 应被忽略"
+        );
+        assert!(
+            rels.iter().any(|r| r == "docs/README.md"),
+            "未被忽略的文件应保留: {rels:?}"
+        );
+        // 纯函数：name-level 模式匹配任意层级组件
+        let pats = vec!["vendor".to_string(), "*.tmp".to_string()];
+        assert!(gitignore_matches(&pats, "src/vendor"));
+        assert!(gitignore_matches(&pats, "src/x/vendor/lib.rs"));
+        assert!(gitignore_matches(&pats, "a/b.tmp"));
+        assert!(!gitignore_matches(&pats, "src/main.rs"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// MEM-08: chunks of files deleted from disk are pruned on the next index run.
+    #[test]
+    fn prune_removes_ghost_file_chunks() {
+        let dir = std::env::temp_dir().join(format!("aio-codeprune-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("live.rs"), "fn main() {}").unwrap();
+        let conn = open_conn(&dir.to_string_lossy()).expect("连接成功");
+        // 残留：磁盘上已删除的 ghost.rs
+        for path in ["ghost.rs", "live.rs"] {
+            conn.execute(
+                "INSERT INTO code_chunks (id, file_path, start_line, end_line, content, symbol, embedding, embedding_model, embedding_dim, created_at) \
+                 VALUES (?1, ?2, 1, 1, 'x', NULL, NULL, NULL, NULL, ?3)",
+                params![
+                    format!("chunk-{path}"),
+                    dir.join(path).to_string_lossy(),
+                    crate::utils::time::now_iso()
+                ],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO fts_code (rowid, chunk_id, content, file_path) VALUES (\
+                 (SELECT rowid FROM code_chunks WHERE id = ?1), ?1, 'x', ?2)",
+                params![format!("chunk-{path}"), dir.join(path).to_string_lossy()],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO code_file_state (file_path, mtime_nanos, size_bytes) VALUES (?1, 1, 1)",
+                [dir.join(path).to_string_lossy().as_ref()],
+            )
+            .unwrap();
+        }
+        let current = collect_files(&dir.to_string_lossy());
+        let removed = prune_deleted_files(&conn, &current).expect("清理执行成功");
+        assert_eq!(removed, 1, "只应清理磁盘上已消失的 ghost.rs");
+        let ghost_left: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM code_chunks WHERE file_path LIKE ?1",
+                ["%ghost.rs"],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(ghost_left, 0, "ghost.rs 的 chunks 应被清空");
+        let live_left: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM code_chunks WHERE file_path LIKE ?1",
+                ["%live.rs"],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(live_left, 1, "仍存在的文件不应被误清");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

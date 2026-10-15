@@ -10,6 +10,7 @@ import {
   saveSingleAssistantToBackend,
   requestRenameTopic,
 } from '../../../core/store/store';
+import { loadTopicFoldState, saveTopicFoldState } from '../../../core/store/layout';
 import Icon from '../../../shared/components/Icon';
 import { formatDateTime, t } from '../../../core/i18n';
 
@@ -65,31 +66,9 @@ const [collapsedTopicIds, setCollapsedTopicIds] = createSignal<Set<string>>(new 
 let prevChildCounts = new Map<string, number>();
 let foldAssistantId: string | undefined;
 
-const FOLD_STORAGE_KEY = 'topic-fold-state';
-
-const loadFoldState = (assistantId: string): Set<string> => {
-  try {
-    const raw = localStorage.getItem(FOLD_STORAGE_KEY);
-    if (!raw) return new Set();
-    const parsed = JSON.parse(raw) as Record<string, string[]>;
-    const ids = parsed[assistantId];
-    return new Set(Array.isArray(ids) ? ids : []);
-  } catch {
-    // Storage unavailable or corrupted: fall back to session-only folds
-    return new Set();
-  }
-};
-
-const saveFoldState = (assistantId: string, ids: Set<string>) => {
-  try {
-    const raw = localStorage.getItem(FOLD_STORAGE_KEY);
-    const parsed = raw ? (JSON.parse(raw) as Record<string, string[]>) : {};
-    parsed[assistantId] = Array.from(ids);
-    localStorage.setItem(FOLD_STORAGE_KEY, JSON.stringify(parsed));
-  } catch {
-    // Restricted storage context: keep working session-only
-  }
-};
+// P3（localStorage 裸调收编）：折叠状态持久化经 core/store/layout 域 API
+const loadFoldState = loadTopicFoldState;
+const saveFoldState = saveTopicFoldState;
 
 const TopicSidebar: Component<TopicSidebarProps> = (props) => {
   const [showTopicMenuDiv, setShowTopicMenuDiv] = createSignal(false);
@@ -226,7 +205,7 @@ const TopicSidebar: Component<TopicSidebarProps> = (props) => {
     const ok = requestRenameTopic(asst.id, target.id);
     if (!ok) {
       // Default topic: the menu item should already be hidden; this is a defensive warning
-      console.warn('默认话题不支持重新生成标题');
+      console.warn('The default topic does not support title regeneration');
     }
     closeTopicMenu();
   };

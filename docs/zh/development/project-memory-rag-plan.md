@@ -46,7 +46,7 @@ src-tauri/src/commands/llm/mod.rs（共 4716 行）：
 
 - run_agent_turn（L2836 起）是主循环。工具集按模式装配（L2969-3063）：
   - **Plan 模式**：think + project_map + web；
-  - **Normal / Auto / Workflow**：delegate_task + delegate_tasks + create_workflow + think + web + project_map；
+  - **Normal / Auto**：delegate_task + delegate_tasks + think + web + project_map；
   - 知识工具（remember/recall）仅在 `is_agent_mode && knowledge_enabled && project_id.is_some()` 时追加（L3045）；
   - 另有 read_skill（L3049）、read_artifact（L3054）。
 - **关键事实：主循环不直接持有文件/Git/Shell/LSP 工具**，实际文件操作由**子智能体**完成：build_subagent_tools（L1170）按 profile 过滤注入 file/shell/git/lsp/web 工具；**子智能体目前没有 remember/recall 工具**（L1173-1215 无知识工具）。

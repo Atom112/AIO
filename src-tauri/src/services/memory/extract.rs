@@ -4,10 +4,12 @@
 //! Before writing, vector-deduplicates against existing facts; high similarity goes through LLM arbitration (merge/update/supersede/keep_separate),
 //! the same dedup chain as explicit remember (the automatic side of the self-improving loop).
 
+// MEM-06: canonical single-text embedding (dimension-drift guard included)
+use crate::services::memory::embed_one;
 use crate::services::memory::judge::JudgeAction;
 use crate::services::memory::llm::{chat_json, llm_config, LlmConfig};
 use crate::services::memory::manager::MemoryStoreManager;
-use crate::services::memory::store::{MemoryStore, NewFact};
+use crate::services::memory::store::NewFact;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager};
 
@@ -95,13 +97,18 @@ pub async fn extract_and_store(
             }
         }
     }
-    // Extract
+    // A real run starts here (skips above never extracted anything): tell the
+    // frontend's background-task menu the job is running.
+    let _ = app.emit(
+        crate::core::events::MEMORY_EXTRACT_PROGRESS,
+        serde_json::json!({ "status": "running", "project": project_root }),
+    );
     let lcfg = match llm_config(app) {
         Ok(c) => c,
         Err(e) => {
             let _ = app.emit(
-                "memory-extract-progress",
-                serde_json::json!({ "status": "error", "error": e }),
+                crate::core::events::MEMORY_EXTRACT_PROGRESS,
+                serde_json::json!({ "status": "error", "project": project_root, "error": e }),
             );
             return Ok(ExtractionReport {
                 error: Some(e),
@@ -200,10 +207,10 @@ pub async fn extract_and_store(
                                 resolved = Some(existing.id);
                             }
                         }
-                    } else {
-                        report.deduped += 1;
-                        resolved = Some(dup_id);
                     }
+                    // MEM-05: get_fact 失败（幽灵向量——clear 残留等）视为"无重复"，
+                    // 落到下方正常插入；此前"读取失败"被当作"已判重"，与旧幽灵
+                    // 相似的新事实被静默丢弃
                 }
             }
         }
@@ -226,9 +233,10 @@ pub async fn extract_and_store(
     report.archived_over_cap = store.prune_to_capacity(cfg.memory_max_facts.max(100))?;
     store.meta_put(META_LAST_EXTRACT, &crate::utils::time::now_iso())?;
     let _ = app.emit(
-        "memory-extract-progress",
+        crate::core::events::MEMORY_EXTRACT_PROGRESS,
         serde_json::json!({
             "status": "done",
+            "project": project_root,
             "extracted": report.extracted,
             "embedded": report.embedded,
             "skipped": report.skipped,
@@ -291,32 +299,6 @@ pub fn parse_extracted(v: &serde_json::Value) -> Vec<ExtractedFact> {
     }
     out.truncate(MAX_PER_RUN);
     out
-}
-
-async fn embed_one(
-    app: &AppHandle,
-    store: &MemoryStore,
-    text: &str,
-) -> Option<(String, usize, Vec<f32>)> {
-    let ecfg = crate::services::memory::resolve_project_embedding(app, store);
-    let embedder = crate::plugins::embed::resolve(app, &ecfg).ok()?;
-    let v = embedder
-        .embed(&[text.to_string()])
-        .await
-        .ok()?
-        .into_iter()
-        .next()?;
-    if let Some(lib_dim) = store.embedding_dim_meta() {
-        if lib_dim != v.len() {
-            tracing::warn!(
-                "记忆库向量维度 {} 与当前嵌入模型维度 {} 不一致，跳过向量化",
-                lib_dim,
-                v.len()
-            );
-            return None;
-        }
-    }
-    Some((embedder.model_key(), v.len(), v))
 }
 
 #[cfg(test)]

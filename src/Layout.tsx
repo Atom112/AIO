@@ -15,6 +15,7 @@ import { Window } from '@tauri-apps/api/window';
 import { listen } from '@tauri-apps/api/event';
 import { getVersion } from '@tauri-apps/api/app';
 import { loadModelsCatalog, updateModelsCatalog, getCatalogMeta } from './core/utils/models';
+import { EVENTS } from './core/api/events';
 import {
   setAppUpdateAvailable,
   setAppUpdateInfo,
@@ -32,6 +33,8 @@ import {
   setProviderConfigs,
 } from './core/store/store';
 import { updateDiagnostics, type LspDiagnosticsUpdatePayload } from './core/store/diagnostics';
+import { registerChatStreamListeners } from './features/chat/hooks/chatEventListeners';
+import { registerBackgroundTaskListeners } from './features/chat/hooks/backgroundTaskListeners';
 
 /**
  * Layout component
@@ -68,11 +71,24 @@ const Layout: Component<ParentProps> = (props) => {
 
     // Listen for LSP diagnostics update events
     unlistenDiagnostics = await listen<LspDiagnosticsUpdatePayload>(
-      'lsp-diagnostics-updated',
+      EVENTS.lspDiagnosticsUpdated,
       (event) => {
         updateDiagnostics(event.payload);
       },
     );
+
+    // CHAT-12: register the chat stream listeners once at the root — they must
+    // outlive every page component. They used to be registered inside ChatPage, so
+    // leaving the chat page mid-generation destroyed them: the backend kept
+    // streaming but chunks never reached the store and the final `done` handler
+    // (which persists the assistant) never ran, losing the whole turn. The Layout
+    // never unmounts, so these listeners stay for the whole app lifetime.
+    registerChatStreamListeners();
+
+    // Background-task listeners (memory jobs / index rebuilds / model downloads)
+    // also live for the whole app: the jobs keep running no matter which page is
+    // open, and the status-bar pull-up menu reads the registry from anywhere.
+    registerBackgroundTaskListeners();
 
     // Load the models catalog asynchronously (non-blocking for first paint; consumed on demand by the settings page)
     setModelsCatalogStatus('loading');
@@ -91,7 +107,7 @@ const Layout: Component<ParentProps> = (props) => {
     // Load provider configs asynchronously (once after startup)
     loadProviderConfigs()
       .then((file) => setProviderConfigs(file.providers))
-      .catch((e) => console.warn('[provider-configs] 启动加载失败:', e));
+      .catch((e) => console.warn('[provider-configs] startup load failed:', e));
 
     // Silently check for catalog updates in the background (fires only after the initial load completes, to avoid blocking first paint)
     setTimeout(async () => {
@@ -107,7 +123,7 @@ const Layout: Component<ParentProps> = (props) => {
           setModelsCatalogGeneratedAt(meta.generatedAt);
         }
       } catch (e) {
-        console.warn('[catalog] 启动静默更新失败:', e);
+        console.warn('[catalog] startup background update failed:', e);
       }
     }, 8000);
 
@@ -131,7 +147,7 @@ const Layout: Component<ParentProps> = (props) => {
         // Other cases: up_to_date / service_not_ready / network / failed -> stay silent
       } catch (e) {
         // Handle network failures silently; do not disturb the user
-        console.warn('启动时检查更新失败:', e);
+        console.warn('Startup update check failed:', e);
       }
     }, 1500);
   });

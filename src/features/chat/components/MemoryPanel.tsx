@@ -1,6 +1,6 @@
 import { Component, createEffect, createSignal, For, Show } from 'solid-js';
 import { listen } from '@tauri-apps/api/event';
-import { open as openDialog, save as saveDialog } from '@tauri-apps/plugin-dialog';
+import { pickOpenPath, pickSavePath } from '../../../core/api/dialog';
 import { t } from '../../../core/i18n';
 import Icon from '../../../shared/components/Icon';
 import Dropdown from '../../../shared/components/Dropdown';
@@ -31,7 +31,7 @@ import {
   memoryUpdate,
   memoryUpdateEmbedding,
   DEFAULT_EMBED_MODEL_ID,
-} from '../../../core/utils/memory';
+} from '../../../core/api/memory';
 import type {
   CodeChunkHit,
   CodeIndexStatus,
@@ -259,12 +259,13 @@ const MemoryPanel: Component<MemoryPanelProps> = (props) => {
   };
 
   const doExport = async () => {
-    // Export path chosen via the system save dialog (backend writes the file; no fs permission widening needed)
+    // Export path via the backend save dialog (the chosen path becomes session-approved;
+    // the write command refuses any path the backend dialog never returned)
     let path: string | null = null;
     try {
-      path = await saveDialog({
-        defaultPath: `aio-memory-${projectHash8(props.projectId)}.json`,
-        filters: [{ name: 'JSON', extensions: ['json'] }],
+      path = await pickSavePath(`aio-memory-${projectHash8(props.projectId)}.json`, {
+        name: 'JSON',
+        extensions: ['json'],
       });
     } catch {
       /* user cancelled */
@@ -279,14 +280,10 @@ const MemoryPanel: Component<MemoryPanelProps> = (props) => {
   };
 
   const doImport = async () => {
-    // Import file chosen via the system open dialog (backend reads the file)
+    // Import file via the backend open dialog (session-approved read path + size cap)
     let path: string | null = null;
     try {
-      const picked = await openDialog({
-        multiple: false,
-        filters: [{ name: 'JSON', extensions: ['json'] }],
-      });
-      path = typeof picked === 'string' ? picked : null;
+      path = await pickOpenPath({ name: 'JSON', extensions: ['json'] });
     } catch {
       /* user cancelled */
     }
@@ -549,15 +546,15 @@ const MemoryPanel: Component<MemoryPanelProps> = (props) => {
   return (
     <Show when={props.show}>
       <div
-        class="fixed inset-0 z-[1000] flex items-center justify-center bg-black/60 backdrop-blur-[12px] rounded-lg transition-all duration-200 ease-out"
+        class="fixed inset-0 z-[1000] flex items-center justify-center bg-black/25 rounded-lg transition-all duration-200 ease-out"
         onClick={() => props.onClose()}
       >
         <div
-          class="rounded-lg bg-dark-500 text-[rgba(var(--text-base-rgb),0.88)] p-6 w-[92%] max-w-[640px] max-h-[90vh] overflow-y-auto flex flex-col gap-4 transition-all duration-500 ease-out transform"
+          class="rounded-lg text-[rgba(var(--text-base-rgb),0.88)] p-6 w-[92%] max-w-[640px] max-h-[90vh] overflow-y-auto flex flex-col gap-4 transition-all duration-500 ease-out transform"
           style={{
-            background: 'var(--panel-bg)',
-            'backdrop-filter': 'blur(var(--acrylic-blur))',
-            border: '1px solid var(--acrylic-border)',
+            background: 'var(--dialog-bg)',
+            'backdrop-filter': 'var(--popup-blur)',
+            border: '1px solid var(--border-dim)',
           }}
           onClick={(e) => e.stopPropagation()}
         >

@@ -7,16 +7,25 @@
 //! Called directly by `run_agent_turn` during tool dispatch, bypassing the MCP channel.
 
 use crate::core::models::{ToolFunctionSpec, ToolResult, ToolSpec};
+use crate::core::tool_names;
 use crate::ierr;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 // ====== Constants ======
 
 const MAX_R: u64 = 1_000_000; // read size cap: 1MB
 const MAX_W: u64 = 5_000_000; // write size cap: 5MB
 const MAX_S: usize = 10_000; // list/search cap: 10K entries
+/// Hard cap on any single file read into memory by the file tools (SEC-04): files
+/// beyond this size are refused outright instead of being slurped whole — the model
+/// is told to use command-line tools for them. Keeps a multi-GB file from OOM-ing
+/// the agent turn while staying generous enough for real source files.
+const MAX_READ_FILE_BYTES: u64 = 32 * 1024 * 1024;
+/// Per-file content cap for the search_content scan (SEC-04): a multi-GB log file
+/// must not be slurped whole; matches within the first 1MB are what the model needs.
+const SEARCH_SCAN_FILE_CAP: u64 = 1_000_000;
 
 // ====== Helpers ======
 
@@ -25,6 +34,188 @@ fn sha256_hex(content: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(content);
     hex::encode(hasher.finalize())
+}
+
+/// Streams a file through SHA-256 without loading it into memory (SEC-04: hashing a
+/// multi-GB file must not allocate proportionally). The digest is identical to
+/// [`sha256_hex`] over the whole file — the hashline protocol's anchor values stay
+/// stable no matter which path computed them.
+fn sha256_hex_file(path: &std::path::Path) -> Result<String, String> {
+    use std::io::Read;
+    let mut hasher = Sha256::new();
+    let mut reader = std::io::BufReader::new(std::fs::File::open(path).map_err(|e| e.to_string())?);
+    let mut buf = vec![0u8; 64 * 1024];
+    loop {
+        let n = reader.read(&mut buf).map_err(|e| e.to_string())?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
+    Ok(hex::encode(hasher.finalize()))
+}
+
+/// Reads at most `cap` bytes of a file (UTF-8 lossy; missing file → empty string).
+/// For preview/scan purposes only — bounded reads must never grow to file size.
+pub(crate) fn read_bytes_capped(path: &std::path::Path, cap: u64) -> String {
+    use std::io::Read;
+    let mut buf: Vec<u8> = Vec::new();
+    if let Ok(mut f) = std::fs::File::open(path) {
+        let _ = (&mut f).take(cap).read_to_end(&mut buf);
+    }
+    String::from_utf8_lossy(&buf).into_owned()
+}
+
+/// Bilingual refusal message for files above [`MAX_READ_FILE_BYTES`] (SEC-04).
+fn too_large_error(actual: u64) -> String {
+    ierr!(
+        "文件过大（{}，单文件上限 {}）：拒绝读入内存以防资源耗尽。请改用 execute_command 配合命令行工具（如 sed/awk/分页读取）处理",
+        "File too large ({}; single-file cap {}): refusing to load it into memory to avoid resource exhaustion. Use execute_command with command-line tools (sed/awk/paged reads) instead",
+        sz(actual),
+        sz(MAX_READ_FILE_BYTES)
+    )
+}
+
+/// Whether the tool is a mutating single-path file tool. Such tools MUST be dispatched
+/// in-process (execute_file_tool) via the write-lock choke point; their MCP variants
+/// (built-in fs server) are filtered out of agent tool sets for exactly this reason.
+pub(crate) fn is_mutating_file_tool(name: &str) -> bool {
+    matches!(
+        name,
+        tool_names::WRITE_FILE
+            | tool_names::REPLACE_IN_FILE
+            | tool_names::DELETE_FILE
+            | tool_names::MAKE_DIRECTORY
+    )
+}
+
+/// SEC-5: reparse-point swap narrowing. Re-runs the sandbox resolution for the target
+/// immediately before the mutation and requires it to produce the SAME canonical path
+/// as the first validation — a junction/reparse point swapped in between (e.g. while
+/// the tool was reading the old content) changes the canonicalization and is
+/// rejected. This narrows the validate-to-write TOCTOU window from the whole tool
+/// body down to the microseconds between this check and the actual file operation;
+/// complete elimination would need FILE_FLAG_OPEN_REPARSE_POINT / O_NOFOLLOW
+/// semantics on every syscall, which is out of scope here.
+fn revalidate_target_stable(
+    project_root: &str,
+    rel: &str,
+    validated: &std::path::Path,
+) -> Result<(), String> {
+    match safe_path(project_root, rel, false) {
+        Ok(recheck) if recheck == *validated => Ok(()),
+        _ => Err(ierr!(
+            "目标路径在操作期间发生了变化（可能被替换为链接/挂载点），已拒绝写入",
+            "The target path changed during the operation (possibly swapped for a link/mount point); write refused"
+        )),
+    }
+}
+
+/// Atomic file replace: write a temp sibling, then rename over the target, so concurrent
+/// readers never observe a torn file and a crash mid-write cannot leave the target half
+/// written. The target's permissions (mode bits / readonly) are copied onto the temp file
+/// before the rename so an edit does not silently drop the executable bit or the
+/// readonly attribute. Windows AV/indexer may briefly hold the target, making rename
+/// fail; retries, then falls back to an in-place write (writers are still serialized by
+/// the per-file write lock at the `execute_builtin_tool` choke point).
+fn atomic_write(target: &std::path::Path, content: &str) -> Result<(), String> {
+    let Some(dir) = target.parent() else {
+        return Err(ierr!(
+            "目标缺少父目录: {}",
+            "Target has no parent directory: {}",
+            target.display()
+        ));
+    };
+    // Permission preservation is Unix-scoped: fs::permissions only carries mode bits
+    // (exec bit included) there. On Windows it carries only the readonly flag — copying
+    // it onto the tmp file would make the rename-over-target fail (readonly targets
+    // cannot be replaced), and true ACL preservation needs ReplaceFile, so the swap
+    // accepts directory-inherited ACLs there (documented limitation).
+    #[cfg(not(windows))]
+    let target_perms = std::fs::metadata(target).ok().map(|m| m.permissions());
+    #[cfg(windows)]
+    let target_perms: Option<std::fs::Permissions> = None;
+    for _ in 0..3 {
+        let tmp = dir.join(format!(".aio-tmp-{}", uuid::Uuid::new_v4().simple()));
+        if let Err(e) = std::fs::write(&tmp, content) {
+            let _ = std::fs::remove_file(&tmp);
+            return Err(ierr!("写入失败: {}", "Write failed: {}", e));
+        }
+        if let Some(p) = &target_perms {
+            let _ = std::fs::set_permissions(&tmp, p.clone());
+        }
+        match std::fs::rename(&tmp, target) {
+            Ok(_) => return Ok(()),
+            Err(_) => {
+                let _ = std::fs::remove_file(&tmp);
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+        }
+    }
+    // Fallback: in-place write (still serialized by the per-file write lock). Atomicity
+    // is knowingly traded away here — leave a trace for post-mortem torn-write debugging.
+    tracing::warn!(
+        "[atomic_write] rename 反复失败，回退就地写入（放弃原子性）: {}",
+        target.display()
+    );
+    std::fs::write(target, content).map_err(|e| ierr!("写入失败: {}", "Write failed: {}", e))
+}
+
+/// Resolves the canonical target path of a single-path mutating file tool (lock key for
+/// the per-file write lock). Returns `(canonical_path, exists)`; `None` when the tool is
+/// not a single-path mutation or the path cannot be resolved (the tool itself reports the
+/// detailed error right after, without lock protection).
+pub(crate) fn mutating_tool_target(
+    project_root: &str,
+    tool_name: &str,
+    arguments: &Value,
+) -> Option<(PathBuf, bool)> {
+    if !is_mutating_file_tool(tool_name) {
+        return None;
+    }
+    let path = arguments["path"].as_str().unwrap_or("");
+    if path.is_empty() {
+        return None;
+    }
+    let target = safe_path(project_root, path, false).ok()?;
+    let exists = target.exists();
+    Some((target, exists))
+}
+
+/// Lexical containment of the RAW resolved path (harness round 6): expands `..`
+/// components without touching the filesystem, strips the Windows extended-length
+/// prefix from the canonical base, and compares component-wise — case-insensitively
+/// on Windows (a user-typed absolute in-project path may differ in drive/dir case
+/// from the canonical base). Pure — unit-tested.
+fn lexically_inside(base: &Path, resolved: &Path) -> bool {
+    let mut lex = PathBuf::new();
+    for c in resolved.components() {
+        match c {
+            std::path::Component::ParentDir => {
+                lex.pop();
+            }
+            std::path::Component::CurDir => {}
+            other => lex.push(other),
+        }
+    }
+    let strip = |p: &Path| {
+        PathBuf::from(crate::utils::file_tools::strip_windows_extended_prefix(
+            &p.to_string_lossy(),
+        ))
+    };
+    let (b, l) = (strip(base), strip(&lex));
+    if b.components().count() > l.components().count() {
+        return false;
+    }
+    if cfg!(windows) {
+        let norm =
+            |c: std::path::Component| -> String { c.as_os_str().to_string_lossy().to_lowercase() };
+        let bc: Vec<String> = b.components().map(norm).collect();
+        let lc: Vec<String> = l.components().map(norm).collect();
+        lc[..bc.len()] == bc[..]
+    } else {
+        l.starts_with(&b)
+    }
 }
 
 /// Path sandbox: resolves the requested path and ensures it stays within `allowed_dir`.
@@ -47,9 +238,25 @@ pub(crate) fn safe_path(
     })?;
     let p = PathBuf::from(requested);
     let resolved = if p.is_absolute() { p } else { base.join(&p) };
+    // Harness round 6: lexical escape signature of the RAW path (no filesystem
+    // probing). When a probe later FAILS on a path that is lexically outside the
+    // project, the error must be the distinct 路径越界 message — the old flow
+    // leaked the raw canonicalize io error ("os error 3"), indistinguishable from
+    // a genuinely missing in-project path (report 9.1: read_file D:\Windows\win.ini).
+    // Probing-success paths keep their existing semantics (final canonical check).
+    let lex_outside = !lexically_inside(&base, &resolved);
     let target = if must_exist {
-        std::fs::canonicalize(&resolved)
-            .map_err(|e| ierr!("路径不可访问: {}", "Path is inaccessible: {}", e))?
+        std::fs::canonicalize(&resolved).map_err(|e| {
+            if lex_outside {
+                ierr!(
+                    "路径越界: '{}' 不在项目目录内",
+                    "Path out of bounds: '{}' is not inside the project directory",
+                    requested
+                )
+            } else {
+                ierr!("路径不可访问: {}", "Path is inaccessible: {}", e)
+            }
+        })?
     } else {
         match std::fs::canonicalize(&resolved) {
             Ok(c) => c,
@@ -84,8 +291,17 @@ pub(crate) fn safe_path(
                     }
                     r
                 } else {
-                    let canon = std::fs::canonicalize(&exist)
-                        .map_err(|e| ierr!("路径不可访问: {}", "Path is inaccessible: {}", e))?;
+                    let canon = std::fs::canonicalize(&exist).map_err(|e| {
+                        if lex_outside {
+                            ierr!(
+                                "路径越界: '{}' 不在项目目录内",
+                                "Path out of bounds: '{}' is not inside the project directory",
+                                requested
+                            )
+                        } else {
+                            ierr!("路径不可访问: {}", "Path is inaccessible: {}", e)
+                        }
+                    })?;
                     let mut r = canon;
                     for n in trail.into_iter().rev() {
                         r.push(n);
@@ -135,14 +351,14 @@ pub fn get_file_tool_specs() -> Vec<ToolSpec> {
         ToolSpec {
             kind: "function".into(),
             function: ToolFunctionSpec {
-                name: "read_file".into(),
+                name: tool_names::READ_FILE.into(),
                 description: "读取项目目录内的文件内容，输出带 1-based 行号（格式 \"    1| 内容\"，可直接用于 replace_in_file 的 start_line/end_line）。默认最多读取 300 行 / 32KB，超出时返回头部+尾部并标注省略的行号区间；如需完整内容请显式传入更大的 max_lines 或 max_bytes。with_hash=true 时返回文件 SHA-256 摘要（hashline 协议：编辑时用 anchor_hash 锚定防漂移，写/替换工具会返回新 hash 供链式使用）".into(),
                 parameters: json!({
                     "type":"object",
                     "properties":{
                         "path":{"type":"string","description":"文件路径"},
-                        "max_lines":{"type":"integer","description":"最大读取行数（默认 300；传 -1 表示不限行数）"},
-                        "max_bytes":{"type":"integer","description":"最大读取字节数（默认 32768）"},
+                        "max_lines":{"type":"integer","description":"最大读取行数（默认 300；-1 = 不限行数——注意行数上限与字节上限相互独立，-1 不解除字节截断，需完整大文件请同时传 max_bytes=-1）"},
+                        "max_bytes":{"type":"integer","description":"最大读取字节数（默认 32768；-1 = 不限字节，仍受 1MB 安全上限约束）"},
                         "with_hash":{"type":"boolean","description":"是否返回文件 SHA-256 摘要（默认 false）"}
                     },
                     "required":["path"]
@@ -152,15 +368,15 @@ pub fn get_file_tool_specs() -> Vec<ToolSpec> {
         ToolSpec {
             kind: "function".into(),
             function: ToolFunctionSpec {
-                name: "write_file".into(),
-                description: "创建或覆盖文件（父目录不存在时自动创建，单次上限 5MB）。新建文件用本工具；覆盖已有文件前必须先 read_file 确认当前内容——覆盖是不可撤销的整体替换，会把未包含在 content 中的原有内容全部丢弃。返回新文件的 SHA-256 摘要，可作为后续 replace_in_file 的 anchor_hash。已有文件的小范围修改优先用 replace_in_file（只需传改动片段，更省 token 且不易误覆盖）".into(),
-                parameters: json!({"type":"object","properties":{"path":{"type":"string","description":"文件路径（相对项目根目录）"},"content":{"type":"string","description":"文件的完整新内容"}},"required":["path","content"]}),
+                name: tool_names::WRITE_FILE.into(),
+                description: "创建或覆盖文件（父目录不存在时自动创建，单次上限 5MB）。新建文件用本工具；覆盖已有文件前必须先 read_file 确认当前内容——覆盖是不可撤销的整体替换，会把未包含在 content 中的原有内容全部丢弃。返回新文件的 SHA-256 摘要，可作为后续 replace_in_file 的 anchor_hash。已有文件的小范围修改优先用 replace_in_file（只需传改动片段，更省 token 且不易误覆盖）；文件被其他智能体修改过后，覆盖时必须携带 expect_hash（当前内容哈希），不匹配会报错。content 为必填：缺失直接报错；用空字符串覆盖非空文件同样要求 expect_hash（防参数拼装事故清空文件）".into(),
+                parameters: json!({"type":"object","properties":{"path":{"type":"string","description":"文件路径（相对项目根目录）"},"content":{"type":"string","description":"文件的完整新内容（必填；显式空字符串 = 清空文件，对非空文件需配合 expect_hash）"},"expect_hash":{"type":"string","description":"写入前校验的文件当前 SHA-256（read_file(with_hash=true) 获取）。文件被其他智能体修改过后为必填；不匹配则报错，需重新读取最新内容"}},"required":["path","content"]}),
             },
         },
         ToolSpec {
             kind: "function".into(),
             function: ToolFunctionSpec {
-                name: "list_directory".into(),
+                name: tool_names::LIST_DIRECTORY.into(),
                 description: "列出目录内容（名称 + 类型标记 + 大小，单目录上限 10000 条）。探索项目结构时先用本工具或 search_files 定位目标，再 read_file，避免盲读大文件浪费上下文".into(),
                 parameters: json!({"type":"object","properties":{"path":{"type":"string","description":"目录路径, 默认项目根目录"}}}),
             },
@@ -176,7 +392,7 @@ pub fn get_file_tool_specs() -> Vec<ToolSpec> {
         ToolSpec {
             kind: "function".into(),
             function: ToolFunctionSpec {
-                name: "search_content".into(),
+                name: tool_names::SEARCH_CONTENT.into(),
                 description: "在文件内容中搜索正则表达式并返回命中行（含文件路径与行号）。找符号定义/调用点/配置项时优先用本工具定位到具体文件与行号，再 read_file 精读该区域，避免通读整个文件".into(),
                 parameters: json!({"type":"object","properties":{"pattern":{"type":"string","description":"正则表达式"},"path":{"type":"string","description":"目标路径"}},"required":["pattern"]}),
             },
@@ -184,7 +400,7 @@ pub fn get_file_tool_specs() -> Vec<ToolSpec> {
         ToolSpec {
             kind: "function".into(),
             function: ToolFunctionSpec {
-                name: "delete_file".into(),
+                name: tool_names::DELETE_FILE.into(),
                 description: "删除文件（不可恢复）。删除前应确认路径正确且该文件确实不再需要；目录无法用本工具删除（仅文件）。删除属于变更类操作，在需要确认的模式下会请求用户批准".into(),
                 parameters: json!({"type":"object","properties":{"path":{"type":"string","description":"文件路径"}},"required":["path"]}),
             },
@@ -192,7 +408,7 @@ pub fn get_file_tool_specs() -> Vec<ToolSpec> {
         ToolSpec {
             kind: "function".into(),
             function: ToolFunctionSpec {
-                name: "make_directory".into(),
+                name: tool_names::MAKE_DIRECTORY.into(),
                 description: "创建目录（含缺失的父级目录，递归创建；已存在时直接成功）。新建嵌套路径的文件可直接用 write_file（父目录自动创建），本工具用于显式建目录结构".into(),
                 parameters: json!({"type":"object","properties":{"path":{"type":"string","description":"目录路径"}},"required":["path"]}),
             },
@@ -200,7 +416,7 @@ pub fn get_file_tool_specs() -> Vec<ToolSpec> {
         ToolSpec {
             kind: "function".into(),
             function: ToolFunctionSpec {
-                name: "replace_in_file".into(),
+                name: tool_names::REPLACE_IN_FILE.into(),
                 description: "在文件中执行替换。两种模式（二选一）：1) old_string 精确替换——old_string 必须恰好出现一次；2) 行范围锚定——old_string 留空并传 start_line/end_line（1-based），工具按当前文件内容取该行范围替换为 new_string，大段修改时无需回传整段旧代码，更省 token；若行号已过期会报错，请重新 read_file".into(),
                 parameters: json!({"type":"object","properties":{"path":{"type":"string","description":"文件路径"},"old_string":{"type":"string","description":"要被替换的原始字符串（必须与文件内容精确匹配）；行范围模式下留空"},"new_string":{"type":"string","description":"替换后的新字符串（可含换行）"},"start_line":{"type":"integer","description":"行范围锚定模式：起始行号（1-based）"},"end_line":{"type":"integer","description":"行范围锚定模式：结束行号（1-based，默认等于 start_line）"},"anchor_hash":{"type":"string","description":"hashline 协议：read_file(with_hash=true) 或上次写/替换返回的文件 SHA-256 摘要。提供时先校验文件未被修改，防止按过期上下文误改"}},"required":["path","new_string"]}),
             },
@@ -215,20 +431,41 @@ pub fn get_file_tool_specs() -> Vec<ToolSpec> {
 /// `project_root` is the absolute path of the project root; all path operations are confined to that directory.
 pub fn execute_file_tool(name: &str, arguments: &Value, project_root: &str) -> ToolResult {
     match name {
-        "read_file" => {
+        tool_names::READ_FILE => {
             let path = arguments["path"].as_str().unwrap_or("");
             if path.is_empty() {
                 return tool_err(&ierr!("缺少 path", "Missing path"));
             }
             // Read caps: default 300 lines / 32KB (token efficiency: keeps full large files out of the context);
-            // max_lines = -1 means unlimited lines, max_bytes = -1 means unlimited bytes (still bounded by the MAX_R hard cap).
-            let max_lines_arg = arguments["max_lines"].as_i64().unwrap_or(300);
+            // max_lines = -1 means unlimited lines, max_bytes = -1 means unlimited
+            // bytes (still bounded by the MAX_R hard cap). Harness round 9: values
+            // below -1 used to be silently accepted as "unlimited" — validate
+            // instead, so a malformed call fails loudly instead of half-applying.
+            let max_lines_arg = match arguments["max_lines"].as_i64() {
+                Some(v) if v < -1 => {
+                    return tool_err(&ierr!(
+                        "max_lines 无效（-1 表示不限行数，不允许更小的负数）: {}",
+                        "Invalid max_lines (-1 means unlimited lines; smaller negatives are rejected): {}",
+                        v
+                    ))
+                }
+                other => other.unwrap_or(300),
+            };
             let max_lines = if max_lines_arg < 0 {
                 usize::MAX
             } else {
                 (max_lines_arg as u64).clamp(1, 1_000_000) as usize
             };
-            let max_bytes_arg = arguments["max_bytes"].as_i64().unwrap_or(32 * 1024);
+            let max_bytes_arg = match arguments["max_bytes"].as_i64() {
+                Some(v) if v < -1 => {
+                    return tool_err(&ierr!(
+                        "max_bytes 无效（-1 表示不限字节，不允许更小的负数）: {}",
+                        "Invalid max_bytes (-1 means unlimited bytes; smaller negatives are rejected): {}",
+                        v
+                    ))
+                }
+                other => other.unwrap_or(32 * 1024),
+            };
             let max_bytes = if max_bytes_arg < 0 {
                 usize::MAX
             } else {
@@ -248,14 +485,21 @@ pub fn execute_file_tool(name: &str, arguments: &Value, project_root: &str) -> T
                 Ok(m) => m,
                 Err(e) => return tool_err(&e.to_string()),
             };
-            // Read all bytes at once (1MB hard cap) and compute the file's SHA-256 (used by the hashline protocol)
-            let bytes = match std::fs::read(&t) {
-                Ok(b) => b,
-                Err(e) => return tool_err(&e.to_string()),
+            // SEC-04: bounded reads — a multi-GB file must not be slurped into memory
+            // before truncating. Display bytes are taken with a capped read; the
+            // digest is streamed (memory O(1)) and still covers the COMPLETE file
+            // (hashline protocol: the digest must match the full-content digest
+            // computed by replace_in_file's anchor_hash / write_file's expect_hash
+            // validation — a truncated digest would permanently break edits of
+            // files > MAX_R under the cross-writer gate).
+            if meta.len() > MAX_READ_FILE_BYTES {
+                return tool_err(&too_large_error(meta.len()));
+            }
+            let file_hash = match sha256_hex_file(&t) {
+                Ok(h) => h,
+                Err(e) => return tool_err(&e),
             };
-            let hash_len = bytes.len().min(MAX_R as usize);
-            let file_hash = sha256_hex(&bytes[..hash_len]);
-            let raw = String::from_utf8_lossy(&bytes[..hash_len]).into_owned();
+            let raw = read_bytes_capped(&t, MAX_R);
             let over_size = meta.len() > MAX_R;
             let total_lines = raw.lines().count();
             // Line-numbered output (1-based, cat -n style): lets the model cite exact line numbers
@@ -322,9 +566,30 @@ pub fn execute_file_tool(name: &str, arguments: &Value, project_root: &str) -> T
                 tool_ok(c)
             }
         }
-        "write_file" => {
+        tool_names::WRITE_FILE => {
             let path = arguments["path"].as_str().unwrap_or("");
-            let content = arguments["content"].as_str().unwrap_or("");
+            // P0-3 (harness round 9): a MISSING `content` key used to fall through
+            // `unwrap_or("")` and silently overwrite the target with 0 bytes — the
+            // tester truncated README.md to empty this way. Distinguish the three
+            // cases: missing key (hard error), explicit empty string (allowed —
+            // empty files are legitimate, round 8 verified), and normal content.
+            let content = match arguments.get("content") {
+                Some(v) => match v.as_str() {
+                    Some(s) => s,
+                    None => {
+                        return tool_err(&ierr!(
+                            "content 参数必须是字符串（收到其他类型）",
+                            "The content parameter must be a string (got another type)"
+                        ))
+                    }
+                },
+                None => {
+                    return tool_err(&ierr!(
+                        "缺少 content 参数：写入不能省略内容（如需清空文件请显式传空字符串，且对已存在的非空文件将要求 expect_hash 确认）",
+                        "Missing content parameter: a write must not omit content (pass an explicit empty string to truncate; overwriting a non-empty file with empty content additionally requires expect_hash)"
+                    ))
+                }
+            };
             if path.is_empty() {
                 return tool_err(&ierr!("缺少 path", "Missing path"));
             }
@@ -338,19 +603,70 @@ pub fn execute_file_tool(name: &str, arguments: &Value, project_root: &str) -> T
             if t.exists() && t.is_dir() {
                 return tool_err(&ierr!("目标是目录: {}", "Target is a directory: {}", path));
             }
+            // P0-3 second guard: empty overwrite of a NON-EMPTY file requires
+            // expect_hash — you must prove you read what you are about to destroy.
+            // (New files and already-empty files stay freely writable: the
+            // legitimate empty-file cases from round 8 keep working.)
+            if content.is_empty() && t.is_file() {
+                let len = match std::fs::metadata(&t) {
+                    Ok(m) => m.len(),
+                    Err(e) => return tool_err(&ierr!("读取失败: {}", "Read failed: {}", e)),
+                };
+                let expect_hash = arguments["expect_hash"].as_str().unwrap_or("");
+                if len > 0 && expect_hash.is_empty() {
+                    return tool_err(&ierr!(
+                        "拒绝用空内容覆盖非空文件（{}，当前 {}B）：这几乎总是参数拼装事故。如确要清空，请先 read_file(with_hash=true) 取得哈希并显式传 content:\"\" + expect_hash。",
+                        "Refusing to overwrite a non-empty file ({}B) with empty content — this is almost always a malformed call ({}). To truncate intentionally, first run read_file(with_hash=true) and pass an explicit empty content plus expect_hash.",
+                        path,
+                        len
+                    ));
+                }
+            }
+            // hashline protocol — expect_hash: pre-overwrite content validation (the
+            // mirror of replace_in_file's anchor_hash). Enforced for cross-writer
+            // scenarios by the execute_builtin_tool gate; validated here whenever given.
+            let expect_hash = arguments["expect_hash"].as_str().unwrap_or("");
+            if !expect_hash.is_empty() && t.is_file() {
+                // SEC-04: stream the hash instead of slurping the file; refuse files
+                // beyond the hard read cap (the overwrite target can't be verified).
+                let len = match std::fs::metadata(&t) {
+                    Ok(m) => m.len(),
+                    Err(e) => return tool_err(&ierr!("读取失败: {}", "Read failed: {}", e)),
+                };
+                if len > MAX_READ_FILE_BYTES {
+                    return tool_err(&too_large_error(len));
+                }
+                let current = match sha256_hex_file(&t) {
+                    Ok(h) => h,
+                    Err(e) => return tool_err(&e),
+                };
+                if current != expect_hash {
+                    return tool_err(&ierr!(
+                        "[HASH MISMATCH] 文件当前哈希与 expect_hash 不一致（期望 {}，当前 {}）。文件已被修改，请重新 read_file(with_hash=true) 获取最新内容后基于其重写",
+                        "[HASH MISMATCH] Current file digest does not match expect_hash (expected {}, got {}). The file was modified; re-run read_file(with_hash=true) and rewrite from the fresh content",
+                        expect_hash,
+                        current
+                    ));
+                }
+            }
             if let Some(p) = t.parent() {
                 let _ = std::fs::create_dir_all(p);
             }
-            match std::fs::write(&t, content) {
+            // SEC-5: junction/reparse-point swap narrowing — the canonical target must
+            // be unchanged since the validation above (which the hash read straddled).
+            if let Err(e) = revalidate_target_stable(project_root, path, &t) {
+                return tool_err(&e);
+            }
+            match atomic_write(&t, content) {
                 Ok(_) => tool_ok(format!(
                     "✓ 写入 {path} ({}B)\n[HASH sha256:{}]",
                     content.len(),
                     sha256_hex(content.as_bytes())
                 )),
-                Err(e) => tool_err(&ierr!("写入失败: {}", "Write failed: {}", e)),
+                Err(e) => tool_err(&e),
             }
         }
-        "list_directory" => {
+        tool_names::LIST_DIRECTORY => {
             let p = arguments["path"].as_str().unwrap_or(".");
             let t = match safe_path(project_root, p, true) {
                 Ok(t) => t,
@@ -422,7 +738,7 @@ pub fn execute_file_tool(name: &str, arguments: &Value, project_root: &str) -> T
                 if d.is_empty() { "(无匹配)" } else { &d }
             ))
         }
-        "search_content" => {
+        tool_names::SEARCH_CONTENT => {
             let pattern = arguments["pattern"].as_str().unwrap_or("");
             if pattern.is_empty() {
                 return tool_err(&ierr!("缺少 pattern", "Missing pattern"));
@@ -452,7 +768,22 @@ pub fn execute_file_tool(name: &str, arguments: &Value, project_root: &str) -> T
                         continue;
                     }
                     scanned += 1;
-                    let c = match std::fs::read_to_string(&p) {
+                    // SEC-04: bounded per-file scan (first SEARCH_SCAN_FILE_CAP bytes);
+                    // non-UTF-8 files are skipped, same as the previous read_to_string path.
+                    let bytes = {
+                        use std::io::Read;
+                        match std::fs::File::open(&p) {
+                            Ok(mut f) => {
+                                let mut b = Vec::new();
+                                match (&mut f).take(SEARCH_SCAN_FILE_CAP).read_to_end(&mut b) {
+                                    Ok(_) => b,
+                                    Err(_) => continue,
+                                }
+                            }
+                            Err(_) => continue,
+                        }
+                    };
+                    let c = match String::from_utf8(bytes) {
                         Ok(c) => c,
                         Err(_) => continue,
                     };
@@ -486,7 +817,7 @@ pub fn execute_file_tool(name: &str, arguments: &Value, project_root: &str) -> T
                 if d.is_empty() { "(无匹配)" } else { &d }
             ))
         }
-        "delete_file" => {
+        tool_names::DELETE_FILE => {
             let path = arguments["path"].as_str().unwrap_or("");
             if path.is_empty() {
                 return tool_err(&ierr!("缺少 path", "Missing path"));
@@ -501,12 +832,16 @@ pub fn execute_file_tool(name: &str, arguments: &Value, project_root: &str) -> T
             if t.is_dir() {
                 return tool_err(&ierr!("是目录: {}", "Is a directory: {}", path));
             }
+            // SEC-5: canonical target must be unchanged since validation
+            if let Err(e) = revalidate_target_stable(project_root, path, &t) {
+                return tool_err(&e);
+            }
             match std::fs::remove_file(&t) {
                 Ok(_) => tool_ok(format!("✓ 删除 {path}")),
                 Err(e) => tool_err(&format!("{e}")),
             }
         }
-        "make_directory" => {
+        tool_names::MAKE_DIRECTORY => {
             let path = arguments["path"].as_str().unwrap_or("");
             if path.is_empty() {
                 return tool_err(&ierr!("缺少 path", "Missing path"));
@@ -518,12 +853,16 @@ pub fn execute_file_tool(name: &str, arguments: &Value, project_root: &str) -> T
             if t.exists() {
                 return tool_err(&ierr!("已存在: {}", "Already exists: {}", path));
             }
+            // SEC-5: canonical target must be unchanged since validation
+            if let Err(e) = revalidate_target_stable(project_root, path, &t) {
+                return tool_err(&e);
+            }
             match std::fs::create_dir_all(&t) {
                 Ok(_) => tool_ok(format!("✓ 创建 {path}")),
                 Err(e) => tool_err(&format!("{e}")),
             }
         }
-        "replace_in_file" => {
+        tool_names::REPLACE_IN_FILE => {
             let path = arguments["path"].as_str().unwrap_or("");
             let mut old_s = arguments["old_string"].as_str().unwrap_or("").to_string();
             let new_s = arguments["new_string"].as_str().unwrap_or("");
@@ -539,6 +878,15 @@ pub fn execute_file_tool(name: &str, arguments: &Value, project_root: &str) -> T
             }
             if is_binary(&t) {
                 return tool_err(&ierr!("二进制文件: {}", "Binary file: {}", path));
+            }
+            // SEC-04: hard size cap before the in-memory replace (read_to_string on a
+            // multi-GB file would allocate proportionally).
+            let len = match std::fs::metadata(&t) {
+                Ok(m) => m.len(),
+                Err(e) => return tool_err(&ierr!("读取失败: {}", "Read failed: {}", e)),
+            };
+            if len > MAX_READ_FILE_BYTES {
+                return tool_err(&too_large_error(len));
             }
             let content = match std::fs::read_to_string(&t) {
                 Ok(c) => c,
@@ -600,14 +948,24 @@ pub fn execute_file_tool(name: &str, arguments: &Value, project_root: &str) -> T
                     "old_string must not be empty (to prepend/append content, include surrounding context lines)"
                 ));
             }
-            // Count old_string occurrences and their line numbers
+            // Count old_string occurrences and their line numbers.
+            // Linear scan: the newline counter advances with the cursor (a per-match
+            // prefix re-scan made this quadratic — catastrophic on large files with many
+            // matches); the listed lines are capped so the error stays readable and cheap.
+            // The cursor advances by the WHOLE match (non-overlapping, str::matches
+            // semantics) — the historic `abs_pos + 1` byte-step panicked whenever
+            // old_string started with a multi-byte UTF-8 char (any CJK old_string with
+            // one match made the next `content[pos..]` slice land mid-character:
+            // "文件工具执行线程 panic" in harness round 4) and also miscounted
+            // overlapping occurrences ("aa" in "aaaa" → 3 instead of 2).
             let mut matches: Vec<usize> = Vec::new();
             let mut pos = 0;
+            let mut line = 1usize;
             while let Some(found) = content[pos..].find(old_s.as_str()) {
                 let abs_pos = pos + found;
-                let line = content[..abs_pos].chars().filter(|&c| c == '\n').count() + 1;
+                line += content[pos..abs_pos].matches('\n').count();
                 matches.push(line);
-                pos = abs_pos + 1;
+                pos = abs_pos + old_s.len();
             }
             match matches.len() {
                 0 => {
@@ -626,21 +984,35 @@ pub fn execute_file_tool(name: &str, arguments: &Value, project_root: &str) -> T
                             MAX_W
                         ));
                     }
-                    match std::fs::write(&t, &new_content) {
+                    // SEC-5: junction/reparse-point swap narrowing — the canonical
+                    // target must be unchanged since validation (the content read
+                    // and match scan straddled it).
+                    if let Err(e) = revalidate_target_stable(project_root, path, &t) {
+                        return tool_err(&e);
+                    }
+                    match atomic_write(&t, &new_content) {
                         Ok(_) => tool_ok(format!(
                             "✓ 替换 {path}\n第 {} 行: {} 处匹配已替换\n[HASH sha256:{}]",
                             matches[0],
                             1,
                             sha256_hex(new_content.as_bytes())
                         )),
-                        Err(e) => tool_err(&ierr!("写入失败: {}", "Write failed: {}", e)),
+                        Err(e) => tool_err(&e),
                     }
                 }
                 n => {
-                    let lines_str = matches.iter()
+                    const MAX_LISTED_LINES: usize = 20;
+                    let lines_str = matches
+                        .iter()
+                        .take(MAX_LISTED_LINES)
                         .map(|l| l.to_string())
                         .collect::<Vec<_>>()
                         .join(", ");
+                    let lines_str = if n > MAX_LISTED_LINES {
+                        format!("{lines_str}… 共 {n} 处")
+                    } else {
+                        lines_str
+                    };
                     tool_err(&ierr!(
                         "old_string 在文件中出现了 {} 次（行 {}）。请增加更多周围的上下文行使匹配唯一，然后重试。",
                         "old_string appears {} times in the file (lines {}). Add more surrounding context lines to make the match unique, then retry.",
@@ -680,6 +1052,7 @@ pub fn strip_windows_extended_prefix(path: &str) -> String {
 #[cfg(test)]
 mod safe_path_tests {
     use super::{execute_file_tool, safe_path};
+    use crate::core::tool_names;
     use std::fs;
     use std::path::PathBuf;
 
@@ -742,6 +1115,81 @@ mod safe_path_tests {
         let _ = fs::remove_dir_all(&base);
     }
 
+    /// Harness round 6 (report 9.1 caveat): an out-of-bounds request whose probe
+    /// FAILS (target does not exist) must surface the distinct 路径越界 error —
+    /// the old flow leaked the raw canonicalize io error ("os error 3"),
+    /// indistinguishable from a genuinely missing in-project path.
+    #[test]
+    fn escape_with_missing_target_yields_out_of_bounds_error() {
+        let base = fresh_base("escape-missing");
+        let base_s = base.to_string_lossy().to_string();
+        // Relative .. escape to a nonexistent outside target, both must_exist modes
+        for must_exist in [true, false] {
+            let r = safe_path(&base_s, "../../../__aio_no_such_dir__/x.txt", must_exist);
+            let err = r.expect_err("越界+缺失目标必须报错");
+            assert!(err.contains("路径越界"), "应报越界而非裸 io 错误: {err}");
+            assert!(!err.contains("os error"), "不应泄露原始 io 错误: {err}");
+        }
+        // Absolute escape to a definitely-missing location (parent of the temp base)
+        let outside = base
+            .parent()
+            .unwrap()
+            .join("__aio_no_such_dir__")
+            .join("x.txt");
+        let r = safe_path(&base_s, &outside.to_string_lossy(), true);
+        let err = r.expect_err("绝对路径越界+缺失必须报错");
+        assert!(err.contains("路径越界"), "应报越界: {err}");
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    /// The counter-edge must keep its semantics: a MISSING path that IS inside the
+    /// project still reports 路径不可访问 (io error passthrough), not 越界.
+    #[test]
+    fn missing_in_project_path_keeps_inaccessible_error() {
+        let base = fresh_base("missing-in");
+        let base_s = base.to_string_lossy().to_string();
+        let r = safe_path(&base_s, "no_such_dir/no_such_file.txt", true);
+        let err = r.expect_err("缺失的库内路径必须报错");
+        assert!(err.contains("路径不可访问"), "库内缺失应报不可访问: {err}");
+        assert!(!err.contains("路径越界"), "不应误报越界: {err}");
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    /// An EXISTING out-of-bounds target still reaches the final canonical check
+    /// (regression: the lexical pre-sign only picks the error message when the
+    /// probe fails — probing-success behavior must be unchanged).
+    #[test]
+    fn existing_escape_target_still_rejected_by_canonical_check() {
+        let base = fresh_base("escape-exists");
+        let base_s = base.to_string_lossy().to_string();
+        // The temp dir's parent definitely exists
+        let outside = base.parent().unwrap().to_path_buf();
+        let r = safe_path(&base_s, &outside.to_string_lossy(), true);
+        let err = r.expect_err("存在的越界目标必须被拒");
+        assert!(err.contains("路径越界"), "应报越界: {err}");
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    /// Absolute path INSIDE the project keeps working (harness round 6: the LLM's
+    /// delete_file test passed a full absolute path — `D:\aio-harness-sandbox\tests\x.txt`).
+    #[test]
+    fn absolute_path_inside_project_still_allowed() {
+        let base = fresh_base("abs-inside");
+        let base_s = base.to_string_lossy().to_string();
+        fs::write(base.join("inside_abs.txt"), b"x").unwrap();
+        let abs = base.join("inside_abs.txt");
+        let r = safe_path(&base_s, &abs.to_string_lossy(), true);
+        assert!(r.is_ok(), "项目内绝对路径应放行: {r:?}");
+        // Windows case variance on an in-project absolute path is NOT an escape
+        #[cfg(windows)]
+        {
+            let lower = abs.to_string_lossy().to_lowercase();
+            let r = safe_path(&base_s, &lower, true);
+            assert!(r.is_ok(), "大小写不同的项目内绝对路径应放行: {r:?}");
+        }
+        let _ = fs::remove_dir_all(&base);
+    }
+
     fn text_of(r: &super::ToolResult) -> String {
         r.content
             .first()
@@ -762,7 +1210,7 @@ mod safe_path_tests {
         fs::write(base.join("ten.txt"), body).unwrap();
 
         let args = serde_json::json!({"path": "ten.txt", "max_lines": 5, "max_bytes": -1});
-        let r = execute_file_tool("read_file", &args, &base_s);
+        let r = execute_file_tool(tool_names::READ_FILE, &args, &base_s);
         let text = text_of(&r);
         assert!(text.contains("    1| line1"), "首行应带行号: {text}");
         assert!(text.contains("    3| line3"), "头部末行: {text}");
@@ -782,11 +1230,429 @@ mod safe_path_tests {
         let base_s = base.to_string_lossy().to_string();
         fs::write(base.join("h.txt"), "hello\nworld\n").unwrap();
         let args = serde_json::json!({"path": "h.txt", "with_hash": true});
-        let r = execute_file_tool("read_file", &args, &base_s);
+        let r = execute_file_tool(tool_names::READ_FILE, &args, &base_s);
         let text = text_of(&r);
         assert!(text.contains("    1| hello"));
         assert!(text.contains("    2| world"));
         assert!(text.contains("[HASH sha256:"), "hashline 应保留: {text}");
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    /// expect_hash guards write_file overwrites: a mismatched digest is rejected and the
+    /// file is left untouched.
+    #[test]
+    fn write_file_expect_hash_mismatch_rejects() {
+        let base = fresh_base("expect-mismatch");
+        let base_s = base.to_string_lossy().to_string();
+        fs::write(base.join("a.txt"), "hello").unwrap();
+        let args =
+            serde_json::json!({"path": "a.txt", "content": "NEW", "expect_hash": "deadbeef"});
+        let r = execute_file_tool(tool_names::WRITE_FILE, &args, &base_s);
+        let text = text_of(&r);
+        assert!(text.contains("[HASH MISMATCH]"), "应报哈希不匹配: {text}");
+        assert_eq!(fs::read_to_string(base.join("a.txt")).unwrap(), "hello");
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    /// A matching expect_hash lets the overwrite proceed atomically.
+    #[test]
+    fn write_file_expect_hash_match_overwrites() {
+        let base = fresh_base("expect-match");
+        let base_s = base.to_string_lossy().to_string();
+        fs::write(base.join("a.txt"), "hello").unwrap();
+        let hash = super::sha256_hex(b"hello");
+        let args = serde_json::json!({"path": "a.txt", "content": "NEW", "expect_hash": hash});
+        let r = execute_file_tool(tool_names::WRITE_FILE, &args, &base_s);
+        let text = text_of(&r);
+        assert!(text.contains("✓ 写入"), "应写入成功: {text}");
+        assert_eq!(fs::read_to_string(base.join("a.txt")).unwrap(), "NEW");
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    /// Creating a new file ignores expect_hash (there is nothing to compare against).
+    #[test]
+    fn write_file_expect_hash_new_file_skips_validation() {
+        let base = fresh_base("expect-new");
+        let base_s = base.to_string_lossy().to_string();
+        let args =
+            serde_json::json!({"path": "n.txt", "content": "first", "expect_hash": "whatever"});
+        let r = execute_file_tool(tool_names::WRITE_FILE, &args, &base_s);
+        assert!(text_of(&r).contains("✓ 写入"));
+        assert_eq!(fs::read_to_string(base.join("n.txt")).unwrap(), "first");
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    /// Atomic replace leaves no `.aio-tmp-*` residue behind, for both create and overwrite.
+    #[test]
+    fn atomic_write_leaves_no_temp_files() {
+        let base = fresh_base("atomic");
+        let base_s = base.to_string_lossy().to_string();
+        execute_file_tool(
+            tool_names::WRITE_FILE,
+            &serde_json::json!({"path": "sub/dir/f.txt", "content": "v1"}),
+            &base_s,
+        );
+        execute_file_tool(
+            tool_names::WRITE_FILE,
+            &serde_json::json!({"path": "sub/dir/f.txt", "content": "v2"}),
+            &base_s,
+        );
+        execute_file_tool(
+            tool_names::REPLACE_IN_FILE,
+            &serde_json::json!({"path": "sub/dir/f.txt", "old_string": "v2", "new_string": "v3"}),
+            &base_s,
+        );
+        assert_eq!(
+            fs::read_to_string(base.join("sub/dir/f.txt")).unwrap(),
+            "v3"
+        );
+        for e in fs::read_dir(base.join("sub/dir")).unwrap().flatten() {
+            let name = e.file_name().to_string_lossy().to_string();
+            assert!(!name.starts_with(".aio-tmp-"), "不应残留临时文件: {name}");
+        }
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    /// replace_in_file exact-match mode still works through the atomic write path and
+    /// returns the new hash for chained hashline edits.
+    #[test]
+    fn replace_in_file_exact_match_replaces() {
+        let base = fresh_base("replace");
+        let base_s = base.to_string_lossy().to_string();
+        fs::write(base.join("r.txt"), "alpha\nbeta\ngamma\n").unwrap();
+        let args = serde_json::json!({"path": "r.txt", "old_string": "beta", "new_string": "BETA"});
+        let r = execute_file_tool(tool_names::REPLACE_IN_FILE, &args, &base_s);
+        let text = text_of(&r);
+        assert!(text.contains("✓ 替换"), "应替换成功: {text}");
+        assert!(text.contains("[HASH sha256:"), "应返回新哈希: {text}");
+        assert_eq!(
+            fs::read_to_string(base.join("r.txt")).unwrap(),
+            "alpha\nBETA\ngamma\n"
+        );
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    /// Regression (harness round 10, test 3 closure): max_lines=-1 lifts ONLY the
+    /// line cap — the default 32KB byte cap still truncates; passing max_bytes=-1
+    /// as well returns the full file. The live round-10 probe couldn't verify
+    /// this (its test file was only 7.2KB); this closes it decisively.
+    #[test]
+    fn read_file_minus_one_byte_cap_semantics() {
+        let base = fresh_base("bytecap");
+        let base_s = base.to_string_lossy().to_string();
+        // ~44KB body: exceeds the 32KB default byte cap, far under the 1MB hard cap
+        let body = "0123456789abcdef\n".repeat(2600);
+        fs::write(base.join("big.txt"), &body).unwrap();
+        let total_lines = body.lines().count();
+
+        // max_lines=-1 alone: byte cap still applies -> a truncation marker appears
+        let r = execute_file_tool(
+            tool_names::READ_FILE,
+            &serde_json::json!({"path": "big.txt", "max_lines": -1}),
+            &base_s,
+        );
+        let text = text_of(&r);
+        assert!(
+            text.contains("已省略") || text.contains("已截断"),
+            "仅解除行数上限时 32KB 字节截断应生效"
+        );
+
+        // max_lines=-1 + max_bytes=-1: full body, no truncation marker
+        let r = execute_file_tool(
+            tool_names::READ_FILE,
+            &serde_json::json!({"path": "big.txt", "max_lines": -1, "max_bytes": -1}),
+            &base_s,
+        );
+        let text = text_of(&r);
+        assert!(
+            !text.contains("已省略") && !text.contains("已截断") && !text.contains("文件过大"),
+            "双 -1 应解除字节截断"
+        );
+        assert!(
+            text.contains(&format!("{total_lines}| ")),
+            "应包含最后一行（第 {total_lines} 行），证明返回全文"
+        );
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    /// Regression (harness round 9, P0-3): a MISSING `content` key used to fall
+    /// through unwrap_or("") and silently truncate the target to 0 bytes (the
+    /// tester emptied README.md this way). Now: missing → hard error; explicit
+    /// empty string over a non-empty file → requires expect_hash; explicit empty
+    /// on a NEW file stays allowed (round-8 empty-file case).
+    #[test]
+    fn write_file_missing_content_and_empty_overwrite_guards() {
+        let base = fresh_base("p03");
+        let base_s = base.to_string_lossy().to_string();
+        fs::write(base.join("readme.md"), "line1\nline2\n").unwrap();
+
+        // 1) Missing content → error, file untouched
+        let r = execute_file_tool(
+            tool_names::WRITE_FILE,
+            &serde_json::json!({"path": "readme.md"}),
+            &base_s,
+        );
+        let text = text_of(&r);
+        assert!(
+            r.is_error && text.contains("缺少 content"),
+            "漏传 content 必须报错: {text}"
+        );
+        assert_eq!(
+            fs::read_to_string(base.join("readme.md")).unwrap(),
+            "line1\nline2\n",
+            "文件必须原样保留"
+        );
+
+        // 2) Explicit empty content over a NON-EMPTY file without expect_hash → error
+        let r = execute_file_tool(
+            tool_names::WRITE_FILE,
+            &serde_json::json!({"path": "readme.md", "content": ""}),
+            &base_s,
+        );
+        let text = text_of(&r);
+        assert!(
+            r.is_error && text.contains("空内容覆盖非空文件"),
+            "空覆盖非空文件必须要求 expect_hash: {text}"
+        );
+        assert_eq!(
+            fs::read_to_string(base.join("readme.md")).unwrap(),
+            "line1\nline2\n"
+        );
+
+        // 3) Explicit empty + correct expect_hash → allowed (intentional truncate)
+        let hash = super::sha256_hex(b"line1\nline2\n");
+        let r = execute_file_tool(
+            tool_names::WRITE_FILE,
+            &serde_json::json!({"path": "readme.md", "content": "", "expect_hash": hash}),
+            &base_s,
+        );
+        assert!(
+            !r.is_error,
+            "带 expect_hash 的显式清空应放行: {}",
+            text_of(&r)
+        );
+        assert_eq!(fs::read_to_string(base.join("readme.md")).unwrap(), "");
+
+        // 4) Explicit empty on a NEW file → allowed (round-8 case)
+        let r = execute_file_tool(
+            tool_names::WRITE_FILE,
+            &serde_json::json!({"path": "fresh_empty.txt", "content": ""}),
+            &base_s,
+        );
+        assert!(!r.is_error, "新建空文件应放行: {}", text_of(&r));
+        assert!(base.join("fresh_empty.txt").exists());
+
+        // 5) Non-string content type → error
+        let r = execute_file_tool(
+            tool_names::WRITE_FILE,
+            &serde_json::json!({"path": "readme.md", "content": 42}),
+            &base_s,
+        );
+        assert!(r.is_error && text_of(&r).contains("必须是字符串"));
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    /// Regression (harness round 9): max_lines/max_bytes below -1 used to be
+    /// silently treated as unlimited — now rejected loudly.
+    #[test]
+    fn read_file_rejects_below_minus_one_limits() {
+        let base = fresh_base("neglimit");
+        let base_s = base.to_string_lossy().to_string();
+        fs::write(base.join("f.txt"), "x\ny\n").unwrap();
+        for arg in ["max_lines", "max_bytes"] {
+            let r = execute_file_tool(
+                tool_names::READ_FILE,
+                &serde_json::json!({"path": "f.txt", arg: -5}),
+                &base_s,
+            );
+            let text = text_of(&r);
+            assert!(
+                r.is_error && text.contains("无效"),
+                "{arg}=-5 应报错: {text}"
+            );
+        }
+        // -1 stays valid for both
+        let r = execute_file_tool(
+            tool_names::READ_FILE,
+            &serde_json::json!({"path": "f.txt", "max_lines": -1, "max_bytes": -1}),
+            &base_s,
+        );
+        assert!(!r.is_error, "-1 应保持合法: {}", text_of(&r));
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    /// Regression (harness round 4, tool-stability incident): an old_string that
+    /// STARTS with a multi-byte UTF-8 char (any CJK text) used to panic the file
+    /// tool thread — the match-count loop stepped the cursor by +1 BYTE, so the
+    /// next `content[pos..]` slice landed mid-character. The writer subagent hit
+    /// this appending a Chinese chapter and had to fall back to line-range mode.
+    #[test]
+    fn replace_in_file_cjk_old_string_does_not_panic() {
+        let base = fresh_base("replace-cjk");
+        let base_s = base.to_string_lossy().to_string();
+        // Exact reproduction: single match of a CJK-leading old_string (the second
+        // loop iteration used to slice at match_start+1 = mid-character).
+        fs::write(base.join("c.txt"), "前文\n拒绝访问\n后文\n").unwrap();
+        let args = serde_json::json!({
+            "path": "c.txt",
+            "old_string": "拒绝访问",
+            "new_string": "访问被拒"
+        });
+        let r = execute_file_tool(tool_names::REPLACE_IN_FILE, &args, &base_s);
+        let text = text_of(&r);
+        assert!(
+            text.contains("✓ 替换"),
+            "中文 old_string 应正常替换: {text}"
+        );
+        assert_eq!(
+            fs::read_to_string(base.join("c.txt")).unwrap(),
+            "前文\n访问被拒\n后文\n"
+        );
+
+        // Append-by-replacement (the writer's exact scenario): old_string is the
+        // CJK file tail, new_string = tail + new chapter.
+        fs::write(base.join("a.txt"), "标题\n（完整清单见附录）\n").unwrap();
+        let args = serde_json::json!({
+            "path": "a.txt",
+            "old_string": "（完整清单见附录）",
+            "new_string": "（完整清单见附录）\n## 7. 新章节\n新增内容。"
+        });
+        let r = execute_file_tool(tool_names::REPLACE_IN_FILE, &args, &base_s);
+        assert!(text_of(&r).contains("✓ 替换"), "中文追加替换不应 panic");
+        assert!(fs::read_to_string(base.join("a.txt"))
+            .unwrap()
+            .contains("## 7. 新章节"));
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    /// Non-overlapping match semantics (str::matches): the historic +1 byte step
+    /// counted "aa" in "aaaa" as 3 occurrences; the whole-match step counts 2.
+    #[test]
+    fn replace_in_file_counts_non_overlapping_matches() {
+        let base = fresh_base("replace-overlap");
+        let base_s = base.to_string_lossy().to_string();
+        fs::write(base.join("o.txt"), "xaaaaax\n").unwrap();
+        let args = serde_json::json!({"path": "o.txt", "old_string": "aa", "new_string": "bb"});
+        let r = execute_file_tool(tool_names::REPLACE_IN_FILE, &args, &base_s);
+        let text = text_of(&r);
+        assert!(
+            text.contains("出现了 2 次"),
+            "非重叠语义应计 2 处（不是 3 处）: {text}"
+        );
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    /// Regression (P0-2): read_file's [HASH] must be the digest of the COMPLETE file —
+    /// files > 1MB must remain editable through anchor_hash (the digest previously
+    /// covered only the first MAX_R bytes, making cross-writer edits a permanent
+    /// mismatch-retry loop).
+    #[test]
+    fn read_file_hash_covers_files_over_one_mb() {
+        let base = fresh_base("big-hash");
+        let base_s = base.to_string_lossy().to_string();
+        // 1.2MB body: > MAX_R (1MB) but < MAX_W (5MB), so write_file/replace_in_file accept it
+        let body = format!("{}UNIQUE_MARKER", "a".repeat(1_199_990));
+        fs::write(base.join("big.txt"), &body).unwrap();
+
+        let r = execute_file_tool(
+            tool_names::READ_FILE,
+            &serde_json::json!({"path": "big.txt", "max_bytes": 1024, "with_hash": true}),
+            &base_s,
+        );
+        let text = text_of(&r);
+        let expected = super::sha256_hex(body.as_bytes());
+        assert!(
+            text.contains(&format!("[HASH sha256:{expected}]")),
+            "返回的摘要必须覆盖完整文件: {text}"
+        );
+
+        // anchor_hash validation uses the full-content digest — must pass with the read hash
+        let r = execute_file_tool(
+            tool_names::REPLACE_IN_FILE,
+            &serde_json::json!({"path": "big.txt", "old_string": "UNIQUE_MARKER", "new_string": "REPLACED", "anchor_hash": expected}),
+            &base_s,
+        );
+        let text = text_of(&r);
+        assert!(
+            text.contains("✓ 替换"),
+            "大文件 anchor_hash 应校验通过: {text}"
+        );
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    /// Perf regression: the multi-match scan must stay linear on large files — an
+    /// old_string matching ~every position of a 1.2MB file must resolve quickly as a
+    /// capped multi-match error instead of re-scanning the prefix per match (quadratic).
+    #[test]
+    fn multi_match_scan_stays_linear_on_large_files() {
+        let base = fresh_base("multimatch");
+        let base_s = base.to_string_lossy().to_string();
+        let body = "a".repeat(1_200_000);
+        fs::write(base.join("many.txt"), &body).unwrap();
+
+        let start = std::time::Instant::now();
+        let r = execute_file_tool(
+            tool_names::REPLACE_IN_FILE,
+            &serde_json::json!({"path": "many.txt", "old_string": "aaa", "new_string": "bbb"}),
+            &base_s,
+        );
+        let text = text_of(&r);
+        // Non-overlapping match semantics (str::matches): "aaa" in 1.2M "a"s = 400,000
+        // occurrences. (The historic +1 byte-step counted 1,199,998 overlapping
+        // matches — the overlap semantics fix in the CJK-boundary patch changed this.)
+        assert!(
+            text.contains("出现了") && text.contains("共 400000 处"),
+            "应报多匹配错误（含总数）: {text}"
+        );
+        assert!(text.matches(" 1").count() < 40, "列出的匹配行号必须截断");
+        assert!(
+            start.elapsed() < std::time::Duration::from_secs(10),
+            "扫描必须保持线性（实际 {:?}）",
+            start.elapsed()
+        );
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    /// Regression (P1-4): an edit must preserve the target's mode bits on Unix (the
+    /// executable flag) — the tmp+rename swap used to reset them to the default mode.
+    /// Windows carries only the readonly flag in fs::permissions (copying it would block
+    /// the swap entirely); there the write itself is the smoke assertion.
+    #[test]
+    fn atomic_write_preserves_permissions() {
+        let base = fresh_base("perm");
+        let base_s = base.to_string_lossy().to_string();
+        let target = base.join("script.sh");
+        fs::write(&target, "#!/bin/sh\necho v1\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&target, fs::Permissions::from_mode(0o755)).unwrap();
+        }
+
+        execute_file_tool(
+            tool_names::WRITE_FILE,
+            &serde_json::json!({"path": "script.sh", "content": "#!/bin/sh\necho v2\n"}),
+            &base_s,
+        );
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = fs::metadata(&target).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o755, "可执行位必须保留");
+            assert_eq!(
+                fs::read_to_string(&target).unwrap(),
+                "#!/bin/sh\necho v2\n",
+                "内容必须更新"
+            );
+        }
+        #[cfg(windows)]
+        {
+            assert_eq!(
+                fs::read_to_string(&target).unwrap(),
+                "#!/bin/sh\necho v2\n",
+                "写入必须成功"
+            );
+        }
         let _ = fs::remove_dir_all(&base);
     }
 }

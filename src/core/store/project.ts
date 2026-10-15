@@ -102,7 +102,7 @@ export const switchBranch = async (branchName: string): Promise<void> => {
     setGitBranch(branchName);
   } catch (e) {
     // On failure, surface the error via console or UI feedback.
-    console.error('切换分支失败:', e);
+    console.error('Failed to switch branch:', e);
     throw e; // rethrow so the caller handles display
   }
 };
@@ -118,7 +118,7 @@ export const initProjects = async () => {
       setCurrentProjectId(null);
     }
   } catch (e) {
-    console.warn('加载项目列表失败:', e);
+    console.warn('Failed to load project list:', e);
   }
 };
 

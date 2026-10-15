@@ -2,12 +2,16 @@ import { Component, createSignal, For, Show, onMount, untrack } from 'solid-js';
 import { listMcpTransports, saveMcpServerSecret } from '../../../core/api/mcp';
 import type { McpServerConfig, McpTransport, ToolSpec } from '../../../core/types/mcp';
 import { t } from '../../../core/i18n';
+import Dropdown from '../../../shared/components/Dropdown';
+import Checkbox from '../../../shared/components/Checkbox';
+import Icon from '../../../shared/components/Icon';
 import {
   btnBadge,
-  btnDanger,
-  btnPrimarySm,
+  btnDangerOutline,
+  btnPrimaryOutlineSm,
   btnSecondarySm,
-  btnSuccess,
+  btnSuccessOutline,
+  btnWarnOutline,
 } from '../../../shared/components/buttonStyles';
 
 interface Props {
@@ -39,6 +43,21 @@ const McpServerDetail: Component<Props> = (props) => {
         // Keep the built-in transport choices when discovery is unavailable.
       });
   });
+
+  // Transport dropdown options: registered transports (discovery may lag) plus the
+  // config's current transport, so an existing streamable_http entry still renders.
+  const TRANSPORT_LABELS: Record<string, () => string> = {
+    stdio: () => t('mcp.detail.transportStdio'),
+    http: () => t('mcp.detail.transportHttp'),
+    streamable_http: () => t('mcp.detail.transportStreamable'),
+  };
+  const transportOptions = () => {
+    const registered = transports();
+    const current = config().transport.transport as string;
+    return Object.keys(TRANSPORT_LABELS)
+      .filter((id) => registered.includes(id) || id === current)
+      .map((id) => ({ value: id as McpTransport['transport'], label: TRANSPORT_LABELS[id]() }));
+  };
 
   const updateField = <K extends keyof McpServerConfig>(key: K, value: McpServerConfig[K]) => {
     setConfig({ ...config(), [key]: value });
@@ -82,6 +101,27 @@ const McpServerDetail: Component<Props> = (props) => {
     updateTransport({ ...t, env: newEnv });
   };
 
+  // Key names carry meaning (BRAVE_API_KEY / Authorization), so keys are editable:
+  // renaming rebuilds the map entry; collisions keep the old name (the controlled
+  // input snaps back).
+  const renameMapKey = (
+    obj: Record<string, string>,
+    oldKey: string,
+    newKey: string,
+  ): Record<string, string> => {
+    if (!newKey || newKey === oldKey || Object.prototype.hasOwnProperty.call(obj, newKey))
+      return obj;
+    return Object.fromEntries(
+      Object.entries(obj).map(([k, v]) => (k === oldKey ? [newKey, v] : [k, v])),
+    );
+  };
+
+  const renameEnvEntry = (oldKey: string, newKey: string) => {
+    const t = config().transport;
+    if (t.transport !== 'stdio') return;
+    updateTransport({ ...t, env: renameMapKey(t.env, oldKey, newKey) });
+  };
+
   const storeEnvSecret = async (key: string, value: string) => {
     if (!value || value.includes('${KEYRING:')) return;
     const placeholder = await saveMcpServerSecret(config().id, 'env', key, value);
@@ -89,6 +129,48 @@ const McpServerDetail: Component<Props> = (props) => {
     if (t.transport !== 'stdio') return;
     updateTransport({ ...t, env: { ...t.env, [key]: placeholder } });
     updateField('hasStoredSecret', true);
+  };
+
+  type HttpTransport = Extract<McpTransport, { transport: 'http' | 'streamable_http' }>;
+  const httpTransport = (): HttpTransport | null => {
+    const t = config().transport;
+    return t.transport === 'http' || t.transport === 'streamable_http' ? t : null;
+  };
+
+  const addHeaderEntry = () => {
+    const t = httpTransport();
+    if (!t) return;
+    const key = `X-Header-${Object.keys(t.headers).length + 1}`;
+    updateTransport({ ...t, headers: { ...t.headers, [key]: '' } });
+  };
+
+  const updateHeaderEntry = (key: string, value: string) => {
+    const t = httpTransport();
+    if (!t) return;
+    updateTransport({ ...t, headers: { ...t.headers, [key]: value } });
+  };
+
+  const renameHeaderEntry = (oldKey: string, newKey: string) => {
+    const t = httpTransport();
+    if (!t) return;
+    updateTransport({ ...t, headers: renameMapKey(t.headers, oldKey, newKey) });
+  };
+
+  const storeHeaderSecret = async (key: string, value: string) => {
+    if (!value || value.includes('${KEYRING:')) return;
+    const placeholder = await saveMcpServerSecret(config().id, 'header', key, value);
+    const t = httpTransport();
+    if (!t) return;
+    updateTransport({ ...t, headers: { ...t.headers, [key]: placeholder } });
+    updateField('hasStoredSecret', true);
+  };
+
+  const removeHeaderEntry = (key: string) => {
+    const t = httpTransport();
+    if (!t) return;
+    const headers = { ...t.headers };
+    delete headers[key];
+    updateTransport({ ...t, headers });
   };
 
   const removeEnvEntry = (key: string) => {
@@ -128,8 +210,7 @@ const McpServerDetail: Component<Props> = (props) => {
 
   return (
     <div
-      class="fixed inset-0 z-50 flex items-center justify-center p-6"
-      style={{ background: 'rgba(0,0,0,0.6)', 'backdrop-filter': 'blur(8px)' }}
+      class="fixed inset-0 z-50 flex items-center justify-center p-6 bg-black/25"
       onClick={(e) => {
         if (e.target === e.currentTarget) props.onCancel();
       }}
@@ -137,7 +218,8 @@ const McpServerDetail: Component<Props> = (props) => {
       <div
         class="w-[640px] max-w-full max-h-[90vh] overflow-y-auto rounded-xl p-6 flex flex-col gap-4"
         style={{
-          background: 'rgba(var(--surface-bg),0.95)',
+          background: 'var(--dialog-bg)',
+          'backdrop-filter': 'var(--popup-blur)',
           border: '1px solid var(--border-dim)',
         }}
       >
@@ -151,7 +233,7 @@ const McpServerDetail: Component<Props> = (props) => {
             {t('mcp.detail.name')}
           </label>
           <input
-            class="px-3 py-1.5 rounded text-sm outline-none"
+            class="px-3 py-1.5 rounded-lg text-sm outline-none"
             style={{
               background: 'rgba(0,0,0,0.3)',
               border: '1px solid var(--border-dim)',
@@ -163,27 +245,23 @@ const McpServerDetail: Component<Props> = (props) => {
           />
         </div>
         <div class="flex items-center gap-3">
-          <label class="flex items-center gap-2 text-sm cursor-pointer">
-            <input
-              type="checkbox"
-              checked={config().autoStart}
-              onChange={(e) => updateField('autoStart', e.currentTarget.checked)}
-            />
-            {t('mcp.detail.autoStart')}
-          </label>
+          <Checkbox
+            class="text-sm"
+            checked={config().autoStart}
+            onChange={(v) => updateField('autoStart', v)}
+            label={t('mcp.detail.autoStart')}
+          />
           <span class="text-xs" style={{ color: 'rgba(var(--text-base-rgb),0.4)' }}>
             {t('mcp.detail.autoStartHint')}
           </span>
         </div>
         <div class="flex items-center gap-3">
-          <label class="flex items-center gap-2 text-sm cursor-pointer">
-            <input
-              type="checkbox"
-              checked={config().trusted ?? false}
-              onChange={(e) => updateField('trusted', e.currentTarget.checked)}
-            />
-            {t('mcp.detail.trusted')}
-          </label>
+          <Checkbox
+            class="text-sm"
+            checked={config().trusted ?? false}
+            onChange={(v) => updateField('trusted', v)}
+            label={t('mcp.detail.trusted')}
+          />
           <span class="text-xs" style={{ color: 'rgba(var(--text-base-rgb),0.4)' }}>
             {t('mcp.detail.trustedHint')}
           </span>
@@ -194,32 +272,21 @@ const McpServerDetail: Component<Props> = (props) => {
           <label class="text-xs" style={{ color: 'rgba(var(--text-base-rgb),0.6)' }}>
             {t('mcp.detail.transport')}
           </label>
-          <select
-            class="px-3 py-1.5 rounded text-sm outline-none"
-            style={{
-              background: 'rgba(0,0,0,0.3)',
-              border: '1px solid var(--border-dim)',
-              color: 'white',
-            }}
+          <Dropdown
+            variant="ghost"
+            class="w-full"
             value={config().transport.transport}
-            onChange={(e) => {
-              const t = e.currentTarget.value as 'stdio' | 'http' | 'streamable_http';
-              if (t === 'stdio') {
+            onChange={(v) => {
+              if (v === 'stdio') {
                 updateTransport({ transport: 'stdio', command: 'npx', args: [], env: {} });
-              } else if (t === 'http') {
+              } else if (v === 'http') {
                 updateTransport({ transport: 'http', url: '', headers: {} });
               } else {
                 updateTransport({ transport: 'streamable_http', url: '', headers: {} });
               }
             }}
-          >
-            <Show when={transports().includes('stdio')}>
-              <option value="stdio">{t('mcp.detail.transportStdio')}</option>
-            </Show>
-            <Show when={transports().includes('http')}>
-              <option value="http">{t('mcp.detail.transportHttp')}</option>
-            </Show>
-          </select>
+            options={transportOptions()}
+          />
         </div>
 
         {/* stdio fields */}
@@ -233,7 +300,7 @@ const McpServerDetail: Component<Props> = (props) => {
                     {t('mcp.detail.command')}
                   </label>
                   <input
-                    class="px-3 py-1.5 rounded text-sm outline-none"
+                    class="px-3 py-1.5 rounded-lg text-sm outline-none"
                     style={{
                       background: 'rgba(0,0,0,0.3)',
                       border: '1px solid var(--border-dim)',
@@ -258,7 +325,7 @@ const McpServerDetail: Component<Props> = (props) => {
                     {(arg, idx) => (
                       <div class="flex items-center gap-1">
                         <input
-                          class="flex-1 px-3 py-1.5 rounded text-sm outline-none"
+                          class="flex-1 px-3 py-1.5 rounded-lg text-sm outline-none"
                           style={{
                             background: 'rgba(0,0,0,0.3)',
                             border: '1px solid var(--border-dim)',
@@ -267,8 +334,8 @@ const McpServerDetail: Component<Props> = (props) => {
                           value={arg}
                           onInput={(e) => updateStdioArg(idx(), e.currentTarget.value)}
                         />
-                        <button class={btnDanger} onClick={() => removeStdioArg(idx())}>
-                          ×
+                        <button class={btnDangerOutline} onClick={() => removeStdioArg(idx())}>
+                          <Icon name="x" size={12} />
                         </button>
                       </div>
                     )}
@@ -288,39 +355,53 @@ const McpServerDetail: Component<Props> = (props) => {
                     {([k, v]) => (
                       <div class="flex items-center gap-1">
                         <input
-                          class="w-1/3 px-2 py-1.5 rounded text-sm outline-none"
+                          class="w-1/3 px-2 py-1.5 rounded-lg text-sm outline-none"
                           style={{
                             background: 'rgba(0,0,0,0.3)',
                             border: '1px solid var(--border-dim)',
                             color: 'white',
                           }}
                           value={k}
-                          readonly
+                          onInput={(e) => renameEnvEntry(k, e.currentTarget.value)}
                         />
-                        <input
-                          class="flex-1 px-2 py-1.5 rounded text-sm outline-none"
-                          style={{
-                            background: 'rgba(0,0,0,0.3)',
-                            border: '1px solid var(--border-dim)',
-                            color: 'white',
-                          }}
-                          value={v.includes('${KEYRING:') ? t('mcp.detail.savedToKeychain') : v}
-                          onInput={(e) => updateEnvEntry(k, e.currentTarget.value)}
-                          placeholder={t('mcp.detail.envValuePlaceholder')}
-                        />
+                        <Show
+                          when={v.includes('${KEYRING:')}
+                          fallback={
+                            <input
+                              class="flex-1 px-2 py-1.5 rounded-lg text-sm outline-none"
+                              style={{
+                                background: 'rgba(0,0,0,0.3)',
+                                border: '1px solid var(--border-dim)',
+                                color: 'white',
+                              }}
+                              value={v}
+                              onInput={(e) => updateEnvEntry(k, e.currentTarget.value)}
+                              placeholder={t('mcp.detail.envValuePlaceholder')}
+                            />
+                          }
+                        >
+                          {/* FE-01: read-only keyring placeholder (title explains how to replace) */}
+                          <input
+                            class="flex-1 px-2 py-1.5 rounded-lg text-sm outline-none"
+                            style={{
+                              background: 'rgba(0,0,0,0.3)',
+                              border: '1px solid var(--border-dim)',
+                              color: 'rgba(var(--text-base-rgb),0.55)',
+                            }}
+                            value={t('mcp.detail.savedToKeychain')}
+                            readonly
+                            title={t('mcp.detail.keyringReadOnlyTitle')}
+                          />
+                        </Show>
                         <button
-                          class="px-2 py-1 rounded text-xs whitespace-nowrap"
-                          style={{
-                            background: 'rgba(255,180,77,0.15)',
-                            color: 'rgba(255,200,120,0.95)',
-                          }}
+                          class={btnWarnOutline}
                           title={t('mcp.detail.saveToKeychainTitle')}
                           onClick={() => void storeEnvSecret(k, v)}
                         >
                           {t('mcp.detail.saveToKeychain')}
                         </button>
-                        <button class={btnDanger} onClick={() => removeEnvEntry(k)}>
-                          ×
+                        <button class={btnDangerOutline} onClick={() => removeEnvEntry(k)}>
+                          <Icon name="x" size={12} />
                         </button>
                       </div>
                     )}
@@ -350,7 +431,7 @@ const McpServerDetail: Component<Props> = (props) => {
                   URL
                 </label>
                 <input
-                  class="px-3 py-1.5 rounded text-sm outline-none"
+                  class="px-3 py-1.5 rounded-lg text-sm outline-none"
                   style={{
                     background: 'rgba(0,0,0,0.3)',
                     border: '1px solid var(--border-dim)',
@@ -376,9 +457,93 @@ const McpServerDetail: Component<Props> = (props) => {
           })()}
         </Show>
 
+        {/* http headers (credentials live here — secrets go to the keyring) */}
+        <Show
+          when={
+            config().transport.transport === 'http' ||
+            config().transport.transport === 'streamable_http'
+          }
+        >
+          {(() => {
+            const trans = () =>
+              config().transport as Extract<
+                McpTransport,
+                { transport: 'http' | 'streamable_http' }
+              >;
+            return (
+              <div class="flex flex-col gap-1">
+                <label
+                  class="text-xs flex items-center justify-between"
+                  style={{ color: 'rgba(var(--text-base-rgb),0.6)' }}
+                >
+                  {t('mcp.detail.headers')}
+                  <button class={btnBadge} onClick={addHeaderEntry}>
+                    {t('mcp.detail.add')}
+                  </button>
+                </label>
+                <For each={Object.entries(trans().headers)}>
+                  {([k, v]) => (
+                    <div class="flex items-center gap-1">
+                      <input
+                        class="w-1/3 px-2 py-1.5 rounded-lg text-sm outline-none"
+                        style={{
+                          background: 'rgba(0,0,0,0.3)',
+                          border: '1px solid var(--border-dim)',
+                          color: 'white',
+                        }}
+                        value={k}
+                        placeholder={t('mcp.detail.headerNamePlaceholder')}
+                        onInput={(e) => renameHeaderEntry(k, e.currentTarget.value)}
+                      />
+                      <Show
+                        when={v.includes('${KEYRING:')}
+                        fallback={
+                          <input
+                            class="flex-1 px-2 py-1.5 rounded-lg text-sm outline-none"
+                            style={{
+                              background: 'rgba(0,0,0,0.3)',
+                              border: '1px solid var(--border-dim)',
+                              color: 'white',
+                            }}
+                            value={v}
+                            onInput={(e) => updateHeaderEntry(k, e.currentTarget.value)}
+                            placeholder={t('mcp.detail.envValuePlaceholder')}
+                          />
+                        }
+                      >
+                        <input
+                          class="flex-1 px-2 py-1.5 rounded-lg text-sm outline-none"
+                          style={{
+                            background: 'rgba(0,0,0,0.3)',
+                            border: '1px solid var(--border-dim)',
+                            color: 'rgba(var(--text-base-rgb),0.55)',
+                          }}
+                          value={t('mcp.detail.savedToKeychain')}
+                          readonly
+                          title={t('mcp.detail.keyringReadOnlyTitle')}
+                        />
+                      </Show>
+                      <button
+                        class={btnWarnOutline}
+                        title={t('mcp.detail.saveToKeychainTitle')}
+                        onClick={() => void storeHeaderSecret(k, v)}
+                      >
+                        {t('mcp.detail.saveToKeychain')}
+                      </button>
+                      <button class={btnDangerOutline} onClick={() => removeHeaderEntry(k)}>
+                        <Icon name="x" size={12} />
+                      </button>
+                    </div>
+                  )}
+                </For>
+              </div>
+            );
+          })()}
+        </Show>
+
         {/* Test connection */}
         <div class="flex items-center gap-2">
-          <button class={btnSuccess} disabled={testing()} onClick={handleTest}>
+          <button class={btnSuccessOutline} disabled={testing()} onClick={handleTest}>
             {testing() ? t('mcp.detail.testing') : t('mcp.detail.testConnection')}
           </button>
           <Show when={testResult()}>
@@ -428,19 +593,15 @@ const McpServerDetail: Component<Props> = (props) => {
             <div class="flex flex-col gap-1 max-h-40 overflow-y-auto">
               <For each={availableTools()}>
                 {(tool) => (
-                  <label
-                    class="flex items-start gap-2 text-xs px-2 py-1 rounded cursor-pointer"
+                  <Checkbox
+                    class="items-start gap-2 text-xs px-2 py-1 rounded"
                     style={{ background: 'rgba(var(--text-base-rgb),0.03)' }}
+                    checked={
+                      config().enabledTools.length === 0 ||
+                      config().enabledTools.includes(tool.function.name)
+                    }
+                    onChange={() => toggleTool(tool.function.name)}
                   >
-                    <input
-                      type="checkbox"
-                      checked={
-                        config().enabledTools.length === 0 ||
-                        config().enabledTools.includes(tool.function.name)
-                      }
-                      onChange={() => toggleTool(tool.function.name)}
-                      class="mt-0.5"
-                    />
                     <div class="flex-1 min-w-0">
                       <div class="font-mono" style={{ color: 'rgba(var(--text-base-rgb),0.85)' }}>
                         {tool.function.name}
@@ -449,7 +610,7 @@ const McpServerDetail: Component<Props> = (props) => {
                         {tool.function.description}
                       </div>
                     </div>
-                  </label>
+                  </Checkbox>
                 )}
               </For>
             </div>
@@ -461,7 +622,7 @@ const McpServerDetail: Component<Props> = (props) => {
           <button class={btnSecondarySm} onClick={() => props.onCancel()}>
             {t('common.cancel')}
           </button>
-          <button class={btnPrimarySm} onClick={() => props.onSave(config())}>
+          <button class={btnPrimaryOutlineSm} onClick={() => props.onSave(config())}>
             {t('common.save')}
           </button>
         </div>

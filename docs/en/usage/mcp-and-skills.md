@@ -23,6 +23,16 @@ The settings page supports viewing, starting/stopping, testing, deleting, and ed
 
 A hidden `__aio-filesystem__` configuration is automatically written when creating a new project. The current implementation executes its tool names using built-in file tools, does not depend on external MCP sub-processes, but is still subject to project root and permission rule restrictions.
 
+## Project-level config and trust
+
+A project repository may ship its own `.aio/mcp-servers.json` (same structure as the global config; same-id servers override the global ones). Because repository content is untrusted, project-level servers **never auto-start** by default:
+
+- Opening/switching a project shows a confirmation prompt that fully discloses the command, arguments, environment, or URL before connecting;
+- The confirmation is stored in the app data directory (outside the repository) and bound to a config fingerprint — changing command / args / env / URL / headers in the repo revokes trust automatically and re-confirmation is required;
+- The backend `start_mcp_server` refuses untrusted project-level configs outright (defense in depth, never relying on the frontend alone);
+- "Skip" applies to the current session only; the prompt returns on the next app start;
+- Prefer ignoring experimental configs via the repository's `.gitignore` to avoid committing files that carry secret placeholders.
+
 ## stdio Configuration Example
 
 The following structure shows non-sensitive fields in `mcp-servers.json`:
@@ -83,9 +93,11 @@ The Catalog page reads the official MCP Registry:
 2. Selects available delivery methods among npm, PyPI, HTTP, or Streamable HTTP;
 3. Collects required parameters and secrets;
 4. Writes secrets to the system credential store and placeholders to the configuration;
-5. Saves to the current global or project scope, with auto-start enabled by default.
+5. Picks the install scope (default **global**; with an active project you may pick "Project" — written to the project's `.aio/mcp-servers.json` with trust recorded), then auto-starts by default.
 
-Catalog results are cached in `mcp-registry-cache.json`. Before installing a third-party server, check the publisher, actual command, environment variables, and accessible scope.
+Editing an existing server saves it in place (a global entry stays global, a project entry stays project) — an open project never pulls a global config into the repo; deleting a server removes it from both the project and global layers, cleans its keyring secrets and the project trust marker. A "Project" badge marks project-scoped entries in the installed list.
+
+On opening, the market downloads the full official registry once and caches it in `mcp-registry-cache.json` (6h TTL); typing in the search box filters the full table locally (name/description) with zero network round-trips, and the refresh button re-downloads the table. Before installing a third-party server, check the publisher, actual command, environment variables, and accessible scope.
 
 ## Tool Permissions and Approval
 
@@ -157,7 +169,7 @@ Availability depends on the capabilities declared by the server. If a server doe
 - Downloaded global or project Skills;
 - Skills discovered and imported from NPX packages.
 
-The marketplace supports category, popular, and trending browsing, with a 6-hour cache. Project Skills are saved in `.aio/skills.json`, global Skills in the application data directory. After downloading or importing, they must also be enabled in the corresponding assistant or project settings before their content is injected into conversations.
+The marketplace supports category, popular, and trending browsing, with a 6-hour cache. Typing in the search box queries the **full skills.sh catalog** through its search API (300ms debounce) — results are no longer limited to the charted pages. Project Skills are saved in `.aio/skills.json`, global Skills in the application data directory. After downloading or importing, they must also be enabled in the corresponding assistant or project settings before their content is injected into conversations.
 
 ## Project Files
 

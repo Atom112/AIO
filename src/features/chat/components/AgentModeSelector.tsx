@@ -2,10 +2,11 @@
  * Agent mode quick selector
  *
  * Sits between the model selector and the reasoning button in the chat input; opens a pull-up menu to choose the working mode.
- * Modes: chat (tool calls off), normal (write confirmation), auto (autonomous execution), plan (plan first).
+ * Modes: 只读 (read-only), 工作区内修改 (workspace edits), 完全权限 (full autonomy inherent), 计划 (plan first).
  * Switching to an Agent mode auto-restores the last working directory; if none exists, a "choose directory" button lets the user pick or create one.
  */
 import { Component, For, Show, createSignal, onCleanup, onMount } from 'solid-js';
+import { Portal } from 'solid-js/web';
 import {
   datas,
   setDatas,
@@ -37,19 +38,25 @@ const MODES: ModeOption[] = [
     value: 'off',
     labelKey: 'agent.mode.chat',
     descKey: 'agent.mode.chatDescription',
-    icon: 'chat',
+    icon: 'eye',
   },
   {
     value: 'normal',
     labelKey: 'agent.mode.normal',
     descKey: 'agent.mode.normalDescription',
-    icon: 'check-circle',
+    icon: 'wrench',
   },
   {
     value: 'auto',
     labelKey: 'agent.mode.auto',
     descKey: 'agent.mode.autoDescription',
-    icon: 'refresh',
+    icon: 'zap',
+  },
+  {
+    value: 'danger',
+    labelKey: 'agent.mode.danger',
+    descKey: 'agent.mode.dangerDescription',
+    icon: 'alert-triangle',
   },
   {
     value: 'plan',
@@ -57,20 +64,31 @@ const MODES: ModeOption[] = [
     descKey: 'agent.mode.planDescription',
     icon: 'document',
   },
-  {
-    value: 'workflow',
-    labelKey: 'agent.mode.workflow',
-    descKey: 'agent.mode.workflowDescription',
-    icon: 'layers',
-  },
 ];
 
 const MODE_COLORS: Record<string, string> = {
   off: 'rgba(var(--primary-rgb),0.4)',
   normal: 'rgba(124,217,160,0.7)',
   auto: 'rgba(224,192,96,0.7)',
+  danger: 'rgba(224,96,96,0.8)',
   plan: 'rgba(160,124,217,0.7)',
-  workflow: 'rgba(255,183,77,0.7)',
+};
+
+/** Per-mode risk-dialog copy keys (auto and danger each have their own warning). */
+const WARNING_KEYS: Record<
+  'auto' | 'danger',
+  { primary: TranslationKey; details: TranslationKey; trust: TranslationKey }
+> = {
+  auto: {
+    primary: 'agent.mode.warningPrimary',
+    details: 'agent.mode.warningDetails',
+    trust: 'agent.mode.warningTrust',
+  },
+  danger: {
+    primary: 'agent.mode.dangerWarningPrimary',
+    details: 'agent.mode.dangerWarningDetails',
+    trust: 'agent.mode.dangerWarningTrust',
+  },
 };
 
 const AgentModeSelector: Component = () => {
@@ -78,7 +96,8 @@ const AgentModeSelector: Component = () => {
   const [showAutoWarning, setShowAutoWarning] = createSignal(false);
   let containerRef: HTMLDivElement | undefined;
   let autoModeConfirmed = false; // remembered for the session; after one confirmation the dialog no longer shows
-  let pendingMode: AgentMode = 'auto'; // mode currently awaiting confirmation
+  let dangerModeConfirmed = false; // 本机全权档的独立会话内一次确认（警示更强）
+  const [pendingMode, setPendingMode] = createSignal<AgentMode>('auto'); // mode currently awaiting confirmation
 
   const asst = () => datas.assistants.find((a) => a.id === currentAssistantId()) as any;
   const currentMode = (): AgentMode => asst()?.agentMode || 'off';
@@ -96,9 +115,12 @@ const AgentModeSelector: Component = () => {
   onMount(() => document.addEventListener('mousedown', onDocClick));
   onCleanup(() => document.removeEventListener('mousedown', onDocClick));
   const choose = async (mode: AgentMode) => {
-    // When switching to auto or workflow mode, show the risk warning dialog first
-    if ((mode === 'auto' || mode === 'workflow') && !autoModeConfirmed) {
-      pendingMode = mode;
+    // Switching to 完全权限 (auto) or 本机全权 (danger = sandbox disabled entirely)
+    // shows the mode-specific risk dialog first (session-once per mode)
+    const needsConfirm =
+      (mode === 'auto' && !autoModeConfirmed) || (mode === 'danger' && !dangerModeConfirmed);
+    if (needsConfirm) {
+      setPendingMode(mode);
       setOpen(false);
       setShowAutoWarning(true);
       return;
@@ -162,11 +184,11 @@ const AgentModeSelector: Component = () => {
 
       {/* Dropdown panel */}
       <div
-        class="absolute bottom-full left-0 mb-2 z-[41] w-[260px] rounded-xl overflow-hidden transition-all duration-150 ease-out origin-bottom"
+        class="absolute bottom-full left-0 mb-2 z-[41] w-[190px] rounded-xl overflow-hidden transition-all duration-150 ease-out origin-bottom"
         style={{
-          background: 'rgba(var(--surface-bg),0.96)',
+          background: 'var(--popup-bg)',
           border: '1px solid var(--border-dim)',
-          'backdrop-filter': 'blur(10px)',
+          'backdrop-filter': 'var(--popup-blur)',
           'box-shadow': '0 -8px 30px rgba(0,0,0,0.4)',
         }}
         classList={{
@@ -190,7 +212,7 @@ const AgentModeSelector: Component = () => {
             {(opt) => (
               <button
                 type="button"
-                class="w-full flex items-start gap-2.5 px-3 py-2.5 text-left transition-colors cursor-pointer border-none"
+                class="w-full flex items-center gap-2.5 px-3 py-2 text-left transition-colors cursor-pointer border-none"
                 style={{ color: 'rgba(var(--text-base-rgb),0.75)' }}
                 classList={{ '!bg-[rgba(var(--primary-rgb),0.12)]': currentMode() === opt.value }}
                 onClick={() => choose(opt.value)}
@@ -205,18 +227,10 @@ const AgentModeSelector: Component = () => {
                 <Icon
                   name={opt.icon}
                   size={14}
-                  class="mt-0.5 shrink-0"
+                  class="shrink-0"
                   style={{ color: MODE_COLORS[opt.value] }}
                 />
-                <div class="flex-1 min-w-0">
-                  <div class="text-sm font-medium">{t(opt.labelKey)}</div>
-                  <div
-                    class="text-[11px] mt-0.5"
-                    style={{ color: 'rgba(var(--text-base-rgb),0.35)' }}
-                  >
-                    {t(opt.descKey)}
-                  </div>
-                </div>
+                <div class="flex-1 min-w-0 text-sm font-medium">{t(opt.labelKey)}</div>
                 <Show when={currentMode() === opt.value}>
                   <Icon
                     name="check"
@@ -231,81 +245,108 @@ const AgentModeSelector: Component = () => {
         </div>
       </div>
 
-      {/* Auto mode risk warning dialog */}
+      {/* Auto / Danger mode risk warning dialog. Portal -> body: this component nests
+          under the acrylic chat-input ancestor (backdrop-filter); a nested
+          backdrop-filter only samples up to that backdrop root, so the blur no-ops and
+          the bare --dialog-bg tint lets background text show through (why the dialog
+          looked different from ProjectSettingsModal). Portaling to body restores the
+          same sampling as ProjectSettingsModal. */}
       <Show when={showAutoWarning()}>
-        <div
-          class="fixed inset-0 z-[2000] flex items-center justify-center bg-black/50 backdrop-blur-[12px]"
-          style={{ 'z-index': '2100', animation: 'modalOverlayIn 0.2s ease-out both' }}
-          onClick={() => setShowAutoWarning(false)}
-        >
+        <Portal>
           <div
-            class="bg-dark-500 p-6 rounded-lg max-w-[420px] w-full"
-            style={{
-              background: 'rgba(var(--surface-bg),0.96)',
-              border: '1px solid var(--border-dim)',
-              'backdrop-filter': 'blur(12px)',
-              'box-shadow': '0 8px 32px rgba(0,0,0,0.5)',
-              animation: 'modalPanelIn 0.25s cubic-bezier(0.16, 1, 0.3, 1) both',
-            }}
-            onClick={(e) => e.stopPropagation()}
+            class="fixed inset-0 z-[2000] flex items-center justify-center bg-black/25"
+            style={{ 'z-index': '2100', animation: 'modalOverlayIn 0.2s ease-out both' }}
+            onClick={() => setShowAutoWarning(false)}
           >
-            <div class="flex items-center gap-3 mb-4">
-              <Icon name="alert-triangle" size={24} />
-              <h2
-                style={{
-                  color: 'rgba(224,192,96,0.9)',
-                  'font-size': '1.1rem',
-                  'font-weight': '600',
-                  margin: '0',
-                }}
-              >
-                {t('agent.mode.warningTitle')}
-              </h2>
-            </div>
-
             <div
+              class="p-6 rounded-lg max-w-[420px] w-full"
               style={{
-                color: 'rgba(var(--text-base-rgb),0.7)',
-                'font-size': '0.875rem',
-                'line-height': '1.7',
-                'margin-bottom': '1.5rem',
+                background:
+                  'linear-gradient(rgba(var(--surface-bg), 0.96), rgba(var(--surface-bg), 0.96)), var(--dialog-bg)',
+                border: '1px solid var(--border-dim)',
+                'backdrop-filter': 'var(--popup-blur)',
+                animation: 'modalPanelIn 0.25s cubic-bezier(0.16, 1, 0.3, 1) both',
               }}
+              onClick={(e) => e.stopPropagation()}
             >
-              <p style={{ margin: '0 0 0.75rem 0' }}>{t('agent.mode.warningPrimary')}</p>
-              <p style={{ margin: '0 0 0.75rem 0' }}>{t('agent.mode.warningDetails')}</p>
-              <p style={{ margin: '0' }}>{t('agent.mode.warningTrust')}</p>
-            </div>
+              <div class="flex items-center gap-3 mb-4">
+                <Icon
+                  name="alert-triangle"
+                  size={24}
+                  style={{ color: pendingMode() === 'danger' ? 'rgba(224,96,96,0.9)' : undefined }}
+                />
+                <h2
+                  style={{
+                    color:
+                      pendingMode() === 'danger' ? 'rgba(224,96,96,0.95)' : 'rgba(224,192,96,0.9)',
+                    'font-size': '1.1rem',
+                    'font-weight': '600',
+                    margin: '0',
+                  }}
+                >
+                  {t('agent.mode.warningTitle')}
+                </h2>
+              </div>
 
-            <div class="flex justify-end gap-3">
-              <button type="button" class={btnSecondary} onClick={() => setShowAutoWarning(false)}>
-                {t('common.cancel')}
-              </button>
-              <button
-                type="button"
-                class="px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 cursor-pointer border-solid"
+              <div
                 style={{
-                  background: 'rgba(224,192,96,0.1)',
-                  color: 'rgba(224,192,96,0.95)',
-                  border: '1.5px solid rgba(224,192,96,0.5)',
-                }}
-                onClick={async () => {
-                  autoModeConfirmed = true;
-                  setShowAutoWarning(false);
-                  // Perform the actual mode switch
-                  await choose(pendingMode);
+                  color: 'rgba(var(--text-base-rgb),0.7)',
+                  'font-size': '0.875rem',
+                  'line-height': '1.7',
+                  'margin-bottom': '1.5rem',
                 }}
               >
-                {t('agent.mode.warningConfirm', {
-                  mode: t(
-                    (pendingMode as AgentMode) === 'workflow'
-                      ? 'agent.mode.workflow'
-                      : 'agent.mode.auto',
-                  ),
-                })}
-              </button>
+                <p style={{ margin: '0 0 0.75rem 0' }}>
+                  {t(WARNING_KEYS[pendingMode() as 'auto' | 'danger'].primary)}
+                </p>
+                <p style={{ margin: '0 0 0.75rem 0' }}>
+                  {t(WARNING_KEYS[pendingMode() as 'auto' | 'danger'].details)}
+                </p>
+                <p style={{ margin: '0' }}>
+                  {t(WARNING_KEYS[pendingMode() as 'auto' | 'danger'].trust)}
+                </p>
+              </div>
+
+              <div class="flex justify-end gap-3">
+                <button
+                  type="button"
+                  class={btnSecondary}
+                  onClick={() => setShowAutoWarning(false)}
+                >
+                  {t('common.cancel')}
+                </button>
+                <button
+                  type="button"
+                  class="px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 cursor-pointer border-solid"
+                  style={{
+                    background:
+                      pendingMode() === 'danger' ? 'rgba(224,96,96,0.1)' : 'rgba(224,192,96,0.1)',
+                    color:
+                      pendingMode() === 'danger' ? 'rgba(224,96,96,0.95)' : 'rgba(224,192,96,0.95)',
+                    border:
+                      pendingMode() === 'danger'
+                        ? '1.5px solid rgba(224,96,96,0.5)'
+                        : '1.5px solid rgba(224,192,96,0.5)',
+                  }}
+                  onClick={async () => {
+                    if (pendingMode() === 'danger') {
+                      dangerModeConfirmed = true;
+                    } else {
+                      autoModeConfirmed = true;
+                    }
+                    setShowAutoWarning(false);
+                    // Perform the actual mode switch
+                    await choose(pendingMode());
+                  }}
+                >
+                  {t('agent.mode.warningConfirm', {
+                    mode: t(pendingMode() === 'danger' ? 'agent.mode.danger' : 'agent.mode.auto'),
+                  })}
+                </button>
+              </div>
             </div>
           </div>
-        </div>
+        </Portal>
       </Show>
     </div>
   );

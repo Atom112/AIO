@@ -26,8 +26,24 @@ impl ProviderPlugin for OllamaProvider {
         // Claiming any localhost/127.0.0.1 would misclassify local OpenAI-compatible
         // endpoints (LM Studio, llama.cpp server, text-generation-webui) as Ollama
         // and send /api/tags to the wrong endpoint (local engines use the engine_type direct path).
-        let u = api_url.to_lowercase();
-        u.contains("11434") || u.contains("ollama")
+        // PROV-5: both tokens are now checked against the PARSED URL — the historic
+        // whole-string `contains` also matched "11434"/"ollama" anywhere in paths/queries.
+        let parsed = if api_url.contains("://") {
+            url::Url::parse(api_url)
+        } else {
+            url::Url::parse(&format!("https://{api_url}"))
+        };
+        match parsed {
+            Ok(u) => {
+                let port_is_ollama = u.port() == Some(11434);
+                let host_has_ollama = u
+                    .host_str()
+                    .map(|h| h.to_lowercase().contains("ollama"))
+                    .unwrap_or(false);
+                port_is_ollama || host_has_ollama
+            }
+            Err(_) => false,
+        }
     }
 
     fn models_url(&self, api_url: &str) -> String {
@@ -36,6 +52,12 @@ impl ProviderPlugin for OllamaProvider {
 
     fn apply_auth(&self, req: RequestBuilder, _api_key: &str) -> RequestBuilder {
         // Ollama has no auth
+        req
+    }
+
+    /// 阶段4 第5项（聊天路径统一出口）: no auth on the /v1 OpenAI-compat chat
+    /// endpoint either (the historic chat path sent a meaningless empty Bearer).
+    fn apply_chat_auth(&self, req: RequestBuilder, _api_key: &str) -> RequestBuilder {
         req
     }
 

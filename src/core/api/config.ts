@@ -5,6 +5,19 @@ import type { ActivatedModel, AppConfig } from '../store/types';
 /** Load the app config (the caller decides the fallback strategy on failure). */
 export const loadAppConfig = () => invoke<AppConfig>('load_app_config');
 
+/** FE-07: partial app-config patch (merged atomically backend-side in `patch_app_config`). */
+export interface AppConfigPatch {
+  maxToolRounds?: number;
+  maxConcurrentSubagents?: number;
+}
+
+/**
+ * Merge a partial app-config update in one backend call (load → merge → atomic save).
+ * Replaces the settings page's former load→modify→save round-trip per keystroke.
+ */
+export const patchAppConfig = (patch: AppConfigPatch) =>
+  invoke<AppConfig>('patch_app_config', { patch });
+
 /** Save the app config. */
 export const saveAppConfig = (config: AppConfig) =>
   invoke<void>('save_app_config', { config: config as unknown as Record<string, unknown> });

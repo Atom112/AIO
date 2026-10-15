@@ -2,7 +2,7 @@
 
 import type { MemoryEmbeddingConfig, MemoryRerankConfig } from '../types/memory';
 
-/** Agent workflow timeline step */
+/** Agent step-timeline entry (one per tool call / round in chronological order) */
 export interface AgentStep {
   id: string;
   type: 'thinking' | 'tool_call' | 'content' | 'subagent';
@@ -68,7 +68,7 @@ export interface Message {
   toolCalls?: ToolCallDisplay[]; // Tool calls issued by the model on role="assistant" messages (with frontend UI state/result/error)
   agentStartTime?: number; // Agent turn start timestamp (ms), used to compute working time
   interimContent?: string; // Accumulated interim-round summary text across multi-round agent runs
-  agentSteps?: AgentStep[]; // Agent workflow timeline, one entry per step in chronological order
+  agentSteps?: AgentStep[]; // Agent step timeline, one entry per step in chronological order
   inputTokens?: number; // Input token usage for this turn/message (accumulated across turns, for cost stats)
   outputTokens?: number; // Output token usage for this turn/message (accumulated across turns, for cost stats)
   contextTokens?: number; // Peak context tokens (input_tokens of the last API call), used for the context window progress bar
@@ -85,6 +85,8 @@ export interface ToolCallDisplay {
   function: { name: string; arguments: string };
   /** UI state: calling / success / error */
   state?: 'calling' | 'success' | 'error';
+  /** Plain-text tool result (display + message rebuild; truncated view of fullContent) */
+  content?: string;
   /** Structured result returned by the tool */
   result?: any;
   /** Error message (when state=error) */
@@ -153,22 +155,42 @@ export interface Topic {
   branchedFromMessageId?: string;
   /** Parent topic ID (for the topic tree structure) */
   parentTopicId?: string;
+  /**
+   * Compaction context boundary: the first N messages of `history` are condensed into
+   * `summary` and excluded from LLM requests (context = summary + history.slice(N)),
+   * while the full transcript stays visible in the message record (mainstream harness
+   * behavior: DSH shadows surface nodes, pi keeps raw entries). Absent = 0.
+   */
+  contextTrimCount?: number;
 }
 
-/** Agent execution mode */
-export type AgentMode = 'off' | 'normal' | 'auto' | 'plan' | 'workflow';
+/**
+ * Agent execution mode (wire values stable — persisted per assistant; the ladder):
+ * off = 只读 (read-only) · normal = 工作区内修改 (workspace edits) ·
+ * auto = 完全权限 (full autonomy inherent) · plan = 计划
+ */
+export type AgentMode = 'off' | 'normal' | 'auto' | 'danger' | 'plan';
 
 /**
  * Context compaction outcome (/compact or auto-triggered), so the UI can report accurately.
  * - compressed: summary persisted (overwrites topic.summary and trims history)
  * - archived: summary failed, fell back to local archive (readable via read_artifact)
- * - skipped: compaction not run (below auto threshold / preserve zone covers all history / nothing to compact)
+ * - skipped: compaction not run (below auto threshold / preserve zone covers all history / nothing to compact /
+ *   CHAT-2: topic switched mid-summarize or the trim would empty the history — persist aborted to protect data)
  * - failed: summary and archive both failed, history unchanged
  */
 export type CompactOutcome =
   | { kind: 'compressed'; summarizedCount: number; keptCount: number }
   | { kind: 'archived'; count: number }
-  | { kind: 'skipped'; reason: 'below-threshold' | 'short-history' | 'nothing-to-compact' }
+  | {
+      kind: 'skipped';
+      reason:
+        | 'below-threshold'
+        | 'short-history'
+        | 'nothing-to-compact'
+        | 'topic-switched'
+        | 'empty-result';
+    }
   | { kind: 'failed'; error: string };
 
 /* Assistant interface defining the AI assistant data structure */
@@ -243,9 +265,9 @@ export interface AppConfig {
   memoryConsolidateBudget: number;
   /** Launch the app at system startup (default off) */
   autoStartEnabled: boolean;
-  /** Max concurrent subagents (undefined = default 5) */
+  /** Max concurrent subagents (-1 = unlimited; 0 forbidden; undefined = default 5) */
   maxConcurrentSubagents?: number;
-  /** Max tool-call rounds per agent run (undefined = default) */
+  /** Max tool-call rounds per agent run (-1 = unlimited; 0 forbidden; undefined = default) */
   maxToolRounds?: number;
 }
 

@@ -58,7 +58,10 @@ export const saveProfileModelOverrides = async () => {
         profileId,
         modelId: model.model_id,
         apiUrl: model.api_url,
-        apiKey: model.api_key,
+        // FE-12: never persist the API key — the backend only needs profile → model
+        // identity on load; the live key is resolved fresh from the provider config
+        // at every turn (ChatPage passes resolvedOverrides with the current key).
+        apiKey: '',
       });
     }
   }

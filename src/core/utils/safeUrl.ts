@@ -12,11 +12,11 @@ export async function openSafeUrl(url?: string | null): Promise<void> {
   try {
     parsed = new URL(url);
   } catch {
-    console.warn('[openSafeUrl] 无法解析的 URL，已阻止:', url);
+    console.warn('[openSafeUrl] unparseable URL blocked:', url);
     return;
   }
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-    console.warn('[openSafeUrl] 已阻止非 http/https 链接:', parsed.protocol);
+    console.warn('[openSafeUrl] non-http/https link blocked:', parsed.protocol);
     return;
   }
   await openUrl(url);

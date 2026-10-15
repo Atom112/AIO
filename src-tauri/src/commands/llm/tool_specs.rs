@@ -1,6 +1,11 @@
 //! Agent skill/artifact read tool specs and execution (read_skill / read_artifact).
 
-use crate::commands::llm::*;
+// 阶段4 第1项（消 glob）：显式 use 取代原父模块 glob。
+use crate::core::models::{SkillConfig, ToolFunctionSpec, ToolResult, ToolSpec};
+use crate::utils::file_tools;
+use crate::utils::truncate::truncate_chars_head_tail;
+use tauri::Manager;
+
 use crate::ierr;
 use serde_json::json;
 use tauri::AppHandle;

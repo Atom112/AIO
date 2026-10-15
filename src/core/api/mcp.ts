@@ -4,6 +4,7 @@ import { invoke } from '@tauri-apps/api/core';
 import type {
   McpCatalogInstallRequest,
   McpCatalogPage,
+  McpCatalogServer,
   McpServerConfig,
   McpServerStatusInfo,
   ToolSpec,
@@ -12,6 +13,14 @@ import type {
 /** List MCP server configs (global list when projectId is empty). */
 export const listMcpServers = (projectId?: string | null) =>
   invoke<McpServerConfig[]>('list_mcp_servers', { projectId: projectId ?? null });
+
+/** List project-level servers that are not trusted yet (autoStart is blocked until confirmed). */
+export const listUntrustedProjectMcpServers = (projectId: string) =>
+  invoke<McpServerConfig[]>('list_untrusted_project_mcp_servers', { projectId });
+
+/** Mark a project-level server as trusted (records a config fingerprint; repo changes revoke it). */
+export const trustProjectMcpServer = (projectId: string, serverId: string) =>
+  invoke<McpServerConfig>('trust_project_mcp_server', { projectId, serverId });
 
 /** Start an MCP server and return its tool list. */
 export const startMcpServer = (id: string, projectId?: string | null) =>
@@ -48,6 +57,10 @@ export interface McpCatalogQuery {
 export const listMcpCatalog = (q: McpCatalogQuery) =>
   invoke<McpCatalogPage>('list_mcp_catalog', q as unknown as Record<string, unknown>);
 
+/** Fetch the full registry table (backend disk-caches it for 6h; forceRefresh re-downloads). The market page filters this locally for real-time search. */
+export const listMcpCatalogAll = (forceRefresh = false) =>
+  invoke<McpCatalogServer[]>('list_mcp_catalog_all', { forceRefresh });
+
 /** Remove an MCP server. */
 export const removeMcpServer = (id: string, projectId?: string | null) =>
   invoke<void>('remove_mcp_server', { id, projectId: projectId ?? null });
@@ -60,9 +73,16 @@ export const saveMcpServerSecret = (
   value: string,
 ) => invoke<string>('save_mcp_server_secret', { serverId, target, key, value });
 
-/** Respond to a tool approval (approved = allow once, false = deny; always='session' = session-level allow). */
-export const respondToolApproval = (approvalId: string, approved: boolean, always?: 'session') =>
-  invoke<void>('respond_tool_approval', { approvalId, approved, always });
+/**
+ * Respond to a tool approval (approved = allow once, false = deny).
+ * always='always' persists the derived allow rule into the project's .aio/permissions.json
+ * (session fallback when the call is not project-bound); always='session' is process-lifetime.
+ */
+export const respondToolApproval = (
+  approvalId: string,
+  approved: boolean,
+  always?: 'session' | 'always',
+) => invoke<void>('respond_tool_approval', { approvalId, approved, always });
 
 /** List available MCP transport types. */
 export const listMcpTransports = () => invoke<string[]>('list_mcp_transports');

@@ -19,6 +19,8 @@ use std::path::PathBuf;
 use std::time::Duration;
 use tauri::{Emitter, Manager};
 
+use crate::core::events as ev;
+
 use crate::ierr;
 
 const DEFAULT_CATALOG_URL: &str =
@@ -107,6 +109,21 @@ fn try_read(path: &PathBuf) -> Option<String> {
     }
 }
 
+/// PROV-12: a readable AppData cache is not necessarily a VALID one — a
+/// crash-truncated cache used to shadow the bundled catalog on every startup
+/// (readable-but-corrupt content was returned verbatim). Only a cache that
+/// parses AND carries the catalog shape (providers/models arrays) may serve;
+/// anything else falls through to the bundled resource.
+fn is_valid_catalog_json(content: &str) -> bool {
+    match serde_json::from_str::<serde_json::Value>(content) {
+        Ok(v) => {
+            v.get("providers").and_then(|p| p.as_array()).is_some()
+                && v.get("models").and_then(|m| m.as_array()).is_some()
+        }
+        Err(_) => false,
+    }
+}
+
 /// Load the currently effective catalog JSON (priority: AppData > Bundled > Dev > Empty)
 #[tauri::command]
 pub fn load_models_catalog(app: tauri::AppHandle) -> Result<String, String> {
@@ -115,18 +132,24 @@ pub fn load_models_catalog(app: tauri::AppHandle) -> Result<String, String> {
 }
 
 /// Load the currently effective catalog, with source metadata
+/// (priority: AppData cache — validated, corrupt entries are skipped (PROV-12) —
+/// then Bundled resource, then the dev checkout, then empty)
 #[tauri::command]
 pub fn load_models_catalog_full(app: tauri::AppHandle) -> Result<CatalogResponse, String> {
     if let Some(p) = appdata_catalog_path(&app) {
         if let Some(content) = try_read(&p) {
-            let (v, g, _, _) = parse_catalog_meta(&content);
-            return Ok(CatalogResponse {
-                source: CatalogSource::Appdata,
-                json: content,
-                path: Some(p.display().to_string()),
-                version: v,
-                generated_at: g,
-            });
+            // PROV-12: corrupt cache must never serve — fall through to bundled.
+            if is_valid_catalog_json(&content) {
+                let (v, g, _, _) = parse_catalog_meta(&content);
+                return Ok(CatalogResponse {
+                    source: CatalogSource::Appdata,
+                    json: content,
+                    path: Some(p.display().to_string()),
+                    version: v,
+                    generated_at: g,
+                });
+            }
+            tracing::warn!("[catalog] AppData 目录缓存损坏，已跳过并回退 bundled 目录（PROV-12）");
         }
     }
 
@@ -313,7 +336,7 @@ pub async fn update_models_catalog(
     let cached = appdata_catalog_path(&app)
         .ok_or_else(|| ierr!("无法获取 AppData 目录", "Failed to get AppData directory"))?;
 
-    fs::write(&cached, &body).map_err(|e| {
+    crate::core::fs_util::atomic_write(&cached, &body).map_err(|e| {
         ierr!(
             "写入 AppData 失败 ({}): {}",
             "Failed to write to AppData ({}): {}",
@@ -323,7 +346,7 @@ pub async fn update_models_catalog(
     })?;
 
     let _ = app.emit(
-        "models-catalog-updated",
+        ev::MODELS_CATALOG_UPDATED,
         serde_json::json!({
             "version": version,
             "modelCount": model_count,

@@ -26,9 +26,17 @@ use crate::utils::truncate::truncate_bytes_head as truncate_output;
 
 /// Runs a git command and returns stdout (stderr is returned as the error message on failure).
 /// Uses argument arrays; never builds shell strings.
-fn run_git(project_root: &str, args: &[&str]) -> Result<String, String> {
-    // Only the git binary is ever invoked
-    let output = Command::new("git")
+pub(crate) fn run_git(project_root: &str, args: &[&str]) -> Result<String, String> {
+    // SEC-06: resolve the git binary against PATH only. A bare `Command::new("git")`
+    // makes Windows CreateProcess search the project root (the command's cwd) BEFORE
+    // PATH, so a planted `git.exe` there would run instead of the real git.
+    let git = crate::utils::exec_resolve::resolve_executable("git").ok_or_else(|| {
+        ierr!(
+            "未在 PATH 中找到 git（无法安全解析 git 可执行文件）",
+            "git not found on PATH (cannot resolve the git executable safely)"
+        )
+    })?;
+    let output = Command::new(git)
         .args(args)
         .current_dir(project_root)
         .output()
@@ -60,7 +68,10 @@ fn run_git(project_root: &str, args: &[&str]) -> Result<String, String> {
 
 /// Checks whether the directory is a git repository
 pub(crate) fn is_git_repo(project_root: &str) -> bool {
-    Command::new("git")
+    let Some(git) = crate::utils::exec_resolve::resolve_executable("git") else {
+        return false;
+    };
+    Command::new(git)
         .args(["rev-parse", "--git-dir"])
         .current_dir(project_root)
         .stdout(std::process::Stdio::null())

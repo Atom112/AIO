@@ -18,30 +18,18 @@ struct AppConfigDisk {
     #[serde(default, rename = "autoStartEnabled")]
     auto_start_enabled: bool,
     #[serde(default = "default_max_tool_rounds", rename = "maxToolRounds")]
-    max_tool_rounds: u32,
+    max_tool_rounds: i32,
     #[serde(
         default = "default_max_concurrent_subagents",
         rename = "maxConcurrentSubagents"
     )]
-    max_concurrent_subagents: u32,
-    /// Workflow step permission mode ("inherit" default / "auto" legacy behavior)
-    #[serde(
-        default = "crate::core::models::default_workflow_step_mode",
-        rename = "workflowStepMode"
-    )]
-    workflow_step_mode: String,
+    max_concurrent_subagents: i32,
     /// Whether read-only tools within the same response block run concurrently
     #[serde(
         default = "crate::core::models::default_true",
         rename = "parallelToolExecution"
     )]
     parallel_tool_execution: bool,
-    /// Main agent built-in tool set (hybrid default / orchestrator / full)
-    #[serde(
-        default = "crate::core::models::default_main_agent_tool_access",
-        rename = "mainAgentToolAccess"
-    )]
-    main_agent_tool_access: String,
     /// Retry count for the pre-flight stage of the main model call
     #[serde(
         default = "crate::core::models::default_model_call_retries",
@@ -63,6 +51,27 @@ struct AppConfigDisk {
     /// Windows AppContainer toolchain R+X directories
     #[serde(default, rename = "sandboxWindowsToolchainDirs")]
     sandbox_windows_toolchain_dirs: Vec<String>,
+    /// Sandbox-internal `<root>/.git` deny-write (Codex-style history protection, default true)
+    #[serde(
+        default = "crate::core::models::default_true",
+        rename = "sandboxProtectGit"
+    )]
+    sandbox_protect_git: bool,
+    /// Full-permission sandbox self-heal may fall back to one unsandboxed retry (default true)
+    #[serde(
+        default = "crate::core::models::default_true",
+        rename = "sandboxUnsandboxedFallback"
+    )]
+    sandbox_unsandboxed_fallback: bool,
+    /// Consecutive env-class failures before a tool is disabled for the turn (0 = default 6)
+    /// Windows shell selection (powershell default / cmd)
+    #[serde(
+        default = "crate::core::models::default_shell_windows",
+        rename = "shellWindows"
+    )]
+    shell_windows: String,
+    #[serde(default, rename = "toolBreakerThreshold")]
+    tool_breaker_threshold: u32,
     #[serde(default, rename = "memoryEnabled")]
     memory_enabled: bool,
     #[serde(
@@ -142,15 +151,17 @@ impl AppConfigDisk {
             auto_start_enabled: cfg.auto_start_enabled,
             max_tool_rounds: cfg
                 .max_tool_rounds
-                .unwrap_or(crate::core::models::DEFAULT_MAX_TOOL_ROUNDS),
+                .unwrap_or(crate::core::models::DEFAULT_MAX_TOOL_ROUNDS as i32),
             max_concurrent_subagents: cfg.max_concurrent_subagents.unwrap_or(5),
-            workflow_step_mode: cfg.workflow_step_mode.clone(),
             parallel_tool_execution: cfg.parallel_tool_execution,
-            main_agent_tool_access: cfg.main_agent_tool_access.clone(),
             model_call_retries: cfg.model_call_retries,
             sandbox_required: cfg.sandbox_required,
             sandbox_windows: cfg.sandbox_windows.clone(),
             sandbox_windows_toolchain_dirs: cfg.sandbox_windows_toolchain_dirs.clone(),
+            shell_windows: cfg.shell_windows.clone(),
+            sandbox_protect_git: cfg.sandbox_protect_git,
+            sandbox_unsandboxed_fallback: cfg.sandbox_unsandboxed_fallback,
+            tool_breaker_threshold: cfg.tool_breaker_threshold,
             memory_enabled: cfg.memory_enabled,
             memory_auto_inject: cfg.memory_auto_inject,
             memory_auto_extract: cfg.memory_auto_extract,
@@ -186,15 +197,27 @@ impl AppConfigDisk {
             auto_retry_count: self.auto_retry_count,
             auto_retry_delay_ms: self.auto_retry_delay_ms,
             auto_start_enabled: self.auto_start_enabled,
-            max_concurrent_subagents: Some(self.max_concurrent_subagents),
-            max_tool_rounds: Some(self.max_tool_rounds),
-            workflow_step_mode: self.workflow_step_mode,
+            // Normalize hand-edited values into the valid domain: -1 (unlimited) is the
+            // floor, 0 is invalid -> minimum 1 (the consumers re-clamp defensively too)
+            max_concurrent_subagents: Some(match self.max_concurrent_subagents {
+                n if n < -1 => -1,
+                0 => 1,
+                n => n,
+            }),
+            max_tool_rounds: Some(match self.max_tool_rounds {
+                n if n < -1 => -1,
+                0 => 1,
+                n => n,
+            }),
             parallel_tool_execution: self.parallel_tool_execution,
-            main_agent_tool_access: self.main_agent_tool_access,
             model_call_retries: self.model_call_retries,
             sandbox_required: self.sandbox_required,
             sandbox_windows: self.sandbox_windows.clone(),
             sandbox_windows_toolchain_dirs: self.sandbox_windows_toolchain_dirs.clone(),
+            shell_windows: self.shell_windows.clone(),
+            sandbox_protect_git: self.sandbox_protect_git,
+            sandbox_unsandboxed_fallback: self.sandbox_unsandboxed_fallback,
+            tool_breaker_threshold: self.tool_breaker_threshold,
             memory_enabled: self.memory_enabled,
             memory_auto_inject: self.memory_auto_inject,
             memory_auto_extract: self.memory_auto_extract,
@@ -220,15 +243,17 @@ impl Default for AppConfigDisk {
             default_model: String::new(),
             local_model_path: String::new(),
             auto_start_enabled: false,
-            max_tool_rounds: crate::core::models::DEFAULT_MAX_TOOL_ROUNDS,
+            max_tool_rounds: crate::core::models::DEFAULT_MAX_TOOL_ROUNDS as i32,
             max_concurrent_subagents: 5,
-            workflow_step_mode: crate::core::models::default_workflow_step_mode(),
             parallel_tool_execution: crate::core::models::default_true(),
-            main_agent_tool_access: crate::core::models::default_main_agent_tool_access(),
             model_call_retries: crate::core::models::default_model_call_retries(),
             sandbox_required: crate::core::models::default_true(),
             sandbox_windows: crate::core::models::default_sandbox_windows(),
             sandbox_windows_toolchain_dirs: Vec::new(),
+            shell_windows: crate::core::models::default_shell_windows(),
+            sandbox_protect_git: crate::core::models::default_true(),
+            sandbox_unsandboxed_fallback: false,
+            tool_breaker_threshold: 0,
             memory_enabled: false,
             memory_auto_inject: crate::core::models::default_true(),
             memory_auto_extract: crate::core::models::default_true(),
@@ -250,11 +275,11 @@ impl Default for AppConfigDisk {
     }
 }
 
-fn default_max_tool_rounds() -> u32 {
-    crate::core::models::DEFAULT_MAX_TOOL_ROUNDS
+fn default_max_tool_rounds() -> i32 {
+    crate::core::models::DEFAULT_MAX_TOOL_ROUNDS as i32
 }
 
-fn default_max_concurrent_subagents() -> u32 {
+fn default_max_concurrent_subagents() -> i32 {
     5
 }
 
@@ -274,13 +299,8 @@ pub fn save_app_config(app: &AppHandle, config: &AppConfig) -> Result<(), String
     // Field mapping is centralized in AppConfigDisk::from_config (including api_key stripping and the auto_retry fields)
     let disk = AppConfigDisk::from_config(config);
     let json = serde_json::to_string_pretty(&disk).map_err(|e| e.to_string())?;
-    // Atomic write
-    let tmp_path = path.with_extension("tmp");
-    use std::io::Write;
-    let mut f = std::fs::File::create(&tmp_path).map_err(|e| e.to_string())?;
-    f.write_all(json.as_bytes()).map_err(|e| e.to_string())?;
-    f.sync_all().map_err(|e| e.to_string())?;
-    std::fs::rename(&tmp_path, &path).map_err(|e| e.to_string())?;
+    // Atomic write (fsync before rename; a crash can never leave a truncated half-written config.json)
+    crate::core::fs_util::atomic_write(&path, json.as_bytes()).map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -318,9 +338,11 @@ pub fn load_app_config(app: &AppHandle) -> Result<AppConfig, String> {
                     ..AppConfigDisk::default()
                 };
                 if key_migrated {
-                    if let Err(e) = fs::write(
+                    if let Err(e) = crate::core::fs_util::atomic_write(
                         &path,
-                        serde_json::to_string_pretty(&disk).unwrap_or_default(),
+                        serde_json::to_string_pretty(&disk)
+                            .unwrap_or_default()
+                            .as_bytes(),
                     ) {
                         tracing::error!("迁移写回 config.json 失败: {e}");
                     }

@@ -13,7 +13,7 @@ use std::path::Path;
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use super::vector::{brute_force_topk, bytes_to_f32, f32_to_bytes};
+use super::vector::f32_to_bytes;
 use crate::services::memory::CollectRowsWarn;
 
 pub const STATUS_ACTIVE: &str = "active";
@@ -285,6 +285,24 @@ impl MemoryStore {
         })
     }
 
+    /// Project root this store is bound to (event payloads use it as the project identity).
+    pub fn project_root(&self) -> &str {
+        &self.project_root
+    }
+
+    /// Best-effort WAL checkpoint (TRUNCATE) after memory write sessions —
+    /// reclaims the WAL file so the main DB stays the durable copy (harness
+    /// round 5: 4KB main DB vs 1.4MB WAL). Failure is logged and ignored: a busy
+    /// concurrent reader must never fail the tool call.
+    pub fn checkpoint_wal(&self) {
+        let Ok(conn) = self.conn.lock() else {
+            return;
+        };
+        if let Err(e) = conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);") {
+            tracing::debug!("[memory] WAL checkpoint 未完成（忽略）: {e}");
+        }
+    }
+
     /// Opens a standalone connection to the project memory store (for code.rs and similar; WAL allows concurrent connections).
     pub fn open_connection(project_root: &str) -> Result<Connection, String> {
         // The auto-extension must be registered before opening the connection.
@@ -302,6 +320,12 @@ impl MemoryStore {
         conn.pragma_update(None, "journal_mode", "WAL")
             .map_err(|e| e.to_string())?;
         conn.pragma_update(None, "busy_timeout", 5000)
+            .map_err(|e| e.to_string())?;
+        // Harness round 5: bound WAL growth early. The SQLite default
+        // (1000 pages ≈ 4MB) let the WAL pile up ~350x the main DB size
+        // (1.4MB vs 4KB) with version-audit + FTS page churn before the first
+        // automatic checkpoint ever fired.
+        conn.pragma_update(None, "wal_autocheckpoint", 100)
             .map_err(|e| e.to_string())?;
         conn.execute_batch(SCHEMA).map_err(|e| e.to_string())?;
         // Versioned migrations (progress tracked via user_version).
@@ -439,6 +463,21 @@ impl MemoryStore {
         .optional()
         .map_err(|e| e.to_string())?
         .ok_or_else(|| ierr!("事实不存在: {}", "Fact not found: {}", id))
+    }
+
+    /// Finds the ACTIVE fact id for a dedup key (harness round 8: the remember
+    /// tool pre-checks this so a key-overwrite result can be distinguished from
+    /// a fresh insert — upsert_fact keeps the existing id, so the caller can
+    /// tell the model exactly what it overwrote before the write happens).
+    pub fn find_active_id_by_key(&self, key: &str) -> Result<Option<String>, String> {
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        conn.query_row(
+            "SELECT id FROM facts WHERE key = ?1 AND status != ?2",
+            params![key, STATUS_ARCHIVED],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(|e| e.to_string())
     }
 
     /// Lists facts (optional status/category filters, ordered by updated_at desc, paginated).
@@ -799,6 +838,11 @@ impl MemoryStore {
             params![STATUS_SUPERSEDED, now, now, id],
         )
         .map_err(|e| e.to_string())?;
+        // MEM-02 加重项：supersede 与 set_status 一致地清理 vec0（此前只删 FTS，
+        // 被取代事实的向量继续参与召回、挤占 top-k 名额）
+        if crate::services::memory::vec0::vec0_available() {
+            crate::services::memory::vec0::vec0_delete(&tx, id).map_err(|e| e.to_string())?;
+        }
         tx.execute("DELETE FROM fts_facts WHERE fact_id = ?1", [id])
             .map_err(|e| e.to_string())?;
         tx.commit().map_err(|e| e.to_string())?;
@@ -831,44 +875,50 @@ impl MemoryStore {
 
     /// Capacity governance: when active facts exceed the limit, archive the lowest-scoring non-pinned facts, score = importance times access decay.
     pub fn prune_to_capacity(&self, max_facts: u32) -> Result<usize, String> {
-        let conn = self.conn.lock().map_err(|e| e.to_string())?;
-        let active: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM facts WHERE status = ?1",
-                [STATUS_ACTIVE],
-                |r| r.get(0),
-            )
-            .map_err(|e| e.to_string())?;
-        if active as u32 <= max_facts {
-            return Ok(0);
-        }
-        let excess = (active as u32 - max_facts) as usize;
-        // Archive lowest score first: importance * (1 + 0.1 * min(access_count, 20))
-        let mut stmt = conn
-            .prepare("SELECT id FROM facts WHERE status = ?1 AND pinned = 0 ORDER BY (importance * (1.0 + 0.1 * MIN(access_count, 20))) ASC, updated_at ASC LIMIT ?2")
-            .map_err(|e| e.to_string())?;
-        let ids: Vec<String> = stmt
-            .query_map(params![STATUS_ACTIVE, excess as i64], |r| {
-                r.get::<_, String>(0)
-            })
-            .map_err(|e| e.to_string())?
-            .collect_rows("store");
-        drop(stmt);
+        // MEM-03: collect ids under the lock, then archive via set_status —
+        // the historic inline UPDATE only flipped the status column, leaving the
+        // vec0 and FTS entries in place; the vec0 search leg has no status filter,
+        // so archived facts kept being recalled and eating top-k slots.
+        let ids: Vec<String> = {
+            let conn = self.conn.lock().map_err(|e| e.to_string())?;
+            let active: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM facts WHERE status = ?1",
+                    [STATUS_ACTIVE],
+                    |r| r.get(0),
+                )
+                .map_err(|e| e.to_string())?;
+            if active as u32 <= max_facts {
+                return Ok(0);
+            }
+            let excess = (active as u32 - max_facts) as usize;
+            let mut stmt = conn
+                .prepare("SELECT id FROM facts WHERE status = ?1 AND pinned = 0 ORDER BY (importance * (1.0 + 0.1 * MIN(access_count, 20))) ASC, updated_at ASC LIMIT ?2")
+                .map_err(|e| e.to_string())?;
+            let ids: Vec<String> = stmt
+                .query_map(params![STATUS_ACTIVE, excess as i64], |r| {
+                    r.get::<_, String>(0)
+                })
+                .map_err(|e| e.to_string())?
+                .collect_rows("store");
+            ids
+        };
         let now = now_iso();
         let mut archived = 0usize;
         for id in ids {
-            let n = conn
-                .execute(
-                    "UPDATE facts SET status = ?1, valid_until = ?2, updated_at = ?3 WHERE id = ?4",
-                    params![STATUS_ARCHIVED, now, now, id],
-                )
-                .map_err(|e| e.to_string())?;
-            archived += n;
+            if self.set_status(&id, STATUS_ARCHIVED, Some(&now)).is_ok() {
+                archived += 1;
+            }
         }
         Ok(archived)
     }
 
     /// Clears all facts (deletes the project memory).
+    ///
+    /// MEM-05: also clears the relation table, the vec0 facts table and the code-index
+    /// tables — the historic clear left ghost vectors (fetch/extract then treated them
+    /// as "already deduped" hits and silently dropped new facts) and orphan code chunks.
+    /// CASCADE was dead code (foreign_keys is never enabled on the memory DB).
     pub fn clear(&self) -> Result<(), String> {
         let mut conn = self.conn.lock().map_err(|e| e.to_string())?;
         let tx = conn.transaction().map_err(|e| e.to_string())?;
@@ -878,6 +928,19 @@ impl MemoryStore {
             .map_err(|e| e.to_string())?;
         tx.execute("DELETE FROM fts_facts", [])
             .map_err(|e| e.to_string())?;
+        tx.execute("DELETE FROM facts_relations", [])
+            .map_err(|e| e.to_string())?;
+        for table in [
+            "vec_facts",
+            "code_chunks",
+            "fts_code",
+            "vec_code",
+            "code_file_state",
+        ] {
+            if table_exists(&tx, table) {
+                let _ = tx.execute(&format!("DELETE FROM {table}"), []);
+            }
+        }
         tx.commit().map_err(|e| e.to_string())?;
         Ok(())
     }
@@ -1018,6 +1081,17 @@ fn now_iso() -> String {
     crate::utils::time::now_iso()
 }
 
+/// MEM-05 辅助：表是否存在（vec0/FTS 虚表按需建，DELETE 前必须确认存在）。
+fn table_exists(conn: &Connection, name: &str) -> bool {
+    conn.query_row(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name = ?1",
+        [name],
+        |r| r.get::<_, i64>(0),
+    )
+    .map(|n| n > 0)
+    .unwrap_or(false)
+}
+
 /// Small pipeline helper (for closure chains).
 trait Pipe: Sized {
     fn pipe<T>(self, f: impl FnOnce(Self) -> T) -> T {
@@ -1082,6 +1156,63 @@ mod tests {
         }
     }
 
+    /// Harness round 8 (remember key semantics): a second write with the SAME key
+    /// upserts in place — the id stays stable, recall sees only the latest
+    /// content, and the old content lands in the fact_versions audit chain
+    /// (readable via the memory panel). The silent part of this was the TOOL
+    /// result's uniform message, fixed in tools.rs; this pins the storage-layer
+    /// contract the new message depends on.
+    #[test]
+    fn test_keyed_upsert_replaces_in_place_with_version_audit() {
+        let root = temp_project("keyupsert");
+        let store = MemoryStore::open(&root).unwrap();
+        let v1 = store
+            .upsert_fact(&fact("round-8 v1", Some("r8-dedup-probe")), None)
+            .unwrap();
+        let id1 = v1.id.clone();
+        assert!(
+            store
+                .find_active_id_by_key("r8-dedup-probe")
+                .unwrap()
+                .is_some(),
+            "新 key 应可按 key 定位"
+        );
+        let v2 = store
+            .upsert_fact(&fact("round-8 v2", Some("r8-dedup-probe")), None)
+            .unwrap();
+        assert_eq!(v2.id, id1, "同 key 二次写入应原地更新（id 不变）");
+        assert_eq!(v2.content, "round-8 v2");
+        // The old content is archived, not lost
+        let versions = store.get_versions(&id1).unwrap();
+        assert!(!versions.is_empty(), "覆盖必须留下版本审计");
+        assert!(
+            versions
+                .iter()
+                .any(|v| v.reason == "update" && v.content_before.as_deref() == Some("round-8 v1")),
+            "v1 应存档于版本历史: {versions:?}"
+        );
+        // find_active_id_by_key matches the surviving row (and misses nothing)
+        assert_eq!(
+            store
+                .find_active_id_by_key("r8-dedup-probe")
+                .unwrap()
+                .as_deref(),
+            Some(id1.as_str())
+        );
+        assert!(store
+            .find_active_id_by_key("no-such-key")
+            .unwrap()
+            .is_none());
+        // A DIFFERENT key is a fresh insert (no overwrite)
+        let v3 = store
+            .upsert_fact(&fact("fresh", Some("r8-other-key")), None)
+            .unwrap();
+        assert_ne!(v3.id, id1);
+        let versions3 = store.get_versions(&v3.id).unwrap();
+        assert!(versions3.is_empty(), "新插入不应产生版本行");
+        fs::remove_dir_all(&root).ok();
+    }
+
     #[test]
     fn test_open_and_schema_idempotent() {
         let root = temp_project("schema");
@@ -1089,6 +1220,34 @@ mod tests {
         let s2 = MemoryStore::open(&root).unwrap();
         drop(s1);
         drop(s2);
+        fs::remove_dir_all(&root).ok();
+    }
+
+    /// MEM-9: the expiring meta lock is claimed atomically — a fresh lock blocks the
+    /// second claimant; a lock older than the cutoff is re-claimable.
+    #[test]
+    fn test_meta_try_lock_is_atomic_and_expiring() {
+        let root = temp_project("metalock");
+        let s = MemoryStore::open(&root).unwrap();
+        let t0 = crate::utils::time::now_unix_secs();
+        let cutoff = |now: u64| crate::utils::time::secs_to_iso(now.saturating_sub(60));
+        // 首次认领成功
+        assert!(s
+            .meta_try_lock("lock_t", &cutoff(t0), &crate::utils::time::secs_to_iso(t0))
+            .unwrap());
+        // 持锁期内（TTL 内）再次认领必须失败
+        assert!(!s
+            .meta_try_lock("lock_t", &cutoff(t0), &crate::utils::time::secs_to_iso(t0))
+            .unwrap());
+        // 70 秒后的视角：cutoff = t0+10 > 已存的 t0 → 锁已过期，可重新认领
+        let later = t0 + 70;
+        assert!(s
+            .meta_try_lock(
+                "lock_t",
+                &cutoff(later),
+                &crate::utils::time::secs_to_iso(later)
+            )
+            .unwrap());
         fs::remove_dir_all(&root).ok();
     }
 
@@ -1397,6 +1556,76 @@ mod tests {
         // The vector path excludes it as well.
         let vec_res = store.search_similar(&v, 10).unwrap();
         assert!(vec_res.iter().all(|(id, _)| *id != saved.id));
+        fs::remove_dir_all(&root).ok();
+    }
+
+    // ===== Regression: MEM-03 —— prune 走 set_status（归档清理 vec0/FTS）=====
+    #[test]
+    fn test_prune_archives_via_set_status_cleansing_retrieval() {
+        let root = temp_project("prune");
+        let store = MemoryStore::open(&root).unwrap();
+        let v = vec![1.0f32, 0.0, 0.0, 0.0];
+        for i in 0..3 {
+            store
+                .upsert_fact(
+                    &fact(&format!("低分事实 {i}：无足轻重的描述"), None),
+                    Some(("test".into(), 4, v.clone())),
+                )
+                .unwrap();
+        }
+        // 容量 1：必须归档 2 条最低分事实
+        let archived = store.prune_to_capacity(1).unwrap();
+        assert_eq!(archived, 2);
+        // 关键回归：归档后向量/FTS 检索不再召回（历史实现只改 status 列，
+        // vec0 腿无 status 过滤，归档事实继续被召回挤占 top-k）
+        let vec_res = store.search_similar(&v, 10).unwrap();
+        assert!(
+            vec_res.len() <= 1,
+            "归档事实的向量不应继续参与召回: {vec_res:?}"
+        );
+        let fts_res = store
+            .search_hybrid(
+                "低分事实",
+                None,
+                &SearchOptions {
+                    category: None,
+                    k: 10,
+                    min_score: None,
+                },
+            )
+            .unwrap();
+        assert!(
+            fts_res.len() <= 1,
+            "归档事实不应继续被检索（容量 1 只应剩 1 条）: {:?}",
+            fts_res
+                .iter()
+                .map(|f| f.content.clone())
+                .collect::<Vec<_>>()
+        );
+        fs::remove_dir_all(&root).ok();
+    }
+
+    // ===== Regression: MEM-05 —— clear 清掉 vec_facts/facts_relations 幽灵 =====
+    #[test]
+    fn test_clear_removes_vector_and_relation_ghosts() {
+        let root = temp_project("clear");
+        let store = MemoryStore::open(&root).unwrap();
+        let v = vec![1.0f32, 0.0, 0.0, 0.0];
+        store
+            .upsert_fact(
+                &fact("clear 测试：会被清空的事实", None),
+                Some(("test".into(), 4, v.clone())),
+            )
+            .unwrap();
+        assert!(!store.search_similar(&v, 3).unwrap().is_empty());
+        store.clear().unwrap();
+        // 关键回归：向量幽灵被清——旧实现 clear 不删 vec_facts，与幽灵相似的新事实
+        // 在 extract 判重时被"读取失败→已判重"静默丢弃
+        assert!(
+            store.search_similar(&v, 3).unwrap().is_empty(),
+            "clear 后不应残留向量幽灵"
+        );
+        assert!(store.list_facts(None, None, 100, 0).unwrap().0.is_empty());
         fs::remove_dir_all(&root).ok();
     }
 

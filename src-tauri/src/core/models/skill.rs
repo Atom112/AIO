@@ -48,6 +48,11 @@ pub struct SkillConfig {
     /// npx execution command (defaults to npx_package)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub npx_command: Option<String>,
+    /// On-disk skill directory (skills CLI / skill-dir sources): refresh reads the
+    /// content directly from here instead of re-running npx (their names are not
+    /// npm packages — `npx <name>` fails with "could not determine executable").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_disk_path: Option<String>,
 }
 
 /// Skill persistence file.

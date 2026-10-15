@@ -23,9 +23,18 @@ export const deleteSkill = (id: string, projectId?: string | null) =>
 /** Scan the system for importable npx skill packages. */
 export const discoverNpxSkills = () => invoke<DiscoveredNpxSkill[]>('discover_npx_skills');
 
-/** Import an npx skill package. */
-export const importNpxSkill = (packageName: string, projectId?: string | null) =>
-  invoke<SkillConfig>('import_npx_skill', { packageName, projectId: projectId ?? null });
+/** Import an npx skill package. sourcePath = on-disk skill dir (skills CLI / skill-dir
+ * sources are imported directly from it — their names are not npm packages). */
+export const importNpxSkill = (
+  packageName: string,
+  projectId?: string | null,
+  sourcePath?: string | null,
+) =>
+  invoke<SkillConfig>('import_npx_skill', {
+    packageName,
+    projectId: projectId ?? null,
+    sourcePath: sourcePath ?? null,
+  });
 
 /** Refresh an imported npx skill (re-fetches package content). */
 export const refreshNpxSkill = (id: string, projectId?: string | null) =>
@@ -34,6 +43,10 @@ export const refreshNpxSkill = (id: string, projectId?: string | null) =>
 /** Browse the skill market. */
 export const listSkillMarket = (query: SkillMarketQuery) =>
   invoke<MarketSkill[]>('list_skill_market', query as unknown as Record<string, unknown>);
+
+/** Search the full skills.sh catalog via its JSON search API (the market pages only ship top slices). */
+export const searchSkillMarket = (query: string) =>
+  invoke<MarketSkill[]>('search_skill_market', { query });
 
 /** Download a skill from the market into a project (or global). */
 export const downloadMarketSkill = (skill: MarketSkill, projectId?: string | null) =>

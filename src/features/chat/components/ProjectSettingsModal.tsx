@@ -13,13 +13,14 @@ import {
   mcpServers,
   mcpServerStatus,
   skills,
+  initSkills,
   startMcpServerAndRefresh,
   currentProjectId,
 } from '../../../core/store/store';
 import { getLogo as getLogoByIds } from '../../../core/utils/modelLogo';
 import { findModel, formatContextWindow } from '../../../core/utils/models';
 import { transportLabel, statusLabel, statusColor } from '../../../core/utils/mcp';
-import { memoryGetStatus, memorySetEnabled } from '../../../core/utils/memory';
+import { memoryGetStatus, memorySetEnabled } from '../../../core/api/memory';
 import type { MemoryStatus } from '../../../core/types/memory';
 import MemoryPanel from './MemoryPanel';
 import Icon from '../../../shared/components/Icon';
@@ -52,6 +53,10 @@ const ProjectSettingsModal: Component<ProjectSettingsModalProps> = (props) => {
       void memoryGetStatus(currentProjectId()!)
         .then(setMemoryStatus)
         .catch(() => setMemoryStatus(null));
+      // Skills 池同步刷新：商店下载 / npx 导入发生在设置页（另一个 store 写入方），
+      // 打开面板时重读，避免依赖各处都记得 setSkills 的隐式约定（陈旧 store 曾导致
+      // 「商店已下载、项目设置面板却显示未配置」）
+      void initSkills(currentProjectId()!);
     }
   });
 
@@ -74,7 +79,7 @@ const ProjectSettingsModal: Component<ProjectSettingsModalProps> = (props) => {
       const st = await memoryGetStatus(pid);
       setMemoryStatus(st);
     } catch (err) {
-      console.warn('切换项目记忆失败:', err);
+      console.warn('Failed to toggle project memory:', err);
     }
   };
 
@@ -237,7 +242,7 @@ const ProjectSettingsModal: Component<ProjectSettingsModalProps> = (props) => {
             'opacity-0 pointer-events-none': isExiting() || isEntering(),
             'opacity-100': !isExiting() && !isEntering(),
           }}
-          class="fixed inset-0 z-[1000] flex items-center justify-center bg-black/60 backdrop-blur-[12px] rounded-lg transition-all duration-200 ease-out"
+          class="fixed inset-0 z-[1000] flex items-center justify-center bg-black/25 rounded-lg transition-all duration-200 ease-out"
           onClick={(e) => e.target === e.currentTarget && handleClose()}
         >
           <div
@@ -245,11 +250,11 @@ const ProjectSettingsModal: Component<ProjectSettingsModalProps> = (props) => {
               'scale-95 opacity-0': isExiting() || isEntering(),
               'scale-100 opacity-100': !isExiting() && !isEntering(),
             }}
-            class="rounded-lg bg-dark-500 text-[rgba(var(--text-base-rgb),0.88)] p-6 w-[92%] max-w-[640px] max-h-[90vh] overflow-y-auto flex flex-col gap-4 transition-all duration-500 ease-out transform"
+            class="rounded-lg text-[rgba(var(--text-base-rgb),0.88)] p-6 w-[92%] max-w-[640px] max-h-[90vh] overflow-y-auto flex flex-col gap-4 transition-all duration-500 ease-out transform"
             style={{
-              background: 'var(--panel-bg)',
-              'backdrop-filter': 'blur(var(--acrylic-blur))',
-              border: '1px solid var(--acrylic-border)',
+              background: 'var(--dialog-bg)',
+              'backdrop-filter': 'var(--popup-blur)',
+              border: '1px solid var(--border-dim)',
             }}
           >
             <div class="flex justify-between items-center border-b border-[rgba(var(--text-base-rgb),0.27)] pb-3">

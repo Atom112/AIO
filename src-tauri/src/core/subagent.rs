@@ -9,7 +9,7 @@
 //! - `reviewer`: code reviewer, read-only security audit and code quality assessment
 //! - `writer`: documentation writer, can read and write files to produce documentation
 //! - `tester`: test engineer, can run tests and write test files
-//! - `requirements`: requirements analyst, read-only analysis that decomposes user requests into structured workflow plans
+//! - `requirements`: requirements analyst, read-only analysis that decomposes user requests into structured subtask plans
 //! - `vision`: vision analyst, toolless; auto-invoked to describe user images when the main model lacks vision
 //!
 //! Sub-agents are created via the main agent's `delegate_task` tool; each sub-agent
@@ -18,6 +18,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::models::ToolSpec;
+use crate::core::tool_names;
 /// Sub-agent profile.
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
@@ -91,24 +92,24 @@ pub fn builtin_profiles() -> Vec<SubagentProfile> {
             name: "代码探索者".into(),
             description: "只读搜索和分析，用于大规模代码探索、多文件检索、架构分析。不能修改任何文件。".into(),
             allowed_tools: vec![
-                "read_file".into(),
-                "list_directory".into(),
+                tool_names::READ_FILE.into(),
+                tool_names::LIST_DIRECTORY.into(),
                 "search_files".into(),
-                "search_content".into(),
+                tool_names::SEARCH_CONTENT.into(),
                 "read_lints".into(),
-                "web_search".into(),
-                "web_fetch".into(),
-                "recall".into(),
+                tool_names::WEB_SEARCH.into(),
+                tool_names::WEB_FETCH.into(),
+                tool_names::RECALL.into(),
                 "search_code".into(),
             ],
             denied_tools: vec![
-                "write_file".into(),
-                "replace_in_file".into(),
-                "delete_file".into(),
-                "make_directory".into(),
-                "execute_command".into(),
+                tool_names::WRITE_FILE.into(),
+                tool_names::REPLACE_IN_FILE.into(),
+                tool_names::DELETE_FILE.into(),
+                tool_names::MAKE_DIRECTORY.into(),
+                tool_names::EXECUTE_COMMAND.into(),
                 "git_*".into(),
-                "delegate_task".into(),
+                tool_names::DELEGATE_TASK.into(),
             ],
             system_prompt_extension: concat!(
                 "你是代码探索者，只能搜索和分析代码，不能修改任何文件。\n",
@@ -125,7 +126,7 @@ pub fn builtin_profiles() -> Vec<SubagentProfile> {
             name: "代码实现者".into(),
             description: "代码编写和修改，用于实现具体功能模块。禁止执行 shell 命令。".into(),
             allowed_tools: vec![], // empty = allow all
-            denied_tools: vec!["execute_command".into(), "delegate_task".into()],
+            denied_tools: vec![tool_names::EXECUTE_COMMAND.into(), tool_names::DELEGATE_TASK.into()],
             system_prompt_extension: concat!(
                 "你是代码实现者，专注编写和修改代码文件。\n",
                 "修改前务必先阅读相关文件以充分理解上下文。\n",
@@ -141,7 +142,7 @@ pub fn builtin_profiles() -> Vec<SubagentProfile> {
             name: "通用子智能体".into(),
             description: "全能力子智能体，拥有和主 Agent 完全相同的工具集。".into(),
             allowed_tools: vec![],
-            denied_tools: vec!["delegate_task".into()], // forbid recursive sub-agent creation
+            denied_tools: vec![tool_names::DELEGATE_TASK.into()], // forbid recursive sub-agent creation
             system_prompt_extension: concat!(
                 "你是通用子智能体，可以执行任意任务。\n",
                 "充分利用所有可用工具来完成目标。\n",
@@ -156,24 +157,24 @@ pub fn builtin_profiles() -> Vec<SubagentProfile> {
             name: "架构设计师".into(),
             description: "只读架构分析、依赖映射、设计决策评估与技术选型建议。不能修改任何文件。".into(),
             allowed_tools: vec![
-                "read_file".into(),
-                "list_directory".into(),
+                tool_names::READ_FILE.into(),
+                tool_names::LIST_DIRECTORY.into(),
                 "search_files".into(),
-                "search_content".into(),
+                tool_names::SEARCH_CONTENT.into(),
                 "read_lints".into(),
-                "web_search".into(),
-                "web_fetch".into(),
-                "recall".into(),
+                tool_names::WEB_SEARCH.into(),
+                tool_names::WEB_FETCH.into(),
+                tool_names::RECALL.into(),
                 "search_code".into(),
             ],
             denied_tools: vec![
-                "write_file".into(),
-                "replace_in_file".into(),
-                "delete_file".into(),
-                "make_directory".into(),
-                "execute_command".into(),
+                tool_names::WRITE_FILE.into(),
+                tool_names::REPLACE_IN_FILE.into(),
+                tool_names::DELETE_FILE.into(),
+                tool_names::MAKE_DIRECTORY.into(),
+                tool_names::EXECUTE_COMMAND.into(),
                 "git_*".into(),
-                "delegate_task".into(),
+                tool_names::DELEGATE_TASK.into(),
             ],
             system_prompt_extension: concat!(
                 "你是架构设计师，只能分析代码架构和设计，不能修改任何文件。\n",
@@ -190,22 +191,22 @@ pub fn builtin_profiles() -> Vec<SubagentProfile> {
             name: "问题诊断师".into(),
             description: "错误调查与根因分析，可运行命令复现问题但不能修改任何文件。".into(),
             allowed_tools: vec![
-                "read_file".into(),
-                "list_directory".into(),
+                tool_names::READ_FILE.into(),
+                tool_names::LIST_DIRECTORY.into(),
                 "search_files".into(),
-                "search_content".into(),
+                tool_names::SEARCH_CONTENT.into(),
                 "read_lints".into(),
-                "execute_command".into(),
-                "web_search".into(),
-                "web_fetch".into(),
+                tool_names::EXECUTE_COMMAND.into(),
+                tool_names::WEB_SEARCH.into(),
+                tool_names::WEB_FETCH.into(),
             ],
             denied_tools: vec![
-                "write_file".into(),
-                "replace_in_file".into(),
-                "delete_file".into(),
-                "make_directory".into(),
+                tool_names::WRITE_FILE.into(),
+                tool_names::REPLACE_IN_FILE.into(),
+                tool_names::DELETE_FILE.into(),
+                tool_names::MAKE_DIRECTORY.into(),
                 "git_*".into(),
-                "delegate_task".into(),
+                tool_names::DELEGATE_TASK.into(),
             ],
             system_prompt_extension: concat!(
                 "你是问题诊断师，可以运行命令来复现和分析错误，但不能修改任何文件。\n",
@@ -222,24 +223,24 @@ pub fn builtin_profiles() -> Vec<SubagentProfile> {
             name: "代码审查员".into(),
             description: "只读代码质量评估、安全审计与最佳实践检查。不能修改任何文件。".into(),
             allowed_tools: vec![
-                "read_file".into(),
-                "list_directory".into(),
+                tool_names::READ_FILE.into(),
+                tool_names::LIST_DIRECTORY.into(),
                 "search_files".into(),
-                "search_content".into(),
+                tool_names::SEARCH_CONTENT.into(),
                 "read_lints".into(),
-                "web_search".into(),
-                "web_fetch".into(),
-                "recall".into(),
+                tool_names::WEB_SEARCH.into(),
+                tool_names::WEB_FETCH.into(),
+                tool_names::RECALL.into(),
                 "search_code".into(),
             ],
             denied_tools: vec![
-                "write_file".into(),
-                "replace_in_file".into(),
-                "delete_file".into(),
-                "make_directory".into(),
-                "execute_command".into(),
+                tool_names::WRITE_FILE.into(),
+                tool_names::REPLACE_IN_FILE.into(),
+                tool_names::DELETE_FILE.into(),
+                tool_names::MAKE_DIRECTORY.into(),
+                tool_names::EXECUTE_COMMAND.into(),
                 "git_*".into(),
-                "delegate_task".into(),
+                tool_names::DELEGATE_TASK.into(),
             ],
             system_prompt_extension: concat!(
                 "你是代码审查员，只能审查代码质量和安全性，不能修改任何文件。\n",
@@ -257,11 +258,11 @@ pub fn builtin_profiles() -> Vec<SubagentProfile> {
             description: "编写文档、注释、README、变更日志与技术规范。可读写文件。".into(),
             allowed_tools: vec![], // empty = allow all
             denied_tools: vec![
-                "delete_file".into(),
-                "make_directory".into(),
-                "execute_command".into(),
+                tool_names::DELETE_FILE.into(),
+                tool_names::MAKE_DIRECTORY.into(),
+                tool_names::EXECUTE_COMMAND.into(),
                 "git_*".into(),
-                "delegate_task".into(),
+                tool_names::DELEGATE_TASK.into(),
             ],
             system_prompt_extension: concat!(
                 "你是文档撰写员，专注于编写高质量的文档和注释。\n",
@@ -279,10 +280,10 @@ pub fn builtin_profiles() -> Vec<SubagentProfile> {
             description: "测试用例生成、覆盖率分析与测试执行。可运行测试并编写测试文件。".into(),
             allowed_tools: vec![], // empty = allow all
             denied_tools: vec![
-                "delete_file".into(),
-                "make_directory".into(),
+                tool_names::DELETE_FILE.into(),
+                tool_names::MAKE_DIRECTORY.into(),
                 "git_*".into(),
-                "delegate_task".into(),
+                tool_names::DELEGATE_TASK.into(),
             ],
             system_prompt_extension: concat!(
                 "你是测试工程师，专注于测试的编写、执行和分析。\n",
@@ -299,22 +300,22 @@ pub fn builtin_profiles() -> Vec<SubagentProfile> {
             name: "需求分析员".into(),
             description: "用户需求分析，将用户输入拆解为结构化工作流方案。不能修改文件。".into(),
             allowed_tools: vec![
-                "read_file".into(),
-                "list_directory".into(),
+                tool_names::READ_FILE.into(),
+                tool_names::LIST_DIRECTORY.into(),
                 "search_files".into(),
-                "search_content".into(),
+                tool_names::SEARCH_CONTENT.into(),
                 "read_lints".into(),
             ],
             denied_tools: vec![
-                "write_file".into(),
-                "replace_in_file".into(),
-                "delete_file".into(),
-                "make_directory".into(),
-                "execute_command".into(),
+                tool_names::WRITE_FILE.into(),
+                tool_names::REPLACE_IN_FILE.into(),
+                tool_names::DELETE_FILE.into(),
+                tool_names::MAKE_DIRECTORY.into(),
+                tool_names::EXECUTE_COMMAND.into(),
                 "git_*".into(),
-                "delegate_task".into(),
-                "web_search".into(),
-                "web_fetch".into(),
+                tool_names::DELEGATE_TASK.into(),
+                tool_names::WEB_SEARCH.into(),
+                tool_names::WEB_FETCH.into(),
             ],
             system_prompt_extension: concat!(
                 "你是需求分析员，只能分析用户需求，不能修改任何文件。\n",
@@ -326,7 +327,7 @@ pub fn builtin_profiles() -> Vec<SubagentProfile> {
                 "  - reviewer：代码审查，检查质量和安全\n",
                 "  - tester：测试执行，验证功能\n",
                 "输出格式：清晰地列出分析结果和建议的子任务划分，每个子任务包含目标、推荐角色和预期产出。\n",
-                "不要调用 create_workflow 工具，你只负责分析需求。主 Agent 会根据你的分析结果决定是否创建工 作流。"
+                "你只负责分析需求；主 Agent 会根据你的分析结果决定后续的委派与执行。"
             )
             .into(),
             model_override: None,
@@ -384,7 +385,7 @@ pub fn delegate_task_tool_spec() -> ToolSpec {
     ToolSpec {
         kind: "function".into(),
         function: super::models::ToolFunctionSpec {
-            name: "delegate_task".into(),
+            name: tool_names::DELEGATE_TASK.into(),
             description: concat!(
                 "创建一个子智能体执行独立子任务，复杂/多步任务应优先委托。可用角色：",
                 "explorer(只读探索)、coder(实现)、general(全能力)、architect(架构)、debugger(诊断)、",
@@ -410,7 +411,12 @@ pub fn delegate_task_tool_spec() -> ToolSpec {
                     },
                     "wait": {
                         "type": "boolean",
-                        "description": "是否等待子智能体完成（默认 true）。设为 false 时子智能体在后台运行，主 Agent 立即继续；其完成后结果会以系统通知自动注入对话，也可随时用 get_subagent_result 工具按 subagent_id 主动查询或等待结果。"
+                        "description": "是否等待子智能体完成（默认 true）。设为 false 时子智能体在后台运行，主 Agent 立即继续；其完成后结果会以系统通知自动注入对话，也可随时用 get_subagent_result 工具按 subagent_id 主动查询或等待结果。后台子智能体始终在共享项目目录工作（不适用 worktree 隔离）。"
+                    },
+                    "isolation": {
+                        "type": "string",
+                        "enum": ["worktree", "shared"],
+                        "description": "写入类任务的文件隔离方式（仅 wait=true 时生效）。git 项目默认 worktree：子智能体在独立 git worktree+分支上工作，完成后自动合并回当前分支（冲突会报告冲突文件）；shared 表示在共享项目目录工作（有文件锁保护）。注意：worktree 基于主检出当前 HEAD，不含主目录未提交的改动；需要基于未提交改动工作时请传 shared。并行启动的多个 worktree 子任务从同一 HEAD 分叉、互相看不到对方的未合并产物——相互依赖的任务应串行委托，或在任务描述中写明预期由谁产出什么。"
                     }
                 },
                 "required": ["profile", "task"]
@@ -428,11 +434,13 @@ pub fn delegate_tasks_tool_spec() -> ToolSpec {
     ToolSpec {
         kind: "function".into(),
         function: super::models::ToolFunctionSpec {
-            name: "delegate_tasks".into(),
+            name: tool_names::DELEGATE_TASKS.into(),
             description: concat!(
                 "批量创建多个子智能体并行执行。所有子任务同时启动，总耗时约等于最慢的子任务；",
                 "context 参数注入公共背景，避免每个子任务重复描述；单次调用启动全部子智能体。",
-                "适用场景：同时探索多个独立目录、并行实现+测试、多个独立分析任务等彼此独立的子任务组合。"
+                "适用场景：同时探索多个独立目录、并行实现+测试、多个独立分析任务等彼此独立的子任务组合。",
+                "git 项目上写入类任务默认使用独立 worktree 隔离（各自分支，完成后自动合并回当前分支，",
+                "冲突会报告冲突文件清单），任务间不会互相覆盖文件；并行写入任务仍应尽量按文件集分工。"
             )
             .into(),
             parameters: serde_json::json!({
@@ -460,6 +468,11 @@ pub fn delegate_tasks_tool_spec() -> ToolSpec {
                                     "type": "array",
                                     "items": {"type": "string"},
                                     "description": "该子任务相关的初始文件路径列表（相对于项目根目录）"
+                                },
+                                "isolation": {
+                                    "type": "string",
+                                    "enum": ["worktree", "shared"],
+                                    "description": "该任务的文件隔离方式。git 项目上写入类任务默认 worktree（独立分支，完成后自动合并，冲突会报告）；shared 在共享项目目录工作（有文件锁保护）。注意：worktree 不含主目录未提交的改动；需要基于未提交改动工作时请传 shared。"
                                 }
                             },
                             "required": ["profile", "task"]
@@ -482,7 +495,7 @@ pub fn get_subagent_result_tool_spec() -> ToolSpec {
     ToolSpec {
         kind: "function".into(),
         function: super::models::ToolFunctionSpec {
-            name: "get_subagent_result".into(),
+            name: tool_names::GET_SUBAGENT_RESULT.into(),
             description: concat!(
                 "查询/等待后台子智能体的结果（配合 delegate_task(wait=false) 使用）。",
                 "wait=true（默认）时阻塞等待其完成并返回结果（超时返回当前状态，可再次调用）；",
@@ -512,63 +525,6 @@ pub fn get_subagent_result_tool_spec() -> ToolSpec {
     }
 }
 
-/// Build the ToolSpec for the `create_workflow` tool.
-/// Lets the LLM create a sub-agent workflow that executes sequentially.
-/// Use case: complex tasks requiring multiple sub-agents to cooperate in order.
-pub fn create_workflow_tool_spec() -> ToolSpec {
-    ToolSpec {
-        kind: "function".into(),
-        function: super::models::ToolFunctionSpec {
-            name: "create_workflow".into(),
-            description: concat!(
-                "创建一个按顺序执行的子智能体工作流。\n\n",
-                "适用于复杂任务，需要多个子智能体分工协作、按序完成的场景。\n",
-                "调用此工具后，系统会按步骤顺序依次执行，每个步骤的输出会自动传递到下一步作为上下文。\n\n",
-                "典型工作流序列示例：\n",
-                "- requirements → architect → coder → reviewer → tester（全流程开发）\n",
-                "- explorer → coder（探索 + 实现）\n",
-                "- debugger → coder（诊断 + 修复）\n",
-                "- explorer → writer（探索 + 文档化）\n\n",
-                "注意：每个步骤是**顺序执行**的（非并行），前一步完成后下一步才开始。",
-            )
-            .into(),
-            parameters: serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "title": {
-                        "type": "string",
-                        "description": "工作流的标题/目的简述"
-                    },
-                    "steps": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "profile": {
-                                    "type": "string",
-                                    "description": "子智能体类型：explorer、coder、general、architect、debugger、reviewer、writer、tester、requirements、vision，或任意自定义角色 ID"
-                                },
-                                "name": {
-                                    "type": "string",
-                                    "description": "步骤的简要名称（如\"代码探索\"、\"实现登录模块\"）"
-                                },
-                                "task": {
-                                    "type": "string",
-                                    "description": "分配给该子智能体执行的任务描述。应包含具体目标、预期产出和必要上下文。"
-                                }
-                            },
-                            "required": ["profile", "name", "task"]
-                        },
-                        "description": "工作流步骤列表（按顺序执行）",
-                        "minItems": 2
-                    }
-                },
-                "required": ["title", "steps"]
-            }),
-        },
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -576,103 +532,103 @@ mod tests {
     #[test]
     fn test_explorer_profile_tool_restrictions() {
         let explorer = find_profile("explorer", &[]).unwrap();
-        assert!(explorer.is_tool_allowed("read_file"));
+        assert!(explorer.is_tool_allowed(tool_names::READ_FILE));
         assert!(explorer.is_tool_allowed("search_files"));
-        assert!(explorer.is_tool_allowed("web_search"));
-        assert!(!explorer.is_tool_allowed("write_file"));
-        assert!(!explorer.is_tool_allowed("delete_file"));
-        assert!(!explorer.is_tool_allowed("execute_command"));
+        assert!(explorer.is_tool_allowed(tool_names::WEB_SEARCH));
+        assert!(!explorer.is_tool_allowed(tool_names::WRITE_FILE));
+        assert!(!explorer.is_tool_allowed(tool_names::DELETE_FILE));
+        assert!(!explorer.is_tool_allowed(tool_names::EXECUTE_COMMAND));
         assert!(!explorer.is_tool_allowed("git_commit"));
-        assert!(!explorer.is_tool_allowed("delegate_task"));
+        assert!(!explorer.is_tool_allowed(tool_names::DELEGATE_TASK));
     }
 
     #[test]
     fn test_coder_profile_tool_restrictions() {
         let coder = find_profile("coder", &[]).unwrap();
-        assert!(coder.is_tool_allowed("read_file"));
-        assert!(coder.is_tool_allowed("write_file"));
-        assert!(!coder.is_tool_allowed("execute_command"));
-        assert!(!coder.is_tool_allowed("delegate_task"));
+        assert!(coder.is_tool_allowed(tool_names::READ_FILE));
+        assert!(coder.is_tool_allowed(tool_names::WRITE_FILE));
+        assert!(!coder.is_tool_allowed(tool_names::EXECUTE_COMMAND));
+        assert!(!coder.is_tool_allowed(tool_names::DELEGATE_TASK));
     }
 
     #[test]
     fn test_general_profile_no_recursion() {
         let general = find_profile("general", &[]).unwrap();
-        assert!(general.is_tool_allowed("read_file"));
-        assert!(general.is_tool_allowed("execute_command"));
-        assert!(!general.is_tool_allowed("delegate_task"));
+        assert!(general.is_tool_allowed(tool_names::READ_FILE));
+        assert!(general.is_tool_allowed(tool_names::EXECUTE_COMMAND));
+        assert!(!general.is_tool_allowed(tool_names::DELEGATE_TASK));
     }
 
     #[test]
     fn test_architect_profile_read_only() {
         let architect = find_profile("architect", &[]).unwrap();
-        assert!(architect.is_tool_allowed("read_file"));
-        assert!(architect.is_tool_allowed("web_search"));
-        assert!(!architect.is_tool_allowed("write_file"));
-        assert!(!architect.is_tool_allowed("execute_command"));
-        assert!(!architect.is_tool_allowed("delegate_task"));
+        assert!(architect.is_tool_allowed(tool_names::READ_FILE));
+        assert!(architect.is_tool_allowed(tool_names::WEB_SEARCH));
+        assert!(!architect.is_tool_allowed(tool_names::WRITE_FILE));
+        assert!(!architect.is_tool_allowed(tool_names::EXECUTE_COMMAND));
+        assert!(!architect.is_tool_allowed(tool_names::DELEGATE_TASK));
     }
 
     #[test]
     fn test_debugger_profile_can_execute() {
         let debugger = find_profile("debugger", &[]).unwrap();
-        assert!(debugger.is_tool_allowed("read_file"));
-        assert!(debugger.is_tool_allowed("execute_command"));
-        assert!(!debugger.is_tool_allowed("write_file"));
-        assert!(!debugger.is_tool_allowed("delegate_task"));
+        assert!(debugger.is_tool_allowed(tool_names::READ_FILE));
+        assert!(debugger.is_tool_allowed(tool_names::EXECUTE_COMMAND));
+        assert!(!debugger.is_tool_allowed(tool_names::WRITE_FILE));
+        assert!(!debugger.is_tool_allowed(tool_names::DELEGATE_TASK));
     }
 
     #[test]
     fn test_reviewer_profile_read_only() {
         let reviewer = find_profile("reviewer", &[]).unwrap();
-        assert!(reviewer.is_tool_allowed("read_file"));
+        assert!(reviewer.is_tool_allowed(tool_names::READ_FILE));
         assert!(reviewer.is_tool_allowed("read_lints"));
-        assert!(!reviewer.is_tool_allowed("write_file"));
-        assert!(!reviewer.is_tool_allowed("execute_command"));
-        assert!(!reviewer.is_tool_allowed("delegate_task"));
+        assert!(!reviewer.is_tool_allowed(tool_names::WRITE_FILE));
+        assert!(!reviewer.is_tool_allowed(tool_names::EXECUTE_COMMAND));
+        assert!(!reviewer.is_tool_allowed(tool_names::DELEGATE_TASK));
     }
 
     #[test]
     fn test_writer_profile_can_write() {
         let writer = find_profile("writer", &[]).unwrap();
-        assert!(writer.is_tool_allowed("read_file"));
-        assert!(writer.is_tool_allowed("write_file"));
-        assert!(writer.is_tool_allowed("replace_in_file"));
-        assert!(!writer.is_tool_allowed("execute_command"));
-        assert!(!writer.is_tool_allowed("delete_file"));
-        assert!(!writer.is_tool_allowed("delegate_task"));
+        assert!(writer.is_tool_allowed(tool_names::READ_FILE));
+        assert!(writer.is_tool_allowed(tool_names::WRITE_FILE));
+        assert!(writer.is_tool_allowed(tool_names::REPLACE_IN_FILE));
+        assert!(!writer.is_tool_allowed(tool_names::EXECUTE_COMMAND));
+        assert!(!writer.is_tool_allowed(tool_names::DELETE_FILE));
+        assert!(!writer.is_tool_allowed(tool_names::DELEGATE_TASK));
     }
 
     #[test]
     fn test_tester_profile_can_execute() {
         let tester = find_profile("tester", &[]).unwrap();
-        assert!(tester.is_tool_allowed("read_file"));
-        assert!(tester.is_tool_allowed("write_file"));
-        assert!(tester.is_tool_allowed("execute_command"));
-        assert!(!tester.is_tool_allowed("delete_file"));
-        assert!(!tester.is_tool_allowed("delegate_task"));
+        assert!(tester.is_tool_allowed(tool_names::READ_FILE));
+        assert!(tester.is_tool_allowed(tool_names::WRITE_FILE));
+        assert!(tester.is_tool_allowed(tool_names::EXECUTE_COMMAND));
+        assert!(!tester.is_tool_allowed(tool_names::DELETE_FILE));
+        assert!(!tester.is_tool_allowed(tool_names::DELEGATE_TASK));
     }
 
     #[test]
     fn test_requirements_profile_read_only() {
         let requirements = find_profile("requirements", &[]).unwrap();
-        assert!(requirements.is_tool_allowed("read_file"));
+        assert!(requirements.is_tool_allowed(tool_names::READ_FILE));
         assert!(requirements.is_tool_allowed("search_files"));
-        assert!(requirements.is_tool_allowed("search_content"));
+        assert!(requirements.is_tool_allowed(tool_names::SEARCH_CONTENT));
         assert!(requirements.is_tool_allowed("read_lints"));
-        assert!(!requirements.is_tool_allowed("write_file"));
-        assert!(!requirements.is_tool_allowed("replace_in_file"));
-        assert!(!requirements.is_tool_allowed("delete_file"));
-        assert!(!requirements.is_tool_allowed("execute_command"));
-        assert!(!requirements.is_tool_allowed("web_search"));
-        assert!(!requirements.is_tool_allowed("web_fetch"));
-        assert!(!requirements.is_tool_allowed("delegate_task"));
+        assert!(!requirements.is_tool_allowed(tool_names::WRITE_FILE));
+        assert!(!requirements.is_tool_allowed(tool_names::REPLACE_IN_FILE));
+        assert!(!requirements.is_tool_allowed(tool_names::DELETE_FILE));
+        assert!(!requirements.is_tool_allowed(tool_names::EXECUTE_COMMAND));
+        assert!(!requirements.is_tool_allowed(tool_names::WEB_SEARCH));
+        assert!(!requirements.is_tool_allowed(tool_names::WEB_FETCH));
+        assert!(!requirements.is_tool_allowed(tool_names::DELEGATE_TASK));
     }
     #[test]
     fn test_glob_match() {
         assert!(simple_glob_match("git_*", "git_status"));
         assert!(simple_glob_match("git_*", "git_commit"));
-        assert!(!simple_glob_match("git_*", "read_file"));
+        assert!(!simple_glob_match("git_*", tool_names::READ_FILE));
         assert!(simple_glob_match("*", "anything"));
         assert!(simple_glob_match("exact", "exact"));
         assert!(!simple_glob_match("exact", "other"));

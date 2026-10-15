@@ -15,6 +15,12 @@ export const EVENTS = {
   codeIndexProgress: 'code-index-progress',
   /** App update download progress */
   appUpdateProgress: 'app-update-progress',
+  /** Memory auto fact extraction lifecycle (running / done / error) */
+  memoryExtractProgress: 'memory-extract-progress',
+  /** Memory consolidation lifecycle (running / done / error) */
+  memoryConsolidateProgress: 'memory-consolidate-progress',
+  /** Long-running agent shell command lifecycle (running heartbeat / terminal) */
+  commandProgress: 'command-progress',
 
   /** Start of one LLM call round */
   llmRoundStart: 'llm-round-start',
@@ -36,14 +42,11 @@ export const EVENTS = {
   /** Subagent started / stepped / done / error */
   subagentStart: 'subagent-start',
   subagentStep: 'subagent-step',
+  /** Subagent live streaming deltas (text / reasoning) */
+  subagentChunk: 'subagent-chunk',
+  subagentReasoning: 'subagent-reasoning',
   subagentDone: 'subagent-done',
   subagentError: 'subagent-error',
-
-  /** Workflow started / step started / step completed / completed */
-  workflowStart: 'workflow-start',
-  workflowStepStart: 'workflow-step-start',
-  workflowStepComplete: 'workflow-step-complete',
-  workflowComplete: 'workflow-complete',
 
   /** MCP server status change / stderr / tool-list change */
   mcpServerStatus: 'mcp-server-status',
@@ -53,8 +56,25 @@ export const EVENTS = {
   /** Tool approval request */
   toolApprovalRequested: 'tool-approval-requested',
 
+  /** Tool approval expired (backend timed out; the bubble removes itself) */
+  toolApprovalExpired: 'tool-approval-expired',
+
+  /** Agent task board changed (create_tasks / update_task) */
+  agentTasksChanged: 'agent-tasks-changed',
+
+  /** Agent asks the user clarification questions (options + custom input) */
+  agentQuestionRequested: 'agent-question-requested',
+
   /** BTW side-question streaming delta */
   btwChunk: 'btw-chunk',
+
+  /** LSP diagnostics updated / server stderr / server status */
+  lspDiagnosticsUpdated: 'lsp-diagnostics-updated',
+  lspServerStderr: 'lsp-server-stderr',
+  lspServerStatus: 'lsp-server-status',
+
+  /** Models catalog updated (fresh fetch persisted) */
+  modelsCatalogUpdated: 'models-catalog-updated',
 } as const;
 
 export type EventName = (typeof EVENTS)[keyof typeof EVENTS];

@@ -8,7 +8,14 @@ import {
 } from '../api/chat';
 import { listen } from '@tauri-apps/api/event';
 import { listSkills } from '../api/skills';
-import { listMcpServerStatuses, listMcpServers, listMcpTools, startMcpServer } from '../api/mcp';
+import {
+  listMcpServerStatuses,
+  listMcpServers,
+  listMcpTools,
+  listUntrustedProjectMcpServers,
+  startMcpServer,
+  trustProjectMcpServer,
+} from '../api/mcp';
 import { EVENTS } from '../api/events';
 import type {
   McpServerConfig,
@@ -27,6 +34,7 @@ import {
 } from './models';
 import { currentProjectId, projects } from './project';
 import { isDarkMode, themeColor } from './ui-prefs';
+import { selectAutoStartIds } from '../utils/mcp';
 export interface DatasState {
   /** All assistants, including their topics and message trees */
   assistants: Assistant[];
@@ -51,6 +59,19 @@ export const [mcpServerStatus, setMcpServerStatus] = createSignal<
 export const [mcpToolsCache, setMcpToolsCache] = createSignal<ToolSpec[]>([]);
 /** Global skill config map (id → config). */
 export const [skills, setSkills] = createSignal<Record<string, SkillConfig>>({});
+
+/**
+ * 项目级 MCP 待确认队列（P0-1 信任门的前端侧）。
+ * 打开/切换项目时填充来自 `.aio/mcp-servers.json` 且尚未信任的服务器；
+ * autoStart 对它们一律跳过，直到用户确认（落盘信任标记）或忽略（仅本次会话）。
+ */
+export const [pendingProjectMcpServers, setPendingProjectMcpServers] = createSignal<
+  McpServerConfig[]
+>([]);
+/** 待确认队列归属的项目 ID。 */
+export const [pendingProjectMcpProjectId, setPendingProjectMcpProjectId] = createSignal<
+  string | null
+>(null);
 
 /** LLM tool call event bus (listened to by ChatPage) */
 export const [pendingToolCall, setPendingToolCall] = createSignal<LlmToolCallPayload | null>(null);
@@ -92,7 +113,16 @@ const installMcpListeners = async () => {
 };
 
 /**
- * Load and initialize the MCP server list, sync backend connection status, and auto-start servers marked autoStart
+ * 进行中的 autoStart（跨 initMcpServers 并发调用去重）。initMcpServers 有多个
+ * 触发点（应用启动 / 项目选择 / ChatPage effect / 模式选择 / topic 操作），项目
+ * 打开瞬间并发触发；各调用在首个 start 完成前快照 statusMap，看不到 connecting
+ * 态，会对同一 server 重复 start（后端为重启语义：杀旧起新）。
+ */
+const autoStartsInFlight = new Set<string>();
+
+/**
+ * Load and initialize the MCP server list, sync backend connection status, and auto-start servers marked autoStart.
+ * Project-repo servers that are not trusted yet never auto-start; they enter the pending-confirmation queue instead.
  */
 export const initMcpServers = async (projectId?: string | null) => {
   try {
@@ -107,17 +137,73 @@ export const initMcpServers = async (projectId?: string | null) => {
     // Install the process-level background listeners first (await them before autoStart to avoid lost events)
     await installMcpListeners();
 
-    // Auto-start servers marked autoStart (skip connected ones to avoid duplicate starts)
+    // P0-1: project-level untrusted servers go to the confirmation queue instead of auto-starting
+    let untrustedIds = new Set<string>();
+    if (projectId) {
+      try {
+        const untrusted = await listUntrustedProjectMcpServers(projectId);
+        if (untrusted.length > 0) {
+          untrustedIds = new Set(untrusted.map((cfg) => cfg.id));
+          setPendingProjectMcpProjectId(projectId);
+          setPendingProjectMcpServers(untrusted);
+        } else {
+          setPendingProjectMcpProjectId(null);
+          setPendingProjectMcpServers([]);
+        }
+      } catch {
+        // Untrusted listing is best-effort; the backend start gate still refuses untrusted spawns
+      }
+    }
+
+    // Auto-start servers marked autoStart (skip connected + untrusted project servers)
     // (Whether an assistant uses a server is filtered by Assistant.mcpServerIds in list_mcp_tools_for_assistant)
-    const autoStartIds = Object.values(map)
-      .filter((cfg) => cfg.autoStart && statusMap[cfg.id]?.status !== 'connected')
-      .map((cfg) => cfg.id);
+    const autoStartIds = selectAutoStartIds(map, statusMap, untrustedIds).filter(
+      (id) => !autoStartsInFlight.has(id),
+    );
     if (autoStartIds.length > 0) {
       const pid = projectId ?? null;
-      await Promise.allSettled(autoStartIds.map((id) => startMcpServerAndRefresh(id, pid)));
+      await Promise.allSettled(
+        autoStartIds.map(async (id) => {
+          autoStartsInFlight.add(id);
+          try {
+            await startMcpServerAndRefresh(id, pid);
+          } finally {
+            autoStartsInFlight.delete(id);
+          }
+        }),
+      );
     }
   } catch (e) {
-    console.warn('加载 MCP server 列表失败:', e);
+    console.warn('Failed to load MCP server list:', e);
+  }
+};
+
+/**
+ * Confirm trust for one project-level MCP server: persist the trust marker
+ * (config fingerprint, repo changes revoke it), then start the server.
+ */
+export const confirmProjectMcpServer = async (cfg: McpServerConfig): Promise<void> => {
+  const pid = pendingProjectMcpProjectId() ?? currentProjectId();
+  if (!pid) return;
+  try {
+    await trustProjectMcpServer(pid, cfg.id);
+    setPendingProjectMcpServers((prev) => prev.filter((c) => c.id !== cfg.id));
+    if (pendingProjectMcpServers().length === 0) {
+      setPendingProjectMcpProjectId(null);
+    }
+    await startMcpServerAndRefresh(cfg.id, pid).catch(() => {
+      // Start failure is surfaced via mcp-server-status; trust itself already succeeded
+    });
+  } catch (e) {
+    console.warn('Failed to trust project MCP server:', e);
+  }
+};
+
+/** Dismiss one pending project MCP server (this session only; re-prompted on next app start). */
+export const dismissProjectMcpServer = (id: string) => {
+  setPendingProjectMcpServers((prev) => prev.filter((c) => c.id !== id));
+  if (pendingProjectMcpServers().length === 0) {
+    setPendingProjectMcpProjectId(null);
   }
 };
 
@@ -162,7 +248,7 @@ export const refreshMcpToolsCache = async () => {
     const tools = await listMcpTools(currentProjectId());
     setMcpToolsCache(tools);
   } catch (e) {
-    console.warn('刷新 MCP 工具缓存失败:', e);
+    console.warn('Failed to refresh MCP tool cache:', e);
   }
 };
 
@@ -238,7 +324,7 @@ export const saveSingleAssistantToBackend = async (id: string) => {
     // Deep-clone to strip the SolidJS reactive proxy so the value is serializable
     await saveAssistantApi(JSON.parse(JSON.stringify(asst)));
   } catch (err) {
-    console.error('保存助手失败:', err);
+    console.error('Failed to save assistant:', err);
   }
 };
 
@@ -253,6 +339,16 @@ export const [pendingRenameRequest, setPendingRenameRequest] = createSignal<{
   asstId: string;
   topicId: string;
 } | null>(null);
+
+// ====== Context compaction progress ======
+
+/**
+ * Topic ID whose context is being compacted right now (manual /compact or the
+ * conversation-end auto path). Renders an in-record "compacting" pill with a
+ * spinner (mainstream visual feedback, cf. DSH's in-record compaction indicator);
+ * null when idle. Cleared when the run settles.
+ */
+export const [compactingTopicId, setCompactingTopicId] = createSignal<string | null>(null);
 
 /**
  * Trigger regeneration of a topic title (manual entry point).
@@ -296,7 +392,7 @@ export const deleteAssistantFile = async (id: string) => {
   try {
     await deleteAssistantApi(id);
   } catch (err) {
-    console.error('物理删除失败:', err);
+    console.error('Failed to hard-delete:', err);
   }
 };
 
@@ -366,7 +462,7 @@ export const initSkills = async (projectId?: string | null) => {
     const list = await listSkills(projectId);
     setSkills(Object.fromEntries(list.map((skill) => [skill.id, skill])));
   } catch (e) {
-    console.warn('加载 Skill 列表失败:', e);
+    console.warn('Failed to load skill list:', e);
   }
 };
 

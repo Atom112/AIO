@@ -9,10 +9,10 @@ import {
   Show,
   untrack,
 } from 'solid-js';
-import { open } from '@tauri-apps/plugin-shell';
+import { openSafeUrl } from '../../../core/utils/safeUrl';
 import {
   loadAppConfig,
-  saveAppConfig,
+  patchAppConfig,
   setAutoStart as apiSetAutoStart,
 } from '../../../core/api/config';
 import { checkAppUpdate, type CheckUpdateResult } from '../../../core/api/update';
@@ -37,14 +37,17 @@ import {
   formatShortcutForDisplay,
   getCommandDisplayLabel,
   getCommandDisplayDescription,
+  setShortcutRecording,
   type CommandAction,
 } from '../../../core/shortcuts';
 import { getVersion } from '@tauri-apps/api/app';
 import Icon from '../../../shared/components/Icon';
 import NumberInput from '../../../shared/components/NumberInput';
+import Switch from '../../../shared/components/Switch';
+import Dropdown from '../../../shared/components/Dropdown';
 import {
   btnIcon,
-  btnPrimary,
+  btnPrimaryOutline,
   btnSecondary,
   btnSecondarySm,
   btnTabXs,
@@ -67,8 +70,9 @@ const AppSettings: Component = () => {
   const [s, setS] = createSignal(0); // Saturation (0-100%)
   const [l, setL] = createSignal(0); // Lightness (0-100%)
   const [autoStart, setAutoStart] = createSignal(false);
-  const [maxToolRounds, setMaxToolRounds] = createSignal(25); // Max tool-call rounds per agent turn (default 25)
-  const [maxConcurrentSubagents, setMaxConcurrentSubagents] = createSignal(5); // Max concurrent subagents (default 5)
+  const [maxToolRounds, setMaxToolRounds] = createSignal(25); // Max tool-call rounds per agent turn (0 = unlimited; default 25)
+  const [maxConcurrentSubagents, setMaxConcurrentSubagents] = createSignal(5); // Max concurrent subagents (0 = unlimited; default 5)
+
   const [version, setVersion] = createSignal(''); // App version
   const [checkUpdating, setCheckUpdating] = createSignal(false); // Manual update check in progress
   const [checkResult, setCheckResult] = createSignal<CheckUpdateResult | null>(null); // Result of the last manual check
@@ -81,16 +85,23 @@ const AppSettings: Component = () => {
     conflictActionId: string;
   } | null>(null); // Conflict confirmation dialog state
   const [resetAllConfirm, setResetAllConfirm] = createSignal(false); // Reset-all confirmation state
-  const [langOpen, setLangOpen] = createSignal(false); // Language dropdown open state
-  let langRef: HTMLDivElement | undefined; // Language dropdown container
+
   let recordingCleanup: (() => void) | null = null; // Recording-mode cleanup function
 
-  onMount(() => {
-    const onDocMouse = (e: MouseEvent) => {
-      if (langOpen() && langRef && !langRef.contains(e.target as Node)) setLangOpen(false);
-    };
-    document.addEventListener('mousedown', onDocMouse);
-    onCleanup(() => document.removeEventListener('mousedown', onDocMouse));
+  // ---- FE-07: debounced single-IPC config patches ----
+  // A keystroke no longer triggers a full load→save round-trip: only the changed
+  // field is sent (backend merges it atomically in `patch_app_config`), debounced
+  // per field so fast typing collapses into one call.
+  const patchTimers: Record<string, ReturnType<typeof setTimeout>> = {};
+  const schedulePatch = (field: string, run: () => Promise<void>, delayMs = 400) => {
+    clearTimeout(patchTimers[field]);
+    patchTimers[field] = setTimeout(() => {
+      delete patchTimers[field];
+      void run();
+    }, delayMs);
+  };
+  onCleanup(() => {
+    Object.values(patchTimers).forEach((id) => clearTimeout(id));
   });
 
   /**
@@ -106,7 +117,7 @@ const AppSettings: Component = () => {
       const v = await getVersion();
       setVersion(v);
     } catch (e) {
-      console.error('获取版本失败', e);
+      console.error('Failed to fetch version', e);
     }
 
     // Load the auto-start config
@@ -115,14 +126,14 @@ const AppSettings: Component = () => {
       if (typeof cfg?.autoStartEnabled === 'boolean') {
         setAutoStart(cfg.autoStartEnabled);
       }
-      if (typeof cfg?.maxToolRounds === 'number' && cfg.maxToolRounds > 0) {
+      if (typeof cfg?.maxToolRounds === 'number') {
         setMaxToolRounds(cfg.maxToolRounds);
       }
-      if (typeof cfg?.maxConcurrentSubagents === 'number' && cfg.maxConcurrentSubagents > 0) {
+      if (typeof cfg?.maxConcurrentSubagents === 'number') {
         setMaxConcurrentSubagents(cfg.maxConcurrentSubagents);
       }
     } catch (e) {
-      console.warn('加载应用配置失败:', e);
+      console.warn('Failed to load app config:', e);
     }
   });
 
@@ -199,7 +210,7 @@ const AppSettings: Component = () => {
           break;
       }
     } catch (e) {
-      console.error('手动检查更新失败:', e);
+      console.error('Manual update check failed:', e);
       setCheckResult({
         kind: 'failed',
         current_version: version(),
@@ -343,6 +354,8 @@ const AppSettings: Component = () => {
       recordingCleanup = null;
     }
     setRecordingActionId(actionId);
+    // P3（录制互斥）：通知全局键盘处理器让位
+    setShortcutRecording(true);
 
     const onKeyDown = (e: KeyboardEvent) => {
       const combo = normalizeKeyCombo(e);
@@ -377,6 +390,7 @@ const AppSettings: Component = () => {
 
   /** Stop recording */
   const stopRecording = () => {
+    setShortcutRecording(false);
     setRecordingActionId(null);
     if (recordingCleanup) {
       recordingCleanup();
@@ -401,13 +415,12 @@ const AppSettings: Component = () => {
   // Clicking elsewhere on the page cancels recording
   const onDocClick = (e: MouseEvent) => {
     if (recordingActionId()) {
-      // Check whether the click is on a shortcut badge
+      // Check whether the click is on a shortcut badge.
+      // FE-02: data-* 属性选择器——整段 Tailwind class 串不是合法 CSS 选择器
+      // （closest 直接抛 SyntaxError 且无 catch，录制永远无法通过点击取消，
+      // Escape 也会被误录成绑定）
       const target = e.target as HTMLElement;
-      if (
-        !target.closest(
-          '.inline-flex items-center px-2.5 py-1 rounded-md cursor-pointer transition-all duration-150 select-none bg-white/[0.04] border border-white/[0.06] min-w-[70px] justify-center hover:bg-white/[0.07] hover:border-white/[0.1]',
-        )
-      ) {
+      if (!target.closest('[data-shortcut-badge]')) {
         stopRecording();
       }
     }
@@ -499,60 +512,13 @@ const AppSettings: Component = () => {
               {t('app.language.description')} {t('app.language.system')}
             </p>
           </div>
-          <div class="relative min-w-[150px]" ref={langRef}>
-            <button
-              type="button"
-              class="w-full flex items-center justify-between gap-2 px-3 py-1.5 rounded-lg text-xs text-left cursor-pointer outline-none border border-[var(--border-dim)] transition-all duration-150"
-              onClick={() => setLangOpen(!langOpen())}
-              aria-haspopup="listbox"
-              aria-expanded={langOpen()}
-            >
-              <span class="truncate text-white/80">
-                {locale() === 'zh-CN' ? t('app.language.zhCN') : t('app.language.enUS')}
-              </span>
-              <span class="text-white/30 text-[10px]">&#9662;</span>
-            </button>
-            <div
-              class="absolute z-[101] left-0 right-0 mt-1 rounded-[10px] p-1 transition-all duration-150 ease-out origin-top"
-              style={{
-                background: 'rgba(var(--surface-bg), 0.92)',
-                'backdrop-filter': 'blur(24px) saturate(150%)',
-                border: '1px solid var(--border-dim)',
-                'box-shadow': '0 12px 40px rgba(0, 0, 0, 0.45)',
-              }}
-              classList={{
-                'invisible opacity-0 scale-95 translate-y-1 pointer-events-none': !langOpen(),
-                'visible opacity-100 scale-100 translate-y-0': langOpen(),
-              }}
-              role="listbox"
-            >
-              <For each={langOptions()}>
-                {(opt) => {
-                  const sel = () => locale() === opt.value;
-                  return (
-                    <div
-                      class="flex items-center gap-1.5 px-2.5 py-[7px] rounded-md text-white/[0.78] cursor-pointer transition-[background,color] duration-[120ms] select-none"
-                      classList={{
-                        'text-white bg-pri-10': sel(),
-                        'text-white/55 hover:bg-white/[0.06] hover:text-white/80': !sel(),
-                      }}
-                      role="option"
-                      aria-selected={sel()}
-                      onClick={() => {
-                        setLocale(opt.value);
-                        setLangOpen(false);
-                      }}
-                    >
-                      <span class="grow truncate">{opt.label}</span>
-                      <Show when={sel()}>
-                        <Icon name="check" size={12} class="text-pri" />
-                      </Show>
-                    </div>
-                  );
-                }}
-              </For>
-            </div>
-          </div>
+          <Dropdown
+            variant="ghost"
+            class="min-w-[150px]"
+            value={locale()}
+            onChange={(v) => setLocale(v)}
+            options={langOptions()}
+          />
         </div>
 
         <div class="flex justify-between items-center py-3 border-b border-white/5">
@@ -590,24 +556,23 @@ const AppSettings: Component = () => {
             <p class="text-xs text-white/35 mt-1">{t('app.autoStart.description')}</p>
           </div>
 
-          <label class="relative inline-block w-[40px] h-[20px] cursor-pointer">
-            <input
-              class="opacity-0 w-0 h-0 peer"
-              type="checkbox"
-              checked={autoStart()}
-              onChange={async (e) => {
-                const val = e.currentTarget.checked;
-                setAutoStart(val);
+          {/* FE-10: shared Switch (last hand-copied toggle in the settings pages) */}
+          <Switch
+            checked={autoStart()}
+            onChange={(val) => {
+              setAutoStart(val);
+              void (async () => {
                 try {
                   await apiSetAutoStart(val);
                 } catch (err) {
-                  console.warn('设置自启失败:', err);
+                  console.warn('Failed to set auto-start:', err);
                   setAutoStart(!val); // Roll back
                 }
-              }}
-            />
-            <span class="absolute inset-0 bg-dark-300 border border-dark-100 rounded-full transition-all duration-300 peer-checked:bg-pri peer-checked:border-pri after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:bg-white after:w-3.5 after:h-3.5 after:rounded-full after:transition-all peer-checked:after:translate-x-5" />
-          </label>
+              })();
+            }}
+            variant="glow"
+            label={t('app.autoStart.title')}
+          />
         </div>
 
         <div class="flex justify-between items-center py-3 border-b border-white/5">
@@ -620,21 +585,21 @@ const AppSettings: Component = () => {
 
           <NumberInput
             value={maxToolRounds()}
-            min={1}
-            max={200}
+            min={-1}
+            max={2000}
             fallback={25}
             onInput={(clamped) => {
-              setMaxToolRounds(clamped);
-              void (async () => {
+              // 0 is forbidden: snap it PAST in the direction of travel — stepping up
+              // from -1 lands on 1, stepping down from 1 (or typing 0) lands on -1
+              const v = clamped === 0 ? (maxToolRounds() < 0 ? 1 : -1) : clamped;
+              setMaxToolRounds(v);
+              schedulePatch('maxToolRounds', async () => {
                 try {
-                  const cfg = await loadAppConfig().catch(() => null);
-                  if (cfg) {
-                    await saveAppConfig({ ...cfg, maxToolRounds: clamped });
-                  }
+                  await patchAppConfig({ maxToolRounds: v });
                 } catch (err) {
-                  console.warn('保存最大工具轮数配置失败:', err);
+                  console.warn('Failed to save max-tool-rounds config:', err);
                 }
-              })();
+              });
             }}
           />
         </div>
@@ -649,21 +614,21 @@ const AppSettings: Component = () => {
 
           <NumberInput
             value={maxConcurrentSubagents()}
-            min={1}
+            min={-1}
             max={32}
             fallback={5}
             onInput={(clamped) => {
-              setMaxConcurrentSubagents(clamped);
-              void (async () => {
+              // 0 is forbidden: snap it PAST in the direction of travel — stepping up
+              // from -1 lands on 1, stepping down from 1 (or typing 0) lands on -1
+              const v = clamped === 0 ? (maxConcurrentSubagents() < 0 ? 1 : -1) : clamped;
+              setMaxConcurrentSubagents(v);
+              schedulePatch('maxConcurrentSubagents', async () => {
                 try {
-                  const cfg = await loadAppConfig().catch(() => null);
-                  if (cfg) {
-                    await saveAppConfig({ ...cfg, maxConcurrentSubagents: clamped });
-                  }
+                  await patchAppConfig({ maxConcurrentSubagents: v });
                 } catch (err) {
-                  console.warn('保存并发子智能体上限配置失败:', err);
+                  console.warn('Failed to save concurrent-subagent cap config:', err);
                 }
-              })();
+              });
             }}
           />
         </div>
@@ -679,7 +644,7 @@ const AppSettings: Component = () => {
           <button
             type="button"
             class={btnSecondarySm + ' min-w-[112px]'}
-            onClick={() => open('https://github.com/Atom112/AIO')}
+            onClick={() => void openSafeUrl('https://github.com/Atom112/AIO')}
             title={t('app.openSource.visit')}
           >
             <Icon src="/icons/app-logo/github.svg" class="w-4 h-4" />
@@ -903,7 +868,7 @@ const AppSettings: Component = () => {
                   {t('common.cancel')}
                 </button>
                 <button
-                  class={btnPrimary}
+                  class={btnPrimaryOutline}
                   onClick={() => {
                     resetAllShortcutBindings();
                     setResetAllConfirm(false);
@@ -944,7 +909,7 @@ const AppSettings: Component = () => {
                 <button class={btnSecondary} onClick={handleConflictCancel}>
                   {t('common.cancel')}
                 </button>
-                <button class={btnPrimary} onClick={handleConflictOverride}>
+                <button class={btnPrimaryOutline} onClick={handleConflictOverride}>
                   {t('app.shortcuts.replace')}
                 </button>
               </div>
@@ -982,8 +947,9 @@ const AppSettings: Component = () => {
                         </span>
                       </div>
                       <div class="flex items-center gap-2 shrink-0">
-                        {/* Shortcut badge */}
+                        {/* Shortcut badge (data-shortcut-badge is the FE-02 anchor used by the onDocClick selector) */}
                         <div
+                          data-shortcut-badge=""
                           class={`inline-flex items-center px-2.5 py-1 rounded-md cursor-pointer transition-all duration-150 select-none bg-white/[0.04] border border-white/[0.06] min-w-[70px] justify-center hover:bg-white/[0.07] hover:border-white/[0.1]${isRecording() ? ' recording' : ''}${modified() ? ' modified' : ''}`}
                           onClick={() => {
                             if (isRecording()) {

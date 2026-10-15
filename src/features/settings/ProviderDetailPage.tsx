@@ -36,15 +36,30 @@ import { getProviderLogo } from '../../core/utils/modelLogo';
 import ModelRow from '../../shared/components/ModelRow';
 import Icon from '../../shared/components/Icon';
 import Dropdown from '../../shared/components/Dropdown';
+// 阶段4（设置样板收敛）: shared glow switch + toast (was per-page inline copies)
+import Switch from '../../shared/components/Switch';
+import { ToastBubble, useToast } from '../../shared/components/Toast';
 import {
-  btnDanger,
+  btnDangerOutline,
   btnIcon,
   btnSecondarySm,
-  btnSuccess,
+  btnSuccessOutline,
 } from '../../shared/components/buttonStyles';
 import { formatNumber, reportError, t } from '../../core/i18n';
 
 type SortKey = 'releaseDesc' | 'nameAsc';
+
+/**
+ * FE-4: order-insensitive content equality for fetched model lists, used by the
+ * Ollama liveness poll to skip no-op disk writes (the poll fires every 5s).
+ */
+const sameFetchedModels = (a: FetchedModel[] | undefined, b: FetchedModel[]): boolean => {
+  if (!a || a.length !== b.length) return false;
+  const key = (m: FetchedModel) =>
+    `${m.id}|${m.ownedBy ?? ''}|${m.displayName ?? ''}|${m.releasedAt ?? ''}`;
+  const sa = new Set(a.map(key));
+  return b.every((m) => sa.has(key(m)));
+};
 
 const ProviderDetail: Component = () => {
   const params = useParams<{ providerId: string }>();
@@ -57,7 +72,8 @@ const ProviderDetail: Component = () => {
 
   // ===== catalog / state =====
   const [catalogReady, setCatalogReady] = createSignal(false);
-  const [toast, setToast] = createSignal<{ msg: string; ok: boolean } | null>(null);
+  // 阶段4（设置样板收敛）: shared toast state (timer auto-cleared on replace + dispose)
+  const { toast, showToast } = useToast();
 
   const [testState, setTestState] = createSignal<{
     status: 'idle' | 'testing' | 'ok' | 'fail';
@@ -102,6 +118,12 @@ const ProviderDetail: Component = () => {
   /** The user's current config for this provider (from the store) */
   const userCfg = () => providerConfigs()[providerId()] ?? null;
 
+  // FE-4: persistence serialization + typing-burst debounce state
+  const DEBOUNCE_MS = 400;
+  let persistChain: Promise<void> = Promise.resolve();
+  let pendingOverrides: Partial<ProviderConfig> | null = null;
+  let persistTimer: number | undefined;
+
   /** Provider metadata from the catalog; falls back (e.g. local engine) when not found */
   const providerMeta = createMemo(() => {
     const c = cat();
@@ -132,44 +154,75 @@ const ProviderDetail: Component = () => {
     return null;
   });
 
-  /** Persists to disk and updates the store. overrides supports partial updates (e.g. toggling enabledModels) */
-  const persist = async (overrides: Partial<ProviderConfig> = {}) => {
-    const cur = userCfg();
-    const meta = providerMeta();
-    const localDef = localEngineDef();
-    const next: ProviderConfig = {
-      id: providerId(),
-      enabled: cur?.enabled ?? false,
-      displayName: cur?.displayName ?? localDef?.name ?? meta?.name ?? providerId(),
-      apiUrl: cur?.apiUrl ?? localDef?.defaultApiUrl ?? defaultApiUrl(providerId()),
-      apiKey: cur?.apiKey ?? '',
-      proxyUrl: cur?.proxyUrl,
-      enabledModels: cur?.enabledModels ?? [],
-      isCustom: isCustom() || isLocalEngine(),
-      customModelIds: cur?.customModelIds ?? [],
-      fetchedModels: cur?.fetchedModels,
-      localModelPaths: cur?.localModelPaths,
-      ...overrides,
+  /**
+   * Persists to disk and updates the store. `overrides` supports partial updates
+   * (e.g. toggling enabledModels).
+   *
+   * FE-4: writes are SERIALIZED (one in-flight save; each queued job re-reads the
+   * current config at execution time, so two quick toggles can no longer race the
+   * read-modify-write and silently drop one of them). Callers that pass
+   * `debounce: true` (text-field keystrokes) coalesce through a 400ms window.
+   */
+  const persist = (overrides: Partial<ProviderConfig> = {}, opts?: { debounce?: boolean }) => {
+    // The write job re-reads the store at execution time (FE-4 serialization); the
+    // reads intentionally happen outside tracked scopes (async chain + setTimeout).
+    const doWrite = (merged: Partial<ProviderConfig>) => {
+      persistChain = persistChain
+        // eslint-disable-next-line solid/reactivity -- deliberate: the queued write re-resolves the current config when it actually runs
+        .then(async () => {
+          const cur = providerConfigs()[providerId()] ?? null;
+          const meta = providerMeta();
+          const localDef = localEngineDef();
+          const next: ProviderConfig = {
+            id: providerId(),
+            enabled: cur?.enabled ?? false,
+            displayName: cur?.displayName ?? localDef?.name ?? meta?.name ?? providerId(),
+            apiUrl: cur?.apiUrl ?? localDef?.defaultApiUrl ?? defaultApiUrl(providerId()),
+            apiKey: cur?.apiKey ?? '',
+            proxyUrl: cur?.proxyUrl,
+            enabledModels: cur?.enabledModels ?? [],
+            isCustom: isCustom() || isLocalEngine(),
+            customModelIds: cur?.customModelIds ?? [],
+            fetchedModels: cur?.fetchedModels,
+            localModelPaths: cur?.localModelPaths,
+            ...merged,
+          };
+          const map = { ...providerConfigs() };
+          if (next.enabled || next.apiKey || next.enabledModels.length > 0 || next.isCustom) {
+            map[next.id] = next;
+          } else {
+            delete map[next.id];
+          }
+          const file = { version: 2, updatedAt: String(Date.now()), providers: map };
+          await saveProviderConfigs(file);
+          setProviderConfigs(map);
+        })
+        .catch((e) => {
+          showToast(reportError('error.save', e), false);
+        });
+      return persistChain;
     };
-    const map = { ...providerConfigs() };
-    if (next.enabled || next.apiKey || next.enabledModels.length > 0 || next.isCustom) {
-      map[next.id] = next;
-    } else {
-      delete map[next.id];
+
+    if (!opts?.debounce) {
+      return doWrite(overrides);
     }
-    const file = { version: 2, updatedAt: String(Date.now()), providers: map };
-    try {
-      await saveProviderConfigs(file);
-      setProviderConfigs(map);
-    } catch (e) {
-      setToast({ msg: reportError('error.save', e), ok: false });
-      setTimeout(() => setToast(null), 3000);
+    // Debounced path: merge pending overrides and flush once the typing settles
+    pendingOverrides = { ...(pendingOverrides ?? {}), ...overrides };
+    if (persistTimer !== undefined) {
+      clearTimeout(persistTimer);
     }
+    persistTimer = window.setTimeout(() => {
+      persistTimer = undefined;
+      const merged = pendingOverrides;
+      pendingOverrides = null;
+      if (merged) void doWrite(merged);
+    }, DEBOUNCE_MS);
+    return persistChain;
   };
 
-  /** Form field onInput: auto-save the whole cfg immediately */
+  /** Form field onInput: FE-4 — debounced save (one disk write per typing burst, not per keystroke) */
   const updateField = <K extends keyof ProviderConfig>(key: K, value: ProviderConfig[K]) => {
-    persist({ [key]: value } as Partial<ProviderConfig>);
+    persist({ [key]: value } as Partial<ProviderConfig>, { debounce: true });
   };
 
   /** Model enable toggle: persists immediately */
@@ -233,8 +286,7 @@ const ProviderDetail: Component = () => {
       const paths = u?.localModelPaths ?? {};
       const modelPath = Object.values(paths)[0];
       if (!modelPath) {
-        setToast({ msg: t('provider.modelRequired'), ok: false });
-        setTimeout(() => setToast(null), 3000);
+        showToast(t('provider.modelRequired'), false);
         return;
       }
       const port = def.engineType === 'vllm' ? 8000 : def.engineType === 'ollama' ? 11434 : 8080;
@@ -246,14 +298,9 @@ const ProviderDetail: Component = () => {
         trustRemoteCode: false,
       });
       setIsServerAlive('alive');
-      setToast({
-        msg: t('provider.localStarted', { name: modelPath, engine: def.name }),
-        ok: true,
-      });
-      setTimeout(() => setToast(null), 3000);
+      showToast(t('provider.localStarted', { name: modelPath, engine: def.name }), true);
     } catch (e) {
-      setToast({ msg: t('provider.localFailed', { error: String(e) }), ok: false });
-      setTimeout(() => setToast(null), 3000);
+      showToast(t('provider.localFailed', { error: String(e) }), false);
     } finally {
       setEngineActionLoading(false);
     }
@@ -266,11 +313,10 @@ const ProviderDetail: Component = () => {
     try {
       await stopLocalServer(def.engineType);
       setIsServerAlive('dead');
-      setToast({ msg: t('provider.localStopped'), ok: true });
-      setTimeout(() => setToast(null), 3000);
+      showToast(t('provider.localStopped'), true);
     } catch (e) {
-      setToast({ msg: String(e), ok: false });
-      setTimeout(() => setToast(null), 3000);
+      // FE-9: raw String(e) echoed provider/transport internals; wrap in i18n
+      showToast(t('provider.stopFailed', { error: String(e) }), false);
     } finally {
       setEngineActionLoading(false);
     }
@@ -379,7 +425,11 @@ const ProviderDetail: Component = () => {
                   displayName: m.display_name,
                   releasedAt: m.released_at,
                 }));
-                persist({ fetchedModels: incoming });
+                // FE-4: the 5s poll used to persist unconditionally — one disk write
+                // every tick even when nothing changed. Only write on a real change.
+                if (!sameFetchedModels(userCfg()?.fetchedModels, incoming)) {
+                  persist({ fetchedModels: incoming });
+                }
                 setFetchState({
                   status: 'ok',
                   msg: t('provider.fetchResult', { count: formatNumber(r.models.length) }),
@@ -390,7 +440,10 @@ const ProviderDetail: Component = () => {
               /* silence auto-fetch failures; next tick will retry */
             }
           } else {
-            persist({ fetchedModels: [] });
+            // FE-4: same diff-check on the dead path (clear only when it held data)
+            if ((userCfg()?.fetchedModels?.length ?? 0) > 0) {
+              persist({ fetchedModels: [] });
+            }
           }
         } else {
           const r = await testProviderConnection({
@@ -410,6 +463,15 @@ const ProviderDetail: Component = () => {
   });
   onCleanup(() => {
     clearInterval(alivePoll);
+    // FE-4: flush any debounced (still unsaved) field edits so leaving the page
+    // cannot lose the last keystroke burst
+    if (persistTimer !== undefined) {
+      clearTimeout(persistTimer);
+      persistTimer = undefined;
+      const merged = pendingOverrides;
+      pendingOverrides = null;
+      if (merged) void persist(merged);
+    }
   });
 
   const handleFetchModels = async () => {
@@ -635,38 +697,22 @@ const ProviderDetail: Component = () => {
 
           {/* Enable toggle + action buttons */}
           <div class="flex items-center gap-3 flex-wrap pt-3 border-t border-white/5">
-            <button
-              type="button"
-              class="flex items-center gap-2.5 cursor-pointer bg-transparent border-0 p-0"
-              onClick={() => toggleProviderEnabled(!(userCfg()?.enabled ?? false))}
-            >
-              <span
-                class="relative inline-flex items-center h-[22px] w-[40px] rounded-full bg-white/[0.08] border border-white/[0.08] cursor-pointer shrink-0 focus:outline-none focus-visible:shadow-[0_0_0_3px_rgba(var(--primary-rgb),0.25)]"
-                style={(() => {
-                  const on = userCfg()?.enabled ?? false;
-                  return {
-                    transition:
-                      'background 0.3s cubic-bezier(0.4, 0, 0.2, 1), border-color 0.3s ease, box-shadow 0.3s ease',
-                    ...(on
-                      ? {
-                          background: 'rgba(var(--primary-rgb), 0.7)',
-                          'border-color': 'rgba(var(--primary-rgb), 0.5)',
-                          'box-shadow': '0 0 12px rgba(var(--primary-rgb), 0.35)',
-                        }
-                      : {}),
-                  };
-                })()}
+            {/* 阶段4（设置样板收敛）: glow switch is the shared component; the label stays a
+                plain button (switch-in-button is invalid HTML) */}
+            <div class="flex items-center gap-2.5">
+              <Switch
+                variant="glow"
+                checked={userCfg()?.enabled ?? false}
+                onChange={(v) => toggleProviderEnabled(v)}
+              />
+              <button
+                type="button"
+                class="text-sm text-white bg-transparent border-0 p-0 cursor-pointer"
+                onClick={() => toggleProviderEnabled(!(userCfg()?.enabled ?? false))}
               >
-                <span
-                  class="inline-block h-4 w-4 rounded-full bg-white transition-transform duration-300 shadow-[0_2px_6px_rgba(0,0,0,0.4)]"
-                  style={{
-                    transform:
-                      (userCfg()?.enabled ?? false) ? 'translateX(21px)' : 'translateX(3px)',
-                  }}
-                />
-              </span>
-              <span class="text-sm text-white">{t('provider.enableProvider')}</span>
-            </button>
+                {t('provider.enableProvider')}
+              </button>
+            </div>
             <button
               type="button"
               class={btnSecondarySm}
@@ -768,7 +814,7 @@ const ProviderDetail: Component = () => {
               <Show when={isServerAlive() !== 'alive'}>
                 <button
                   type="button"
-                  class={btnSuccess}
+                  class={btnSuccessOutline}
                   disabled={engineActionLoading()}
                   onClick={handleStartEngine}
                 >
@@ -784,7 +830,7 @@ const ProviderDetail: Component = () => {
               <Show when={isServerAlive() === 'alive'}>
                 <button
                   type="button"
-                  class={btnDanger}
+                  class={btnDangerOutline}
                   disabled={engineActionLoading()}
                   onClick={handleStopEngine}
                 >
@@ -911,7 +957,7 @@ const ProviderDetail: Component = () => {
                         }
                         onClick={() => removeLocalModelFile(modelId)}
                       >
-                        ×
+                        <Icon name="x" size={12} />
                       </button>
                     </div>
                   )}
@@ -1073,7 +1119,7 @@ const ProviderDetail: Component = () => {
                         title={t('common.delete')}
                         onClick={() => removeOrphan(mid)}
                       >
-                        ×
+                        <Icon name="x" size={10} />
                       </button>
                     </span>
                   )}
@@ -1108,23 +1154,8 @@ const ProviderDetail: Component = () => {
           </div>
         </Show>
 
-        {/* Toast notification */}
-        <Show when={toast()}>
-          <div
-            class="border border-white/[0.08] rounded-xl px-[18px] py-[10px] text-white text-[13px] font-medium shadow-[0_8px_32px_rgba(0,0,0,0.45)] fixed bottom-6 left-1/2 z-50"
-            classList={{
-              'text-green-300': toast()!.ok,
-              'text-red-300': !toast()!.ok,
-            }}
-            style={{
-              background: 'rgba(var(--surface-bg), 0.88)',
-              'backdrop-filter': 'blur(20px) saturate(150%)',
-              animation: 'toastIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards',
-            }}
-          >
-            {toast()!.msg}
-          </div>
-        </Show>
+        {/* 阶段4（设置样板收敛）: shared toast bubble */}
+        <ToastBubble toast={toast()} />
       </div>
     </div>
   );

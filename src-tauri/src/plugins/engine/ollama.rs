@@ -18,42 +18,11 @@ use std::time::Duration;
 use tauri::AppHandle;
 use tracing::{debug, warn};
 
-/// Locate the `ollama` executable via PATH (Windows `where` / Unix `which`), returning the first hit.
+/// Locate the `ollama` executable via PATH, returning the first hit.
 fn ollama_on_path() -> Option<PathBuf> {
-    #[cfg(target_os = "windows")]
-    {
-        let output = std::process::Command::new("where")
-            .arg("ollama")
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::null())
-            .creation_flags(0x08000000)
-            .output()
-            .ok()?;
-        if output.status.success() {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            let p = PathBuf::from(stdout.lines().next()?.trim());
-            if p.exists() {
-                return Some(p);
-            }
-        }
-        None
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
-        let output = std::process::Command::new("which")
-            .arg("ollama")
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::null())
-            .output()
-            .ok()?;
-        if output.status.success() {
-            let p = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim().to_string());
-            if p.exists() {
-                return Some(p);
-            }
-        }
-        None
-    }
+    // SEC-06: canonical PATH-only resolver (replaces the `where`/`which` subprocess
+    // probe, whose bare-name spawn also consulted the cwd on Windows).
+    crate::utils::exec_resolve::resolve_executable("ollama")
 }
 
 /// Search common install directories for the `ollama` executable.
@@ -117,7 +86,11 @@ fn resolve_ollama_exe() -> Option<PathBuf> {
 /// Windows: the Ollama installer registers a user service named `ollama`; its existence counts as installed (even when stopped).
 #[cfg(target_os = "windows")]
 fn ollama_service_exists() -> bool {
-    std::process::Command::new("sc")
+    // SEC-06: PATH-only resolution — sc.exe lives in System32.
+    let Some(sc) = crate::utils::exec_resolve::resolve_executable("sc") else {
+        return false;
+    };
+    std::process::Command::new(sc)
         .args(["query", "ollama"])
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
@@ -152,6 +125,9 @@ fn ollama_launch_agent_exists() -> bool {
 }
 
 /// Check whether the Ollama HTTP endpoint at host:port is reachable (blocking, for trait methods)
+/// ENG-12: requires a 2xx response — the historic `.send().is_ok()` counted ANY HTTP
+/// answer (404/502 from a stray proxy on 11434) as "Ollama running", so the engine
+/// reported installed/alive when it wasn't (same class as the ENG-03 llama/vLLM fix).
 fn ollama_http_reachable_at(host: &str, port: u16) -> bool {
     let url = format!("http://{}:{}/api/version", host, port);
     std::thread::spawn(move || {
@@ -159,13 +135,15 @@ fn ollama_http_reachable_at(host: &str, port: u16) -> bool {
             .get(&url)
             .timeout(Duration::from_secs(2))
             .send()
-            .is_ok()
+            .map(|r| r.status().is_success())
+            .unwrap_or(false)
     })
     .join()
     .unwrap_or(false)
 }
 
 /// Async variant: check whether the Ollama HTTP endpoint is reachable (for polling inside start())
+/// ENG-12: same 2xx requirement as the blocking variant.
 async fn ollama_http_reachable_async(host: &str, port: u16) -> bool {
     let url = format!("http://{}:{}/api/version", host, port);
     reqwest::Client::new()
@@ -173,7 +151,8 @@ async fn ollama_http_reachable_async(host: &str, port: u16) -> bool {
         .timeout(Duration::from_secs(2))
         .send()
         .await
-        .is_ok()
+        .map(|r| r.status().is_success())
+        .unwrap_or(false)
 }
 
 /// Check whether the default port 11434 is reachable
@@ -254,7 +233,15 @@ async fn import_model(model_path: &str, api_url: &str) -> Result<String, String>
     drop(f);
 
     // Run ollama create (async, to avoid blocking the runtime); use the resolved real path to survive PATH-less environments
-    let exe = resolve_ollama_exe().unwrap_or_else(|| PathBuf::from("ollama"));
+    // SEC-06: no bare-name fallback — a bare "ollama" spawn would consult the
+    // process cwd on Windows (CreateProcess search order), letting a planted
+    // executable win. When nothing resolves, fail explicitly.
+    let Some(exe) = resolve_ollama_exe() else {
+        return Err(ierr!(
+            "未找到 ollama 可执行文件（PATH 与常见安装目录均无）",
+            "ollama executable not found (neither on PATH nor in common install dirs)"
+        ));
+    };
     let output = tokio::process::Command::new(exe)
         .arg("create")
         .arg(&model_name)
@@ -361,9 +348,11 @@ impl LocalEnginePlugin for OllamaPlugin {
         _gpu_layers: i32,
     ) -> std::process::Command {
         let mut cmd = std::process::Command::new(exe_path);
+        // ENG-07: serve 进程的双管道此前均 piped 且无人读——ollama serve 日志量大，
+        // 64KB 管道填满后引擎静默挂死（长会话必现）。日志本就无人消费，改 null。
         cmd.arg("serve")
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped());
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null());
         if port != 11434 {
             cmd.env("OLLAMA_HOST", format!("127.0.0.1:{}", port));
         }
@@ -401,7 +390,14 @@ impl LocalEnginePlugin for OllamaPlugin {
             if !already_running {
                 debug!("[ollama] 服务未在端口 {} 运行，尝试拉起 ollama serve", port);
                 // Use the resolved real path (falls back to common install dirs when PATH is missing)
-                let exe_path = resolve_ollama_exe().unwrap_or_else(|| PathBuf::from("ollama"));
+                // SEC-06: no bare-name fallback — a bare "ollama" spawn would consult
+                // the process cwd on Windows; fail explicitly when nothing resolves.
+                let Some(exe_path) = resolve_ollama_exe() else {
+                    return Err(ierr!(
+                        "未找到 ollama 可执行文件（PATH 与常见安装目录均无）",
+                        "ollama executable not found (neither on PATH nor in common install dirs)"
+                    ));
+                };
                 let mut cmd = self.build_command(&exe_path, model_path, port, gpu_layers);
                 let child = cmd.spawn().map_err(|e| {
                     ierr!(

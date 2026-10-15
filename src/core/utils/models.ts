@@ -4,8 +4,11 @@
  * @data-source D:/base/aio-models-data (auto-synced every Sunday 04:00 UTC)
  */
 
-import { invoke } from '@tauri-apps/api/core';
 import type { ModelMeta, ProviderMeta, Catalog } from '@aio/models-data';
+// FE-25: the Tauri invoke wrappers moved to core/api/catalog.ts (utils keeps
+// cache + pure lookup logic only)
+import { loadCatalogFull, updateCatalog } from '../api/catalog';
+import type { CatalogResponse, CatalogSourceTag, UpdateResult } from '../api/catalog';
 import {
   formatDateTime as formatLocaleDateTime,
   formatRelativeTime as formatLocaleRelativeTime,
@@ -118,27 +121,7 @@ export interface FetchLiveModelsResult {
   elapsedMs: number;
 }
 
-export type CatalogSourceTag = 'appdata' | 'bundled' | 'dev_fallback' | 'empty';
-
-export interface CatalogResponse {
-  source: CatalogSourceTag;
-  json: string;
-  path: string | null;
-  version: string | null;
-  generatedAt: string | null;
-}
-
-export interface UpdateResult {
-  success: boolean;
-  modelCount: number;
-  providerCount: number;
-  version: string;
-  cachedPath: string;
-  error: string | null;
-  bytes: number;
-  elapsedMs: number;
-}
-
+export type { CatalogResponse, CatalogSourceTag, UpdateResult } from '../api/catalog';
 let cachedCatalog: Catalog | null = null;
 let cachedSource: CatalogSourceTag = 'empty';
 let cachedPath: string | null = null;
@@ -168,10 +151,10 @@ function applyResponse(resp: CatalogResponse): Catalog {
 
 async function loadCatalogFromBackend(): Promise<Catalog> {
   try {
-    const resp = await invoke<CatalogResponse>('load_models_catalog_full');
+    const resp = await loadCatalogFull();
     return applyResponse(resp);
   } catch (e) {
-    console.warn('[models] 从后端加载 catalog 失败:', e);
+    console.warn('[models] failed to load catalog from backend:', e);
     return EMPTY_CATALOG;
   }
 }
@@ -210,11 +193,42 @@ export async function refreshModelsCatalog(): Promise<Catalog> {
 }
 
 export async function updateModelsCatalog(url?: string): Promise<UpdateResult> {
-  const result = await invoke<UpdateResult>('update_models_catalog', { url: url ?? null });
+  const result = await updateCatalog(url ?? null);
   if (result.success) {
     await refreshModelsCatalog();
   }
   return result;
+}
+
+/**
+ * Model-id families that accept the OpenAI-compatible `reasoning_effort` parameter.
+ * Only used as a fallback when the model is missing from the bundled catalog
+ * (custom models); the catalog's `capabilities.reasoning` flag is the primary source.
+ */
+const REASONING_EFFORT_ID_HINTS: readonly string[] = [
+  'o1',
+  'o3',
+  'o4',
+  'gpt-5',
+  'gemini-2.5',
+  'grok-4',
+  'grok-3-mini',
+];
+
+/**
+ * Whether the model accepts a native reasoning-effort API parameter
+ * (OpenAI-compat `reasoning_effort` / Anthropic `thinking`). The bundled catalog
+ * (`capabilities.reasoning`) is authoritative; models absent from the catalog fall
+ * back to a conservative id heuristic. Drives how the reasoning level is applied:
+ * true = real request parameter (the prompt nudge is suppressed), false = prompt
+ * nudge only.
+ */
+export function modelSupportsReasoningEffort(modelId: string): boolean {
+  const id = (modelId || '').toLowerCase();
+  if (!id) return false;
+  const meta = getCachedCatalog()?.models?.find((m: ModelMeta) => m.id.toLowerCase() === id);
+  if (meta) return meta.capabilities?.reasoning === true;
+  return REASONING_EFFORT_ID_HINTS.some((h) => id.includes(h));
 }
 
 export function findModel(catalog: Catalog, provider: string, id: string): ModelMeta | null {

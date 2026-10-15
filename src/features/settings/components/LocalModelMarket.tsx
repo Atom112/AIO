@@ -25,7 +25,7 @@ import { listen } from '@tauri-apps/api/event';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import Icon from '../../../shared/components/Icon';
 import {
-  btnDanger,
+  btnDangerOutline,
   btnSecondarySm,
   btnTabXs,
   tabActive,
@@ -52,6 +52,10 @@ import {
   localModelsGetDir,
   localModelsSetDir,
 } from '../../../core/api/localModel';
+// 阶段4（设置样板收敛）: shared localStorage JSON cache factory
+import { createJsonCache } from '../../../core/utils/cache';
+// P3（localStorage 裸调收编）：下载源偏好持久化域 API
+import { loadDownloadSourcePref, saveDownloadSourcePref } from '../../../core/store/ui-prefs';
 import type {
   DownloadSource,
   HardwareProfile,
@@ -60,8 +64,10 @@ import type {
   MarketModel,
 } from '../../../core/api/localModel';
 
-// v2: per-source cache buckets ("auto" / "huggingface" / "modelscope" prefixes)
-const MARKET_CACHE_KEY = 'aio-local-model-market-cache-v2';
+// v3: per-source cache buckets ("auto" / "huggingface" / "modelscope" prefixes);
+// bumped to invalidate lists cached while the ModelScope PascalCase deserialization
+// bug produced empty rows
+const MARKET_CACHE_KEY = 'aio-local-model-market-cache-v3';
 const MARKET_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 
 interface MarketCacheEntry {
@@ -79,52 +85,35 @@ function cacheKeyFor(source: DownloadSource, queryKey: string): string {
   return `${source}::${queryKey}`;
 }
 
+// 阶段4（设置样板收敛）: the FE-17 hand-rolled parse-memo + read/write pair is
+// replaced by the shared factory (core/utils/cache) — same single-parse
+// semantics, one implementation for all three market pages.
+const marketCache = createJsonCache<MarketCache>(MARKET_CACHE_KEY, (raw) => {
+  if (!raw || typeof raw !== 'object') return null;
+  const cache = raw as Partial<MarketCache>;
+  if (!cache.updatedAt || !cache.queries) return null;
+  return cache as MarketCache;
+});
+
 function readMarketCache(): MarketCache | null {
-  try {
-    const raw = localStorage.getItem(MARKET_CACHE_KEY);
-    if (!raw) return null;
-    const cache = JSON.parse(raw) as MarketCache;
-    if (!cache.updatedAt || !cache.queries) return null;
-    return cache;
-  } catch {
-    return null;
-  }
+  return marketCache.read();
 }
 
 function writeMarketCache(key: string, entry: MarketCacheEntry) {
-  try {
-    const cache = readMarketCache() ?? { updatedAt: 0, queries: {} };
-    cache.queries[key] = entry;
-    cache.updatedAt = Date.now();
-    localStorage.setItem(MARKET_CACHE_KEY, JSON.stringify(cache));
-  } catch {
-    /* storage full / disabled: cache is best-effort */
-  }
+  const cache = marketCache.read() ?? { updatedAt: 0, queries: {} };
+  cache.queries[key] = entry;
+  marketCache.write({ ...cache, updatedAt: Date.now() });
 }
 
 // Hardware profile never changes at runtime: cache at module level so switching
 // settings tabs / providers never re-probes.
 const [cachedHardware, setCachedHardware] = createSignal<HardwareProfile | null>(null);
 
-// Download source preference persists in localStorage (UI pref, no backend state needed)
-const SOURCE_CACHE_KEY = 'aio-local-model-source';
-function readSourcePref(): DownloadSource {
-  try {
-    const v = localStorage.getItem(SOURCE_CACHE_KEY);
-    if (v === 'auto' || v === 'modelscope' || v === 'huggingface') return v;
-  } catch {
-    /* ignore */
-  }
-  return 'auto';
-}
-const [dlSource, setDlSource] = createSignal<DownloadSource>(readSourcePref());
+// Download source preference: P3（localStorage 裸调收编）——持久化经 ui-prefs 域 API
+const [dlSource, setDlSource] = createSignal<DownloadSource>(loadDownloadSourcePref());
 const selectSource = (s: DownloadSource) => {
   setDlSource(s);
-  try {
-    localStorage.setItem(SOURCE_CACHE_KEY, s);
-  } catch {
-    /* ignore */
-  }
+  saveDownloadSourcePref(s);
 };
 
 /** One downloadable quant-family (a single file, or all shards of a split GGUF). */
@@ -181,10 +170,13 @@ function buildFileGroups(files: MarketFile[]): FileGroup[] {
   return groups;
 }
 
-/** Parameter-size segments (total params, memory-fit oriented); labels are literal i18n keys. */
+/** Parameter-size segments (total params, memory-fit oriented); labels are literal i18n
+ *  keys. The leading "installed" segment shows the downloaded-models list instead of the
+ *  market list (its test never matches market rows). */
 const SEGMENTS: ReadonlyArray<{
   id: string;
   label:
+    | 'provider.localModelMarket.segInstalled'
     | 'provider.localModelMarket.segAll'
     | 'provider.localModelMarket.segU1'
     | 'provider.localModelMarket.seg1to3'
@@ -194,6 +186,11 @@ const SEGMENTS: ReadonlyArray<{
     | 'provider.localModelMarket.seg32plus';
   test: (b: number | null) => boolean;
 }> = [
+  {
+    id: 'installed',
+    label: 'provider.localModelMarket.segInstalled',
+    test: () => false,
+  },
   { id: 'all', label: 'provider.localModelMarket.segAll', test: () => true },
   { id: 'u1', label: 'provider.localModelMarket.segU1', test: (b) => b !== null && b <= 1 },
   {
@@ -271,6 +268,9 @@ const LocalModelMarket: Component = () => {
   };
   const [installed, setInstalled] = createSignal<InstalledLocalModel[]>([]);
   const [installDir, setInstallDir] = createSignal('');
+  // Editable directory input (applied on save; mirrors the embedding page's install-dir card)
+  const [dirInput, setDirInput] = createSignal('');
+  const [savingDir, setSavingDir] = createSignal(false);
   const [tokenInput, setTokenInput] = createSignal('');
   const [tokenSaved, setTokenSaved] = createSignal(false);
   const [notice, setNotice] = createSignal('');
@@ -441,7 +441,10 @@ const LocalModelMarket: Component = () => {
         .catch(() => {});
     }
     void localModelsGetDir()
-      .then(setInstallDir)
+      .then((dir) => {
+        setInstallDir(dir);
+        setDirInput(dir);
+      })
       .catch(() => {});
     void localModelHfTokenGet()
       .then((tok) => setTokenInput(tok ?? ''))
@@ -629,26 +632,43 @@ const LocalModelMarket: Component = () => {
     }
   };
 
+  /** Folder picker fills the input only; the change applies on 保存 (embedding-page flow). */
   const pickDir = async () => {
     try {
       const dir = await openDialog({ directory: true, multiple: false });
-      if (dir && typeof dir === 'string') {
-        const effective = await localModelsSetDir(dir);
-        setInstallDir(effective);
-        await refreshInstalled();
-      }
+      if (dir && typeof dir === 'string') setDirInput(dir);
     } catch {
       /* user cancelled */
     }
   };
 
+  /** Applies the typed directory (backend migrates models + rewrites provider paths). */
+  const saveDir = async () => {
+    setSavingDir(true);
+    try {
+      const effective = await localModelsSetDir(dirInput().trim());
+      setInstallDir(effective);
+      setDirInput(effective);
+      await refreshInstalled();
+    } catch (e) {
+      setNotice(t('provider.localModelMarket.dirSaveFail', { error: String(e) }));
+    } finally {
+      setSavingDir(false);
+    }
+  };
+
+  /** Restores the default directory immediately (same as clearing + saving). */
   const resetDir = async () => {
+    setSavingDir(true);
     try {
       const effective = await localModelsSetDir('');
       setInstallDir(effective);
+      setDirInput(effective);
       await refreshInstalled();
-    } catch {
-      /* ignore */
+    } catch (e) {
+      setNotice(t('provider.localModelMarket.dirSaveFail', { error: String(e) }));
+    } finally {
+      setSavingDir(false);
     }
   };
 
@@ -935,15 +955,17 @@ const LocalModelMarket: Component = () => {
         </div>
       </Show>
 
-      {/* Config block: engine multi-select (one download serves all selected engines),
-          download source, download directory and optional HF token; all action buttons
-          share one height */}
-      <div
-        class="flex flex-col gap-2.5 shrink-0 animate-row-in text-[11px]"
-        style={{ color: 'rgba(var(--text-base-rgb),0.55)' }}
-      >
-        <div class="flex items-center gap-2 flex-wrap">
-          <span class="shrink-0">{t('provider.localModelMarket.engineLabel')}</span>
+      {/* Config card: engine multi-select (one download serves all selected engines),
+          download source, optional HF token — embedding-page card style. The stored token
+          is never cleared when its row hides; switching back restores it. */}
+      <div class="bg-white/[0.03] rounded-xl border border-[var(--border-dim)] p-4 shrink-0 animate-row-in">
+        <div class="flex items-center gap-3 flex-wrap">
+          <span
+            class="text-[11px] w-[80px] shrink-0"
+            style={{ color: 'rgba(var(--text-base-rgb),0.55)' }}
+          >
+            {t('provider.localModelMarket.engineLabel')}
+          </span>
           <div
             class="flex items-center gap-1 p-1 rounded-lg"
             style={{ background: 'rgba(var(--text-base-rgb),0.04)' }}
@@ -964,8 +986,13 @@ const LocalModelMarket: Component = () => {
             </For>
           </div>
         </div>
-        <div class="flex items-center gap-2 flex-wrap">
-          <span class="shrink-0">{t('provider.localModelMarket.sourceLabel')}</span>
+        <div class="flex items-center gap-3 flex-wrap mt-2.5">
+          <span
+            class="text-[11px] w-[80px] shrink-0"
+            style={{ color: 'rgba(var(--text-base-rgb),0.55)' }}
+          >
+            {t('provider.localModelMarket.sourceLabel')}
+          </span>
           <div
             class="flex items-center gap-1 p-1 rounded-lg"
             style={{ background: 'rgba(var(--text-base-rgb),0.04)' }}
@@ -991,27 +1018,17 @@ const LocalModelMarket: Component = () => {
             </For>
           </div>
         </div>
-        <div class="flex items-center gap-2 flex-wrap">
-          <span class="shrink-0">{t('provider.localModelMarket.dirLabel')}</span>
-          <span class="font-mono truncate grow min-w-[120px]" title={installDir()}>
-            {installDir()}
-          </span>
-          <button type="button" class={btnSecondarySm} onClick={() => void pickDir()}>
-            {t('provider.localModelMarket.changeDir')}
-          </button>
-          <button type="button" class={btnSecondarySm} onClick={() => void resetDir()}>
-            {t('provider.localModelMarket.resetDir')}
-          </button>
-        </div>
-        {/* HF token: relevant only when the download source can hit HuggingFace
-            (auto / huggingface). The stored token itself is never cleared when the
-            row hides — switching back to a HF-capable source restores it. */}
         <Show when={dlSource() !== 'modelscope'}>
-          <div class="flex items-center gap-2 flex-wrap">
-            <span class="shrink-0">{t('provider.localModelMarket.tokenLabel')}</span>
+          <div class="flex items-center gap-3 flex-wrap mt-2.5">
+            <span
+              class="text-[11px] w-[80px] shrink-0"
+              style={{ color: 'rgba(var(--text-base-rgb),0.55)' }}
+            >
+              {t('provider.localModelMarket.tokenLabel')}
+            </span>
             <input
               type="password"
-              class="grow min-w-[120px] bg-black/25 border border-white/[0.08] rounded-md text-white placeholder:text-white/30 focus:outline-none px-2 py-1.5 text-[11px] font-mono"
+              class="grow min-w-[120px] px-3 py-2 bg-black/25 border border-white/[0.08] rounded-lg text-[rgba(var(--text-base-rgb),0.88)] text-xs placeholder:text-white/25 focus:outline-none focus:border-pri-50 font-mono"
               value={tokenInput()}
               onInput={(e) => setTokenInput(e.currentTarget.value)}
               placeholder={t('provider.localModelMarket.tokenPlaceholder')}
@@ -1031,6 +1048,44 @@ const LocalModelMarket: Component = () => {
             </button>
           </div>
         </Show>
+      </div>
+
+      {/* Download directory: embedding-page install-dir card style */}
+      <div class="bg-white/[0.03] rounded-xl border border-[var(--border-dim)] p-4 shrink-0 animate-row-in">
+        <div class="flex items-center justify-between gap-3 mb-2">
+          <div class="text-sm text-white font-medium">
+            {t('provider.localModelMarket.dirLabel')}
+          </div>
+          <Icon name="folder" size={18} class="text-white/25 shrink-0" />
+        </div>
+        <div class="flex items-center gap-2">
+          <input
+            type="text"
+            class="flex-1 min-w-0 px-3 py-2 bg-black/25 border border-white/[0.08] rounded-lg text-[rgba(var(--text-base-rgb),0.88)] text-xs placeholder:text-white/25 focus:outline-none focus:border-pri-50"
+            placeholder={installDir()}
+            value={dirInput()}
+            onInput={(e) => setDirInput(e.currentTarget.value)}
+          />
+          <button type="button" class={btnSecondarySm} onClick={() => void pickDir()}>
+            {t('provider.localModelMarket.dirBrowse')}
+          </button>
+          <button
+            type="button"
+            class={btnSecondarySm}
+            disabled={savingDir()}
+            onClick={() => void resetDir()}
+          >
+            {t('provider.localModelMarket.resetDir')}
+          </button>
+          <button
+            type="button"
+            class={btnSecondarySm}
+            disabled={savingDir() || dirInput() === installDir()}
+            onClick={() => void saveDir()}
+          >
+            {t('common.save')}
+          </button>
+        </div>
       </div>
 
       <div class="shrink-0 border-t" style={{ 'border-color': 'var(--border-dim)' }} />
@@ -1082,28 +1137,36 @@ const LocalModelMarket: Component = () => {
         <div class="text-[11px] text-green-400/70">{notice()}</div>
       </Show>
 
-      {/* Model list (fills the remaining height; rows expand inline) */}
+      {/* Model list (fills the remaining height): the "installed" segment renders the
+          downloaded-models list; other segments render market rows that expand inline */}
       <Show
-        when={visibleModels().length > 0}
+        when={segment() === 'installed'}
         fallback={
-          <div class="text-xs text-[rgba(var(--text-base-rgb),0.45)] py-4 text-center">
-            {loading()
-              ? t('provider.localModelMarket.loading')
-              : t('provider.localModelMarket.empty')}
-          </div>
+          <Show
+            when={visibleModels().length > 0}
+            fallback={
+              <div class="text-xs text-[rgba(var(--text-base-rgb),0.45)] py-4 text-center">
+                {loading()
+                  ? t('provider.localModelMarket.loading')
+                  : t('provider.localModelMarket.empty')}
+              </div>
+            }
+          >
+            <div class="flex-1 min-h-0 overflow-y-auto space-y-1.5 pr-1">
+              <For each={visibleModels()}>{renderModelRow}</For>
+            </div>
+          </Show>
         }
       >
-        <div class="flex-1 min-h-0 overflow-y-auto space-y-1.5 pr-1">
-          <For each={visibleModels()}>{renderModelRow}</For>
-        </div>
-      </Show>
-
-      {/* Installed models */}
-      <Show when={installed().length > 0}>
-        <div class="shrink-0">
-          <div class="border-t mb-3" style={{ 'border-color': 'var(--border-dim)' }} />
-          <div class="section-label mb-2">{t('provider.localModelMarket.installedTitle')}</div>
-          <div class="space-y-1.5 max-h-[160px] overflow-y-auto pr-1">
+        <Show
+          when={installed().length > 0}
+          fallback={
+            <div class="text-xs text-[rgba(var(--text-base-rgb),0.45)] py-4 text-center">
+              {t('provider.localModelMarket.installedEmpty')}
+            </div>
+          }
+        >
+          <div class="flex-1 min-h-0 overflow-y-auto space-y-1.5 pr-1">
             <For each={installed()}>
               {(m) => (
                 <div class="flex items-center gap-2 px-3 py-2 rounded-lg bg-white/[0.03] border border-white/[0.06]">
@@ -1115,14 +1178,18 @@ const LocalModelMarket: Component = () => {
                   >
                     {formatSize(m.sizeBytes)}
                   </span>
-                  <button type="button" class={btnDanger} onClick={() => void removeInstalled(m)}>
+                  <button
+                    type="button"
+                    class={btnDangerOutline}
+                    onClick={() => void removeInstalled(m)}
+                  >
                     {t('common.delete')}
                   </button>
                 </div>
               )}
             </For>
           </div>
-        </div>
+        </Show>
       </Show>
     </div>
   );

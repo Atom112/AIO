@@ -62,11 +62,8 @@ fn load_market_cache(app: &AppHandle) -> MarketCacheFile {
 
 fn save_market_cache(app: &AppHandle, cache: &MarketCacheFile) -> Result<(), String> {
     let path = market_cache_path(app)?;
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    }
     let content = serde_json::to_string(cache).map_err(|e| e.to_string())?;
-    std::fs::write(path, content).map_err(|e| e.to_string())
+    crate::core::fs_util::atomic_write(&path, content.as_bytes()).map_err(|e| e.to_string())
 }
 
 fn load_file(app: &AppHandle) -> SkillsFile {
@@ -124,7 +121,7 @@ fn save_file(app: &AppHandle, file: &SkillsFile) -> Result<(), String> {
         tracing::error!("[skills] save_file: {msg}");
         msg
     })?;
-    std::fs::write(&path, &content).map_err(|e| {
+    crate::core::fs_util::atomic_write(&path, content.as_bytes()).map_err(|e| {
         let msg = ierr!("写入文件失败: {}", "Failed to write file: {}", e);
         tracing::error!("[skills] save_file: {msg} ({})", path.display());
         msg
@@ -196,7 +193,7 @@ fn save_project_file(project_path: &str, file: &SkillsFile) -> Result<(), String
         tracing::error!("[skills] save_project_file: {msg}");
         msg
     })?;
-    std::fs::write(&path, &content).map_err(|e| {
+    crate::core::fs_util::atomic_write(&path, content.as_bytes()).map_err(|e| {
         let msg = ierr!("写入文件失败: {}", "Failed to write file: {}", e);
         tracing::error!("[skills] save_project_file: {msg} ({})", path.display());
         msg
@@ -457,54 +454,74 @@ fn parse_market_skills(html: &str) -> Vec<MarketSkill> {
 }
 
 /// Returns all skill configs. When project_id is present, global and project skills are merged (project wins).
+/// HOR-4: disk-backed skill files (global + project) — async + blocking pool, never the main thread.
 #[tauri::command]
-pub fn list_skills(app: AppHandle, project_id: Option<String>) -> Result<Vec<SkillConfig>, String> {
-    let global = load_file(&app).skills;
-    let project = match project_id {
-        Some(ref pid) => {
-            let project_path = resolve_project_path(&app, pid)?;
-            load_project_file(&project_path).skills
-        }
-        None => BTreeMap::new(),
-    };
-    Ok(merge_skills(global, project).into_values().collect())
+pub async fn list_skills(
+    app: AppHandle,
+    project_id: Option<String>,
+) -> Result<Vec<SkillConfig>, String> {
+    tokio::task::spawn_blocking(move || {
+        let global = load_file(&app).skills;
+        let project = match project_id {
+            Some(ref pid) => {
+                let project_path = resolve_project_path(&app, pid)?;
+                load_project_file(&project_path).skills
+            }
+            None => BTreeMap::new(),
+        };
+        Ok(merge_skills(global, project).into_values().collect())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Creates or updates a skill. When project_id is present, writes to the project-level file.
+/// HOR-4: fs read-modify-write — async + blocking pool.
 #[tauri::command]
-pub fn save_skill(
+pub async fn save_skill(
     app: AppHandle,
     skill: SkillConfig,
     project_id: Option<String>,
 ) -> Result<(), String> {
-    if skill.id.trim().is_empty() || skill.name.trim().is_empty() || skill.content.trim().is_empty()
-    {
-        return Err(ierr!(
-            "Skill id、名称和指令内容不能为空",
-            "Skill id, name, and instruction content must not be empty"
-        ));
-    }
-    match project_id {
-        Some(ref pid) => {
-            let project_path = resolve_project_path(&app, pid)?;
-            let mut file = load_project_file(&project_path);
-            file.skills.insert(skill.id.clone(), skill);
-            file.updated_at = now_timestamp();
-            save_project_file(&project_path, &file)
+    tokio::task::spawn_blocking(move || {
+        if skill.id.trim().is_empty()
+            || skill.name.trim().is_empty()
+            || skill.content.trim().is_empty()
+        {
+            return Err(ierr!(
+                "Skill id、名称和指令内容不能为空",
+                "Skill id, name, and instruction content must not be empty"
+            ));
         }
-        None => {
-            let mut file = load_file(&app);
-            file.skills.insert(skill.id.clone(), skill);
-            file.updated_at = now_timestamp();
-            save_file(&app, &file)
+        match project_id {
+            Some(ref pid) => {
+                let project_path = resolve_project_path(&app, pid)?;
+                let mut file = load_project_file(&project_path);
+                file.skills.insert(skill.id.clone(), skill);
+                file.updated_at = now_timestamp();
+                save_project_file(&project_path, &file)
+            }
+            None => {
+                let mut file = load_file(&app);
+                file.skills.insert(skill.id.clone(), skill);
+                file.updated_at = now_timestamp();
+                save_file(&app, &file)
+            }
         }
-    }
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Deletes the given skill config. When project_id is present, deletes from the project-level file.
+/// HOR-4: fs read-modify-write — async + blocking pool.
 #[tauri::command]
-pub fn delete_skill(app: AppHandle, id: String, project_id: Option<String>) -> Result<(), String> {
-    match project_id {
+pub async fn delete_skill(
+    app: AppHandle,
+    id: String,
+    project_id: Option<String>,
+) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || match project_id {
         Some(ref pid) => {
             let project_path = resolve_project_path(&app, pid)?;
             let mut file = load_project_file(&project_path);
@@ -518,7 +535,9 @@ pub fn delete_skill(app: AppHandle, id: String, project_id: Option<String>) -> R
             file.updated_at = now_timestamp();
             save_file(&app, &file)
         }
-    }
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Browses the skills.sh market. sort supports all, trending, hot.
@@ -535,6 +554,82 @@ pub async fn list_skill_market(
     };
     let skills = parse_market_skills(&fetch_market_page_cached(&app, path, force_refresh).await?);
     Ok(skills)
+}
+
+/// skills.sh search API item (`/api/search?q=`, Algolia-backed fuzzy search).
+#[derive(serde::Deserialize)]
+struct SkillsShSearchItem {
+    /// `owner/repo/slug`
+    id: String,
+    name: String,
+    #[serde(default)]
+    installs: u64,
+}
+
+/// Compact install-count label matching the scraped pages' style (1.2k / 3.4M).
+fn format_installs_label(installs: u64) -> String {
+    if installs >= 1_000_000 {
+        format!("{:.1}M", installs as f64 / 1_000_000.0)
+    } else if installs >= 1_000 {
+        format!("{:.1}k", installs as f64 / 1_000.0)
+    } else {
+        installs.to_string()
+    }
+}
+
+/// Map the skills.sh `/api/search` JSON body into MarketSkill rows
+/// (owner/repo/slug split from the 3-segment id; malformed ids dropped).
+fn map_search_response(value: &Value) -> Vec<MarketSkill> {
+    let items: Vec<SkillsShSearchItem> = value
+        .get("skills")
+        .cloned()
+        .and_then(|v| serde_json::from_value(v).ok())
+        .unwrap_or_default();
+    items
+        .into_iter()
+        .filter_map(|item| {
+            let mut parts = item.id.splitn(3, '/');
+            let (owner, repo, slug) = (
+                parts.next()?.to_string(),
+                parts.next()?.to_string(),
+                parts.next()?.to_string(),
+            );
+            if slug.is_empty() {
+                return None;
+            }
+            Some(MarketSkill {
+                id: format!("skills-sh-{}-{}-{}", owner, repo, slug),
+                name: item.name,
+                source_url: format!("{}/{}/{}/{}", SKILLS_SH, owner, repo, slug),
+                installs: item.installs,
+                installs_label: format_installs_label(item.installs),
+                owner,
+                repo,
+                slug,
+                description: String::new(),
+                weekly_installs: Vec::new(),
+            })
+        })
+        .collect()
+}
+
+/// Searches the full skills.sh catalog via its JSON search API — the market pages
+/// only ship the top slice per sort view, so skills outside it were unfindable
+/// before this existed. Results are cached per query with the market cache TTL.
+#[tauri::command]
+pub async fn search_skill_market(
+    app: AppHandle,
+    query: String,
+) -> Result<Vec<MarketSkill>, String> {
+    let q = query.trim();
+    if q.is_empty() {
+        return Ok(Vec::new());
+    }
+    let encoded: String = url::form_urlencoded::byte_serialize(q.as_bytes()).collect();
+    let path = format!("/api/search?q={encoded}");
+    let body = fetch_market_page_cached(&app, &path, false).await?;
+    let value: Value = serde_json::from_str(&body).map_err(|e| e.to_string())?;
+    Ok(map_search_response(&value))
 }
 
 /// Downloads skill content from a skills.sh detail page and saves it to the skill library. When project_id is present, writes to the project-level file.
@@ -625,6 +720,7 @@ pub async fn download_market_skill(
         npx_package: None,
         npx_version: None,
         npx_command: None,
+        source_disk_path: None,
     };
     match project_id {
         Some(ref pid) => {
@@ -952,7 +1048,7 @@ pub async fn discover_npx_skills(app: AppHandle) -> Result<Vec<NpxSkillInfo>, St
         }
 
         // 3) Scan global npm packages with skill-like traits (fallback)
-        let npm_output = std::process::Command::new("npm")
+        let npm_output = std::process::Command::new(resolve_command("npm"))
             .args(["list", "-g", "--depth=0", "--json"])
             .output();
         if let Ok(output) = npm_output {
@@ -1140,6 +1236,20 @@ fn run_npx_sandboxed(
     Ok(Some(content))
 }
 
+/// Reads skill content from an on-disk skill directory (skills CLI / skill-dir
+/// sources): SKILL.md / skill.md / README.md / index.md，取第一个非空者。
+fn read_content_from_skill_dir(dir: &std::path::Path) -> Option<String> {
+    for file in ["SKILL.md", "skill.md", "README.md", "index.md"] {
+        let p = dir.join(file);
+        if let Ok(s) = std::fs::read_to_string(&p) {
+            if !s.trim().is_empty() {
+                return Some(s);
+            }
+        }
+    }
+    None
+}
+
 /// Sanitizes npx stdout content before storing it in a SkillConfig.
 ///
 /// Strips ANSI escape sequences and null bytes, validates UTF-8,
@@ -1189,28 +1299,54 @@ fn sanitize_skill_content(raw: &str) -> Result<String, String> {
 }
 
 /// Imports an npx skill package: runs npx to fetch content and saves it to the skill pool.
+/// 内容获取分源：skills CLI / skill-dir 来源（discovery 的 source_type）的 name **不是
+/// npm 包**——`npx <name>` 必然报 "could not determine executable to run"（round20 实测），
+/// 正确路径是直接从安装目录读取 SKILL.md；仅真正的 npm 包（bin 打印 Markdown）走 npx 执行。
 #[tauri::command]
 pub async fn import_npx_skill(
     app: AppHandle,
     package_name: String,
     project_id: Option<String>,
+    source_path: Option<String>,
 ) -> Result<SkillConfig, String> {
     // Validate the package name
     validate_npx_package_name(&package_name)?;
 
-    // Run npx <package> in a sandbox to fetch skill content (spawn_blocking avoids blocking an async worker)
-    let pkg = package_name.clone();
-    let raw_content =
-        tokio::task::spawn_blocking(move || run_npx_sandboxed(&[&pkg], 30, 64 * 1024))
-            .await
-            .map_err(|_| ierr!("npx 线程 panic", "npx thread panicked"))??
-            .ok_or_else(|| {
-                ierr!(
-                    "npx {} 未返回任何内容",
-                    "npx {} returned no content",
-                    package_name
-                )
-            })?;
+    // Content fetch, source-aware: an on-disk skill directory (from discovery) is
+    // read directly; otherwise fall back to running the package via npx.
+    let raw_content = match source_path
+        .as_deref()
+        .map(std::path::Path::new)
+        .filter(|p| p.is_dir())
+        .and_then(read_content_from_skill_dir)
+    {
+        Some(c) => c,
+        None => {
+            let pkg = package_name.clone();
+            let npx_result =
+                tokio::task::spawn_blocking(move || run_npx_sandboxed(&[&pkg], 30, 64 * 1024))
+                    .await
+                    .map_err(|_| ierr!("npx 线程 panic", "npx thread panicked"))?;
+            match npx_result {
+                Ok(Some(raw)) => raw,
+                Ok(None) => {
+                    return Err(ierr!(
+                        "npx {} 未返回任何内容",
+                        "npx {} returned no content",
+                        package_name
+                    ))
+                }
+                Err(e) if e.contains("could not determine executable") => {
+                    return Err(ierr!(
+                        "npx {} 不是可执行 npm 包（无 bin 入口）。skills CLI 安装的 skill 会自动从安装目录导入；手工导入需要「执行后打印 Markdown 的 npm 包」",
+                        "npx {} is not an executable npm package (no bin entry). Skills installed via the skills CLI are imported from their install directory automatically; manual import requires an npm package whose bin prints Markdown",
+                        package_name
+                    ));
+                }
+                Err(e) => return Err(e),
+            }
+        }
+    };
 
     // Sanitize content (strip ANSI sequences, null bytes, control characters)
     let content = sanitize_skill_content(&raw_content)?;
@@ -1221,6 +1357,31 @@ pub async fn import_npx_skill(
         tokio::task::spawn_blocking(move || try_read_package_meta(&pkg2))
             .await
             .unwrap_or_else(|_| (String::new(), String::new(), "0.0.0".to_string()));
+
+    // skills CLI / skill-dir 来源的元数据以安装目录为准（npm registry 上查不到它们）
+    let (dir_version, dir_description) = match source_path
+        .as_deref()
+        .map(std::path::Path::new)
+        .map(try_read_package_meta_from_dir)
+    {
+        Some((v, d)) => (v, d),
+        None => (String::new(), String::new()),
+    };
+    let name = if name.is_empty() && !dir_description.is_empty() {
+        package_name.clone()
+    } else {
+        name
+    };
+    let description = if description.is_empty() {
+        dir_description
+    } else {
+        description
+    };
+    let version = if version.is_empty() {
+        dir_version
+    } else {
+        version
+    };
 
     let skill = SkillConfig {
         id: format!("npx-{}", package_name),
@@ -1240,6 +1401,7 @@ pub async fn import_npx_skill(
         npx_package: Some(package_name.clone()),
         npx_version: Some(version),
         npx_command: Some(package_name.clone()),
+        source_disk_path: source_path.clone(),
     };
 
     match project_id {
@@ -1287,19 +1449,40 @@ pub async fn refresh_npx_skill(
     // Re-validate the package name in case the stored value was tampered with
     validate_npx_package_name(pkg_name)?;
 
-    // Sandboxed refresh execution (spawn_blocking avoids blocking an async worker)
-    let pkg = pkg_name.to_string();
-    let raw_content =
-        tokio::task::spawn_blocking(move || run_npx_sandboxed(&[&pkg], 30, 64 * 1024))
-            .await
-            .map_err(|_| ierr!("npx 线程 panic", "npx thread panicked"))??
-            .ok_or_else(|| {
+    // 刷新同样分源：skills CLI / skill-dir 来源（有 source_disk_path）直接从安装
+    // 目录重读（其 name 不是 npm 包，npx 执行必然失败）；npm 包来源走 npx 重跑。
+    let (raw_content, disk_version) = match existing
+        .source_disk_path
+        .as_deref()
+        .map(std::path::Path::new)
+    {
+        Some(dir) if dir.is_dir() => {
+            let content = read_content_from_skill_dir(dir).ok_or_else(|| {
                 ierr!(
-                    "npx {} 未返回任何内容",
-                    "npx {} returned no content",
-                    pkg_name
+                    "安装目录 {} 中未找到 SKILL.md / README.md",
+                    "No SKILL.md / README.md found in install dir {}",
+                    dir.display()
                 )
             })?;
+            let (version, _) = try_read_package_meta_from_dir(dir);
+            (content, version)
+        }
+        _ => {
+            let pkg = pkg_name.to_string();
+            let raw =
+                tokio::task::spawn_blocking(move || run_npx_sandboxed(&[&pkg], 30, 64 * 1024))
+                    .await
+                    .map_err(|_| ierr!("npx 线程 panic", "npx thread panicked"))??
+                    .ok_or_else(|| {
+                        ierr!(
+                            "npx {} 未返回任何内容",
+                            "npx {} returned no content",
+                            pkg_name
+                        )
+                    })?;
+            (raw, String::new())
+        }
+    };
 
     let content = sanitize_skill_content(&raw_content)?;
 
@@ -1307,6 +1490,12 @@ pub async fn refresh_npx_skill(
     let (_, _, version) = tokio::task::spawn_blocking(move || try_read_package_meta(&pkg2))
         .await
         .unwrap_or_else(|_| (String::new(), String::new(), "0.0.0".to_string()));
+    // 磁盘来源的版本以安装目录为准（npm registry 查不到它们）
+    let version = if disk_version.is_empty() {
+        version
+    } else {
+        disk_version
+    };
 
     let updated = SkillConfig {
         content,
@@ -1336,7 +1525,7 @@ pub async fn refresh_npx_skill(
 fn try_read_package_meta(package_name: &str) -> (String, String, String) {
     use std::io::Read;
 
-    let mut child = match std::process::Command::new("npm")
+    let mut child = match std::process::Command::new(resolve_command("npm"))
         .args(["list", "-g", "--depth=0", "--json"])
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null())
@@ -1399,43 +1588,12 @@ fn try_read_package_meta(package_name: &str) -> (String, String, String) {
     (String::new(), String::new(), "0.0.0".to_string())
 }
 
-/// Windows: resolves a bare command name (e.g. "npx") to a full path (e.g. "C:\...\npx.cmd").
-/// Process::Command does not search PATHEXT extensions, so this is done manually.
-/// Non-Windows returns the command name unchanged.
+/// Resolves a bare command name (e.g. "npx") to a full path when possible.
+/// Delegates to the canonical PATH-only resolver (SEC-06; also handles the Windows
+/// PATHEXT walk): bare-name spawns must not consult the current directory.
+/// Unresolvable names are returned unchanged so the OS produces its native error.
 fn resolve_command(command: &str) -> String {
-    #[cfg(windows)]
-    {
-        use std::path::{Path, PathBuf};
-        let p = Path::new(command);
-        if p.extension().is_some() {
-            return command.to_string();
-        }
-        let file_name = match p.file_name() {
-            Some(f) => f.to_string_lossy(),
-            None => return command.to_string(),
-        };
-        let pathext =
-            std::env::var("PATHEXT").unwrap_or_else(|_| ".EXE;.CMD;.BAT;.COM".to_string());
-        let exts: Vec<&str> = pathext.split(';').filter(|s| !s.is_empty()).collect();
-        let dirs: Vec<PathBuf> = match p.parent() {
-            Some(d) if !d.as_os_str().is_empty() => vec![d.to_path_buf()],
-            _ => std::env::var("PATH")
-                .unwrap_or_default()
-                .split(';')
-                .filter(|s| !s.is_empty())
-                .map(PathBuf::from)
-                .collect(),
-        };
-        for dir in dirs {
-            for ext in &exts {
-                let candidate = dir.join(format!("{}{}", file_name, ext));
-                if candidate.is_file() {
-                    return candidate.to_string_lossy().into_owned();
-                }
-            }
-        }
-    }
-    command.to_string()
+    crate::utils::exec_resolve::resolve_or_keep(command)
 }
 
 #[cfg(test)]
@@ -1470,5 +1628,33 @@ mod tests {
             1_000 + MARKET_CACHE_TTL_SECS - 1
         ));
         assert!(!cache_entry_is_fresh(&entry, 1_000 + MARKET_CACHE_TTL_SECS));
+    }
+
+    #[test]
+    fn installs_label_formats_compact() {
+        assert_eq!(format_installs_label(0), "0");
+        assert_eq!(format_installs_label(999), "999");
+        assert_eq!(format_installs_label(2_236), "2.2k");
+        assert_eq!(format_installs_label(210_769), "210.8k");
+        assert_eq!(format_installs_label(1_234_567), "1.2M");
+    }
+
+    /// skills.sh `/api/search` items map into MarketSkill rows (owner/repo/slug
+    /// split, installs compacted, source URL rebuilt).
+    #[test]
+    fn search_response_maps_to_market_skills() {
+        let body = r#"{"query":"pdf","skills":[{"id":"anthropics/skills/pdf","name":"pdf","installs":210769},{"id":"claude-office-skills/skills/pdf-ocr-extraction","name":"PDF OCR Extraction","installs":5436},{"id":"malformed-no-slash","name":"x","installs":1}]}"#;
+        let value: Value = serde_json::from_str(body).unwrap();
+        let skills = map_search_response(&value);
+        assert_eq!(skills.len(), 2, "畸形 id 必须被丢弃");
+        assert_eq!(skills[0].owner, "anthropics");
+        assert_eq!(skills[0].repo, "skills");
+        assert_eq!(skills[0].slug, "pdf");
+        assert_eq!(skills[0].installs_label, "210.8k");
+        assert_eq!(
+            skills[0].source_url,
+            "https://www.skills.sh/anthropics/skills/pdf"
+        );
+        assert_eq!(skills[1].slug, "pdf-ocr-extraction");
     }
 }

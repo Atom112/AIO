@@ -5,25 +5,31 @@
  * equivalent styles in components, so the same button kind stays consistent across all pages/components/modals.
  *
  * Usage:
- *   <button class={btnPrimary}>{t('common.confirm')}</button>
+ *   <button class={btnPrimaryOutline}>{t('common.confirm')}</button>
  *   Append extra layout classes (w-full / ml-auto / flex-1 etc.) at the call site:
- *   <button class={'w-full ' + btnPrimarySm}>...</button>
+ *   <button class={'w-full ' + btnPrimaryOutlineSm}>...</button>
+ *
+ * Semantic-color rule (AGENTS.md): buttons with a semantic color (confirm / close /
+ * delete / test / start / stop ...) use the Outline family ONLY — the BORDER and the
+ * TEXT carry the semantic color, the body stays neutral (bg-white/[0.06], same as
+ * secondary). Solid fills (bg-pri) and tinted bodies (bg-danger/10 etc.) are banned
+ * for text action buttons. Neutral actions use btnSecondary / btnSecondarySm.
  *
  * Size conventions (pick by scenario; do not mix within one scenario):
- *   - btnPrimary / btnSecondary        primary/secondary actions in modal footers
- *   - btnPrimarySm / btnSecondarySm    inline actions on settings pages (save/test/connect etc.)
- *   - btnDanger / btnBadge             destructive actions (delete etc.), small pill inline actions
- *   - btnGhost / btnIcon / btnClose    text buttons / icon buttons / modal close buttons
+ *   - btnPrimaryOutline / btnSecondary        modal footers (confirm/create etc.)
+ *   - *Sm / *OutlineSm                        inline actions on settings pages (save/test/start etc.)
+ *   - btnBadge / btnBadgeBar                  small pill inline actions / toolbar alignment
+ *   - btnGhost / btnIcon / btnClose           text buttons / icon buttons / modal close
  *   - btnTabMd / btnTabXs + tabActive/tabInactive  segmented controls / tabs
  */
 
-/** Primary action button (confirm/save/create etc. in modal footers) */
-export const btnPrimary =
-  'inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium bg-pri text-black hover:opacity-90 active:scale-95 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer';
+/** Primary action button (confirm/create etc. in modal footers) — outline: primary border + text */
+export const btnPrimaryOutline =
+  'inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium border border-pri-50 bg-white/[0.06] text-pri hover:bg-pri-10 active:scale-95 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer';
 
-/** Primary action button (compact, inline actions on settings pages) */
-export const btnPrimarySm =
-  'inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium bg-pri text-black hover:opacity-90 active:scale-95 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer';
+/** Primary action button (compact, inline actions on settings pages) — outline */
+export const btnPrimaryOutlineSm =
+  'inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium border border-pri-50 bg-white/[0.06] text-pri hover:bg-pri-10 active:scale-95 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer';
 
 /** Secondary action button (cancel/later etc. in modal footers) */
 export const btnSecondary =
@@ -33,17 +39,17 @@ export const btnSecondary =
 export const btnSecondarySm =
   'inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium bg-white/[0.06] border border-white/10 text-white/60 hover:bg-white/[0.1] hover:text-white/85 active:scale-95 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer';
 
-/** Destructive action button (delete/remove etc.) */
-export const btnDanger =
-  'inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium border border-danger/30 bg-danger/10 text-danger hover:bg-danger/20 active:scale-95 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer';
+/** Success/approve action button (test connection, approve, start etc.) — outline: success border + text */
+export const btnSuccessOutline =
+  'inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium border border-success/50 bg-white/[0.06] text-success hover:bg-success/10 active:scale-95 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer';
 
-/** Destructive badge button (btnBadge size + danger color, for delete/clear actions aligned with small inline buttons) */
-export const btnDangerBadge =
-  'inline-flex items-center justify-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium border border-danger/30 bg-danger/10 text-danger hover:bg-danger/20 active:scale-95 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer';
+/** Destructive action button (delete/remove/stop etc.) — outline: danger border + text */
+export const btnDangerOutline =
+  'inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium border border-danger/50 bg-white/[0.06] text-danger hover:bg-danger/10 active:scale-95 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer';
 
-/** Success/approve action button (test connection, approve etc.) */
-export const btnSuccess =
-  'inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium border border-green-400/30 bg-green-400/10 text-green-400 hover:bg-green-400/20 active:scale-95 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer';
+/** Security/credential action button (save-to-keychain etc.) — outline: warn border + text */
+export const btnWarnOutline =
+  'inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium border border-warn/50 bg-white/[0.06] text-warn hover:bg-warn/10 active:scale-95 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer';
 
 /** Small pill inline action (height-matched to a p-1 container + btnTabXs segmented control bar, for inline toolbar alignment) */
 export const btnBadgeBar =

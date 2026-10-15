@@ -43,7 +43,7 @@ AIO 的权限系统基于三态决策模型：
 - 内置文件操作（读、写、替换、建目录、搜索）→ Allow
 - Git 操作（全部）→ Allow
 - 命令执行（`execute_command`）→ Allow
-- 删除操作（`delete_file`）→ Ask
+- 删除操作（`delete_file`）→ Allow（与 `execute_command` 对齐：命令本就能 `del`/`rm`，且删除被沙箱限定在项目内；Normal 模式保持逐次确认）
 - 其他工具 → Allow
 
 ### Plan 模式
@@ -61,14 +61,10 @@ AIO 的权限系统基于三态决策模型：
 - 常规文件操作（读、写、替换、搜索、建目录）→ Allow
 - Git 操作 → Allow
 - 命令执行 → Allow
-- 删除操作 → Ask
+- 删除操作 → Allow
 - 其他工具 → Allow
 
 > 具体规则列表可在源码 `permission.rs:default_rules_for_mode` 查看。
-
-### 工作流步骤的权限模式
-
-工作流（`create_workflow`）的步骤默认**继承启动时的 Agent 模式**：从 Normal 模式启动的工作流，其步骤内的写操作仍会逐次弹出审批。可在应用配置中设置 `workflowStepMode` 为 `"auto"` 恢复旧行为（步骤自动放行，适合完全信任的自动化场景）。
 
 ## 命令沙箱与网络出口
 
@@ -81,8 +77,14 @@ AIO 的权限系统基于三态决策模型：
 | Windows | AppContainer（每项目 profile；`sandboxWindows=off` 可关闭） | 仅项目根 + 专用临时目录 + 配置的工具链 R+X 目录 | 无 capability = 阻断   |
 
 - 命令需要联网（下载依赖、API 调用、访问 localhost 服务）时，模型须显式声明 `network: true`（Windows 注入 internetClient capability；审批弹窗标注"需要网络访问"）。
-- **fail-closed**：Linux/macOS 沙箱不可用时，Auto/Workflow 模式直接拒绝执行（`sandboxRequired` 默认开）；Normal 模式审批弹窗附带沙箱不可用警示。
+- **fail-closed**：Linux/macOS 沙箱不可用时，完全权限（Auto）模式直接拒绝执行（`sandboxRequired` 默认开）；其他模式审批弹窗附带沙箱不可用警示。
 - Windows 工具链目录（cargo/scoop 等用户安装路径）经 `sandboxWindowsToolchainDirs` 配置追加 R+X；系统目录依赖内置 ALL APPLICATION PACKAGES ACE。
+- **`.git` 仓库历史保护（`sandboxProtectGit`，默认开）**：借鉴 Codex 的敏感目录只读网——沙箱内 `<项目根>/.git` 子树对命令**递归只读**（Windows 实现为撤掉 package SID 的写授权 + 断继承固化；Linux 为 `.git` 只读回绑；macOS 为 SBPL 拒写规则），防止提示注入经 shell 篡改 Git 历史。`git status/diff/log` 等只读操作不受影响；shell 级 `git add/commit` 在沙箱内被拒——**Git 写操作请用内置 `git_*` 工具**（走宿主进程，带文件锁与权限规则）；subagent worktree 隔离工作区不套用本保护（其 `.git` 是指回主仓库的指针文件）。关闭后沙箱内仓库历史恢复可变。已知边界：嵌套仓库/子模块（`vendor/x/.git`）不在保护范围内；目录级挪走（`ren .git .git-old`）在部分机器上可能成功——保护承诺是**历史不可改写**（挪走后的旧目录内容仍只读），与 Codex 的 ro-bind 同级。
+- **完全权限自愈兜底开关（`sandboxUnsandboxedFallback`，默认**关**）**：Auto 模式自愈链的最后一环「解释器/工具链不可见类拒绝在授权未落地时脱离沙箱重试一次」需显式开启；关闭（默认）时运行时绝不突破沙箱边界，被拒命令保持拒绝、由模型自行绕路（对齐 Codex 的边界哲学：静态配置定边界，运行时永不破例）。
+- **脚本解释器转发**：`python`/`python3`/`py`/`pip`/`node`/`npm`/`npx`/`git`/`cargo`（含 `.exe` 后缀）作为首命令或 `cmd /c` 包裹内的裸名出现时，自动改写为宿主 PATH 解析的绝对路径（仅 PATH 查找，不查项目目录）——沙箱 shell 内这些名字原本一律 9009；Windows 沙箱同时对其安装目录做尽力 R+X 授权。命令输出按「UTF-8 优先、系统 ANSI 代码页（GBK）回退」解码，中文错误信息不再乱码。
+- **沙箱扩权请求**：命令在 Windows 沙箱内被拒绝（WinError 5「拒绝访问 / Access is denied」），或转发目标解释器在沙箱内「不是内部或外部命令 / 9009」时，弹出选择对话框——「授权解释器目录并重试（本次会话）」「授权并永久记住（写入 `sandboxWindowsToolchainDirs`）」「跳出沙箱执行（仅本次）」「忽略」，也支持直接输入任意目录路径授权。**同一操作**（`cmd /c X` 与裸 `X` 视为同一操作）30 分钟内最多询问一次；600 秒无响应按「忽略」处理（无人值守自动降级为原始错误，不会卡住回合）。**完全权限（Auto）模式不弹窗且不受 30 分钟窗口节流**，补救面按安全审查收窄：仅「解释器/工具链不可见」类拒绝（not-found + 有派生目录）会话授权后重试，授权落地且命令成功时把该目录永久记入 `sandboxWindowsToolchainDirs`（结果文本中标注）；**access-denied 类拒绝（写目标被拒、`.git` 保护、项目外路径）永不升级为无沙箱执行**——拒绝文本来自模型可影响的命令输出（伪造 "Access is denied" 即可命中），不能作为突破边界的决策点。唯一的运行时例外：not-found 类在授权未落地（如 EDR 拦截 ACL 写）时脱离沙箱重试一次，需显式开启 `sandboxUnsandboxedFallback`（默认关）且有每回合次数上限；脱离沙箱的重试会在工具结果中显式标注「本次命令已脱离沙箱执行」（network 声明在该路径下不生效）。
+- **工具失败熔断器**：同一工具连续**环境类**失败（命令不存在 / 权限被拒 / 缺依赖——按结果文本签名判定）达到阈值（默认 6，`toolBreakerThreshold` 可配）后，本回合内停用该工具，后续调用短路返回引导文案；业务类失败（命令正常运行后返回非零，如测试未通过）**不计入**熔断。从第 3 次连续环境类失败起，结果文本附带剩余预算预警。成功调用重置计数。
+- **shell 与内置工具的权限边界**：shell 命令运行在沙箱 token 下，部分系统级操作（如 `cmd dir` 的目录枚举）可能被 OS/安全软件拒绝；内置文件工具（`list_directory` 等）经宿主进程执行，不受此影响——二者行为差异属预期分层，排查问题时优先用内置工具。
 - 危险命令词法检测是 defense-in-depth 预警层（Critical 级无条件硬阻断），安全强制以 OS 沙箱为准。
 
 ## `.aio/permissions.json` 文件格式
@@ -116,15 +118,17 @@ AIO 的权限系统基于三态决策模型：
 
 ### 规则字段参考
 
-| 字段          | 类型                       | 必填 | 描述                                     |
-| ------------- | -------------------------- | ---- | ---------------------------------------- |
-| `id`          | string                     | 是   | 规则唯一标识                             |
-| `toolPattern` | string                     | 是   | 工具名 glob 模式（`*` 匹配任意字符序列） |
-| `serverId`    | string                     | 否   | 限定到指定 MCP Server                    |
-| `modes`       | string[]                   | 是   | 空数组匹配所有 Agent 模式                |
-| `action`      | "allow" \| "ask" \| "deny" | 是   | 权限决策                                 |
-| `pathPattern` | string                     | 否   | 匹配工具参数中的 `path`（glob）          |
-| `priority`    | number                     | 否   | 越大越优先，默认 `10`                    |
+| 字段            | 类型                       | 必填 | 描述                                                                       |
+| --------------- | -------------------------- | ---- | -------------------------------------------------------------------------- |
+| `id`            | string                     | 是   | 规则唯一标识                                                               |
+| `toolPattern`   | string                     | 是   | 工具名 glob 模式（`*` 匹配任意字符序列）                                   |
+| `serverId`      | string                     | 否   | 限定到指定 MCP Server                                                      |
+| `modes`         | string[]                   | 是   | 空数组匹配所有 Agent 模式                                                  |
+| `action`        | "allow" \| "ask" \| "deny" | 是   | 权限决策                                                                   |
+| `pathPattern`   | string                     | 否   | 匹配工具参数中的 `path`（glob）                                            |
+| `commandPrefix` | string                     | 否   | 仅 `execute_command`：命令首 token 精确匹配                                |
+| `auto`          | boolean                    | 否   | 审批弹窗「始终允许」的派生标记；为 true 的命令规则只匹配无链式操作符的命令 |
+| `priority`      | number                     | 否   | 越大越优先，默认 `10`                                                      |
 
 ### Glob 匹配规则
 
@@ -189,9 +193,20 @@ AIO 的权限系统基于三态决策模型：
 
 自定义规则覆盖/叠加在模式默认规则之上。Deny 规则无论是否自定义都优先于 Allow。`priority` 仅在同类型规则间比较——Deny 始终比 Allow 优先，无论两者的 priority 值。
 
+## 审批弹窗的「始终允许」
+
+审批气泡提供三个操作：拒绝 / 始终允许 / 批准（允许一次）。项目内的调用点「始终允许」会把派生规则**持久化**到项目 `.aio/permissions.json`（重启后仍然有效；无项目上下文时退化为本次会话规则）：
+
+- `execute_command` → 首 token 前缀规则（批准 `npm test` 派生 `commandPrefix: "npm"`）；派生规则带 `auto: true`，只匹配**不含链式操作符**（`&&`/`||`/`;`/`|`/反引号/`$()`）的命令——批准 `cargo build` 不会连带放行 `cargo build && <任意命令>`；
+- 文件写/删/建目录工具 → 仅**同一文件**的精确路径规则；
+- MCP 工具 → 同一 server + 同名工具的规则。对未信任 server 的工具同样生效：规则落地后该工具的调用不再逐次询问（等效于预先配置）；
+- 其他工具（如 `delegate_task`）→ 同名工具规则。
+
+派生规则 `priority: 50`、对所有模式生效；Deny 规则仍全局优先。重复点按会去重，不会产生重复条目。审批弹窗与沙箱扩权对话框的等待上限均为 600 秒（超时按「未批准 / 忽略」处理，气泡自动消失）。
+
 ## 注意事项
 
-- 修改 `.aio/permissions.json` 后需要重新进入项目，让配置重新加载
+- `.aio/permissions.json` 在每次工具调用前实时读取，手动修改立即生效；「始终允许」写入的规则同样即时生效
 - `permissions.json` 只在存在自定义规则时需要，不必手动创建
 - 不要提交包含敏感路径或业务信息的 `.aio/` 目录到版本控制
 - 完整权限规则评估逻辑在 `permission.rs:check_permission`

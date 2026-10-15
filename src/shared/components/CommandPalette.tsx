@@ -77,13 +77,10 @@ function matchWord(word: string, cmd: CommandAction): boolean {
     .toLowerCase();
   if (initials.includes(w)) return true;
 
-  // Chinese pinyin initials (first letter of each label character — effective for Chinese).
-  if (/^[a-z]+$/.test(w) && label.length >= w.length) {
-    const pyAbbr = Array.from(label)
-      .map((ch) => ch[0]?.toLowerCase() ?? '')
-      .join('');
-    if (pyAbbr.includes(w)) return true;
-  }
+  // (Removed a dead "pinyin initials" branch: mapping every label char to its
+  // own first char is a no-op — the result equals the label itself, which the
+  // substring match above already covers. Real pinyin-initial matching would
+  // need a romanization table; until then, Chinese labels match by substring.)
 
   return false;
 }
@@ -194,9 +191,8 @@ const CommandPalette: Component = () => {
   // Scroll the selected item into view.
   const scrollToSelected = () => {
     requestAnimationFrame(() => {
-      const selected = listRef?.querySelector(
-        '.flex items-center justify-between px-3 py-2 rounded-lg cursor-pointer transition-colors duration-100 gap-3.selected',
-      ) as HTMLElement;
+      // FE-05: 属性选择器（class 串是非法/误配选择器，此前恒 null）
+      const selected = listRef?.querySelector('[data-selected]') as HTMLElement;
       selected?.scrollIntoView({ block: 'nearest' });
     });
   };
@@ -278,7 +274,8 @@ const CommandPalette: Component = () => {
         <div
           class="w-[600px] max-h-[460px] flex flex-col border border-white/[0.08] rounded-[14px] overflow-hidden"
           style={{
-            background: 'rgba(var(--surface-alt-bg), 0.95)',
+            background: 'var(--popup-bg)',
+            'backdrop-filter': 'var(--popup-blur)',
             'box-shadow':
               '0 0 0 1px rgba(var(--text-base-rgb), 0.04), 0 16px 48px rgba(0, 0, 0, 0.5)',
             animation: 'command-palette-slide-in 0.15s cubic-bezier(0.16, 1, 0.3, 1)',
@@ -341,6 +338,9 @@ const CommandPalette: Component = () => {
 
                         return (
                           <div
+                            // FE-05: data-selected 锚点——class 串当选择器恒 null，
+                            // 键盘导航的 scrollIntoView 从未执行过
+                            data-selected={isSelected() ? 'true' : undefined}
                             class={`flex items-center justify-between px-3 py-2 rounded-lg cursor-pointer transition-colors duration-100 gap-3${isSelected() ? ' selected' : ''}`}
                             onClick={() => execute(cmd.id)}
                             onMouseEnter={() => setSelectedIndex(globalIdx())}

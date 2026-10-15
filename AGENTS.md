@@ -6,20 +6,20 @@ AIO is a lightweight, cross-platform AI assistant desktop client built with **Ta
 
 ## Tech Stack & Versions
 
-| Layer             | Technology                                                               | Version                   |
-| ----------------- | ------------------------------------------------------------------------ | ------------------------- |
-| Frontend          | SolidJS                                                                  | ^1.9.13                   |
-| Routing           | @solidjs/router                                                          | ^0.16.1                   |
-| Styling           | Tailwind CSS (v4, via `@tailwindcss/postcss`, no tailwind.config)        | ^4.0.0                    |
-| Build Tool        | Vite                                                                     | ^8.0.16                   |
-| Desktop Framework | Tauri                                                                    | 2.11.x                    |
-| Tauri Plugins     | dialog, fs, shell, opener, updater                                       | 2.x                       |
-| Backend Language  | Rust (pinned in `src-tauri/rust-toolchain.toml`; use `cargo +1.97.1`)    | 1.97.1                    |
-| Database          | SQLite (rusqlite)                                                        | bundled                   |
-| i18n              | @solid-primitives/i18n (locales: zh-CN, en-US)                           | ^2.2.1                    |
-| State Management  | SolidJS Store + Signals                                                  | built-in                  |
-| Models Catalog    | @aio/models-data (sibling local package; JSON bundled as tauri resource) | `file:../aio-models-data` |
-| Provider Icons    | @lobehub/icons-static-svg                                                | ^1.91.0                   |
+| Layer             | Technology                                                                            | Version                   |
+| ----------------- | ------------------------------------------------------------------------------------- | ------------------------- |
+| Frontend          | SolidJS                                                                               | ^1.9.13                   |
+| Routing           | @solidjs/router                                                                       | ^0.16.1                   |
+| Styling           | Tailwind CSS (v4, via `@tailwindcss/postcss`, no tailwind.config)                     | ^4.0.0                    |
+| Build Tool        | Vite                                                                                  | ^8.0.16                   |
+| Desktop Framework | Tauri                                                                                 | 2.11.x                    |
+| Tauri Plugins     | dialog, opener, updater（fs/shell 已移除——前端零使用，全部文件/命令操作走自有命令层） | 2.x                       |
+| Backend Language  | Rust (pinned in `src-tauri/rust-toolchain.toml`; use `cargo +1.97.1`)                 | 1.97.1                    |
+| Database          | SQLite (rusqlite)                                                                     | bundled                   |
+| i18n              | @solid-primitives/i18n (locales: zh-CN, en-US)                                        | ^2.2.1                    |
+| State Management  | SolidJS Store + Signals                                                               | built-in                  |
+| Models Catalog    | @aio/models-data (sibling local package; JSON bundled as tauri resource)              | `file:../aio-models-data` |
+| Provider Icons    | @lobehub/icons-static-svg                                                             | ^1.91.0                   |
 
 ## Directory Structure
 
@@ -32,15 +32,15 @@ src/
 ├── index.css            # Tailwind v4 CSS + theme CSS variables (light/dark mode)
 ├── core/
 │   ├── store/           # 域模块：types/models/chat/engine/project/profiles/ui-prefs/update/workflow（store.ts 仅作 barrel 再导出；接口在 types.ts）；diagnostics.ts
-│   ├── api/             # Tauri 命令封装层（chat/mcp/skills/config/update/engine/project/chat/attachment/lsp/usage/providers）+ events.ts（事件名常量）—— 组件不得裸 invoke
+│   ├── api/             # Tauri 命令封装层（chat/mcp/skills/config/update/engine/project/chat/attachment/lsp/usage/providers/memory/catalog/dialog）+ events.ts（事件名常量，双端守门测试）+ streamPayloads.ts（流事件载荷类型）—— 组件与 utils 均不得裸 invoke
 │   ├── types/           # Backend mirror types: mcp.ts, skill.ts
-│   ├── utils/           # modelLogo.ts (provider logos), models.ts (ProviderConfig/Catalog), mcp.ts, exportConversation.ts
+│   ├── utils/           # modelLogo.ts (provider logos), models.ts (ProviderConfig/Catalog 缓存+查询，invoke 已下沉 api/catalog), mcp.ts, exportConversation.ts —— 禁止裸 invoke（门禁 layering-utils）
 │   ├── i18n/            # index.ts (t(), locale) + locales/zh-CN.json + locales/en-US.json
 │   ├── shortcuts.ts     # Keyboard shortcut + slash command registry
 │   ├── agent-prompts.ts # Agent system-prompt presets
 │   └── assets/
 ├── features/
-│   ├── chat/            # ChatPage.tsx + hooks/（chatEventListeners.ts：18 个事件监听器注册）+ constants.ts + components/ (ChatInterface, TopicSidebar, ProjectSidebar, AgentProcessBlock, SubagentBlock, AgentModeSelector, ReasoningButton, TokenBar, TokenStatsBar, ShareModal, ProjectSettingsModal, ProjectSelector, ...)
+│   ├── chat/            # ChatPage.tsx + hooks/（chatEventListeners.ts：18 个流监听器在根 Layout 全局注册 + 3 个拖放监听器页面级；chatTurnEffects.ts：回合收尾效果）+ constants.ts + components/ (ChatInterface, TopicSidebar, ProjectSidebar, AgentProcessBlock, SubagentBlock, AgentModeSelector, ReasoningButton, TokenBar, TokenStatsBar, ShareModal, ProjectSettingsModal, ProjectSelector, TaskBoardPanel, AgentQuestionBubble, ...)
 │   └── settings/        # SettingsPage.tsx, ProviderDetailPage.tsx + components/ (ProviderList, AppSettings, McpServerList, McpServerDetail, SkillList, SubagentModelSettings, EmbeddingModelSettings, LocalModelMarket, UsageSettings + usage chart components)
 └── shared/
     └── components/      # Icon, Markdown, NavBar, CommandPalette, SlashCommandMenu, Dropdown, Switch, ModelRow, GlobalKeyboardHandler, DiffView, ThinkBlock, UpdateNotification
@@ -59,9 +59,13 @@ src-tauri/src/
 │   ├── state.rs         # Tauri managed state (StreamManager, DbState, LocalEngineState, SubagentHandles)
 │   ├── config.rs        # AppConfig 持久化（save_app_config/load_app_config；命令层仅存薄包装）
 │   ├── events.rs        # 后端→前端事件名常量注册表（kebab-case 守门测试；新事件须登记）
+│   ├── file_locks.rs    # 多智能体写协调：per-file 互斥锁 + last-writer 追踪 + 跨写者 hashline 门控
+│   ├── fs_util.rs       # 原子写（temp+rename）公共工具——所有 JSON/配置持久化必须走这里
 │   ├── ids.rs           # 内置 ID 常量（BUILTIN_SERVER_ID / BUILTIN_FS_SERVER_ID）
+│   ├── mcp_trust.rs     # 项目级 .aio/mcp-servers.json 信任存储（指纹键控，仓库之外）
 │   ├── migrate.rs       # 版本化 SQLite 迁移运行器（PRAGMA user_version；chat 库与记忆库共用）
 │   ├── model_registry.rs # 嵌入/重排模型注册表（MANIFEST）与目录解析
+│   ├── path_safety.rs   # IPC 前端路径参数校验（safe_join：拒绝绝对路径/`..`/保留字符）
 │   ├── paths.rs         # 应用数据目录 / 包 ID
 │   ├── permission.rs    # Agent tool permission model (allowed/denied rules per agent mode)
 │   ├── secure_store.rs  # OS keychain-backed secret storage (API keys, MCP server secrets)
@@ -69,7 +73,7 @@ src-tauri/src/
 ├── commands/
 │   ├── mod.rs
 │   ├── config.rs        # Assistants, app config, profile model overrides, custom subagent profiles, auto-start, topic branching
-│   ├── llm/             # mod.rs（薄 IPC 包装 + run_agent_turn_inner 主循环）: streaming/agent loop/budget/handoff/messages/subagents/titles/tool_specs/usage；btw.rs: "By The Way" 侧问
+│   ├── llm/             # mod.rs（薄 IPC 包装 + run_agent_turn_inner 主循环）: streaming/agent loop/budget/handoff/messages/subagents/tasks（任务清单 + ask_user）/titles/tool_specs/usage/locked_tools（文件锁接线）；btw.rs: "By The Way" 侧问
 │   ├── engine.rs        # Local engine lifecycle: start/stop/status, engine scan, model listing
 │   ├── attachment.rs    # Chat attachments + file content extraction command
 │   ├── provider_config.rs # Provider configs (LobeHub-shaped), connection tests, model fetching, API key management
@@ -123,6 +127,7 @@ src-tauri/src/
     ├── knowledge.rs     # Project knowledge (.aio/knowledge.json)
     ├── project_map.rs   # Project structure mapping
     ├── sandbox.rs       # Shell sandboxing（路径白名单/黑名单校验）
+    ├── exec_resolve.rs  # PATH-only 可执行文件解析（全部裸名 spawn 的唯一入口；Windows PATHEXT 顺序归一）
     ├── think.rs         # Reasoning tool
     ├── url_validation.rs # SSRF/URL safety checks
     ├── token_counter.rs # Token counting
@@ -131,7 +136,8 @@ src-tauri/src/
     ├── truncate.rs      # 截断辅助（字符/字节头尾截断、truncate_tool_result）
     ├── diff.rs          # diff 预览（compute_diff_preview/simple_diff，含 char-boundary 安全）
     ├── jsonrpc.rs       # JSON-RPC pending 请求表（PendingMap；MCP 与 LSP 客户端共用）
-    └── project_index.rs # 项目索引辅助（projects 文件解析）
+    ├── project_index.rs # 项目索引辅助（projects 文件解析）
+    └── worktree.rs      # 子智能体 worktree 隔离（创建/提交/合并回主分支/冲突中止/过期清理）
 ```
 
 ## Coding Conventions
@@ -157,6 +163,12 @@ src-tauri/src/
 - Utility functions go to `core/utils/`, never duplicate logic across components.
 - **样式统一使用 Tailwind CSS 工具类编写**，避免内联样式或自定义 CSS 文件，除非确有必要。Tailwind v4 无 `tailwind.config`；主题令牌是 `src/index.css` 中的 CSS 变量（`--primary-rgb`、`--surface-bg`、`--text-base-rgb`、`--border-dim` 等），暗色模式由 `isDarkMode` 信号切换，新颜色必须走 CSS 变量，禁止硬编码 `rgba(...)` 字面量。
 - **严禁在代码中使用 Emoji 字符（包括 JSX 文本、模板字符串、配置对象）。一律使用 `<Icon name="..." />` 组件替换。对于字符串上下文（`confirm()`、`alert()`），使用纯文本等价符号（`✓` / `✗` / `[!]`）。**
+- **弹窗（模态）背景统一**：所有模态弹窗的容器必须使用亚克力样式 `background: var(--dialog-bg)` + `backdrop-filter: var(--popup-blur)` + `border: 1px solid var(--border-dim)`（变量定义在 `src/index.css`），遮罩层固定为 `bg-black/25`（遮罩不加模糊）。参照实现：`src/features/chat/components/ProjectSettingsModal.tsx`。
+- **下拉菜单统一**：所有下拉选择一律使用 `src/shared/components/Dropdown.tsx`；设置页/表单行内使用 `variant="ghost"`（透明触发器 + `--border-dim` 边框，参照 `src/features/settings/components/AppSettings.tsx` 的语言选择器），工具栏使用默认 `solid` 变体。禁止原生 `<select>` 元素（`npm run check:gates` 门禁强制执行）。
+- **勾选框统一**：所有勾选框一律使用 `src/shared/components/Checkbox.tsx`（主色描边方块 + check 图标；纯文本标签用 `label` 属性，富文本标签用 children）。禁止原生 `<input type="checkbox">`（`npm run check:gates` 门禁强制执行）。
+- **图标禁用字符代替**：按钮/控件中表达图形语义（关闭叉号、箭头、对勾等）一律使用 `<Icon name="..." />` SVG 图标，禁止用字符代替（如用 `x`/`×`/`✕` 当叉号、`→` 当箭头）；JSX 文本节点中禁止出现独占一个元素内容的 `× ✕ ✓ ✗ → ← ▲ ▼` 等符号字符（门禁强制执行）。仅有的例外是字符串上下文（`confirm()`/`alert()`/日志等纯文本）中的 `✓`/`✗`/`[!]`。图标缺失时在 `src/shared/components/Icon.tsx` 的 `PATHS` 表中新增（工厂函数形式），不得退用字符。
+- **同行元素高度相等**：同一行（同一 flex 行容器）内的按钮/输入框/下拉/标签等控件必须使用相同的高度档位——优先复用 `shared/components/buttonStyles.ts` 中同一档位的常量（行内操作统一 `px-3 py-1.5 text-xs` 档：`btnSecondarySm`/`btnDangerOutline`/`btnSuccessOutline` 等 Sm/Outline 系列），禁止同一行混用不同 padding/字号档位（如 `btnBadge` 的 `px-2 py-1 text-[11px]` 与 `btnDangerOutline` 的 `px-3 py-1.5 text-xs` 并排）；表单行内输入框的圆角与垂直内边距也需与同弹窗的下拉触发器一致（`Dropdown` ghost 变体为 `rounded-lg py-1.5`，输入框用 `rounded-lg` 匹配）。
+- **语义色按钮一律 outline**：带语义颜色的文本操作按钮（确定/保存/创建、删除/停止/关闭、测试连接/启动/批准、存密钥等）只允许 `buttonStyles.ts` 的 Outline 家族——**边框与文字携带语义色**（`border-pri-50`+`text-pri`、`border-danger/50`+`text-danger`、`border-success/50`+`text-success`、`border-warn/50`+`text-warn`），按钮主体保持中性底（`bg-white/[0.06]`，与 secondary 一致，hover 才浮现浅语义色底）。禁止实底语义按钮（`bg-pri` 实色）与色块底（`bg-danger/10`/`bg-green-400/10` 等）；中性操作用 `btnSecondary`/`btnSecondarySm`。发送/停止复合图标控件（输入区主控件）与 tab 选中态不在此规则约束内。
 - **i18n**：所有面向用户的字符串必须通过 `t()`（`core/i18n`）取词；每个 key 必须同时存在于 `locales/zh-CN.json` 与 `locales/en-US.json`，且 `{{placeholder}}` 集合一致（`npm run check:i18n` 强制校验）。禁止在 JSX/模板字符串中硬编码 UI 文案。
 - **UI 文案克制**：界面上只放功能性文字（标签、状态、操作结果、错误提示、一句话占位符）。开发/设计阶段的解释性描述——功能介绍、原理说明、使用教程、配置字段的长说明——一律不写入 UI，它们属于 `docs/`。新增 UI 文案时先问：删掉这句话用户会不会用不了这个功能？会才留。操作状态反馈优先用控件自身的状态变化表达（如按钮文字短暂切换为「已取消/已下载」一秒后恢复、列表项消失、布局切换），而不是新增常驻状态文字行；错误信息（含失败原因）除外。
 
@@ -194,13 +206,22 @@ More extension paths (MCP transports, new Tauri commands, agent tools, permissio
 - `DbState`: SQLite connection.
 - `LocalEngineState`: running local engine processes, HashMap keyed by `engine_type`; one active engine at a time enforced by `start_local_server`.
 - `SubagentHandles`: background subagent join handles.
-- Plus managers registered in `lib.rs`: `EngineManager`, `McpServerManager`/`McpServerState`/`McpRequestManager`/`PendingApprovals`, `LspManager`.
+- Plus managers registered in `lib.rs`: `EngineManager`, `McpServerManager`/`McpServerState`/`McpRequestManager`/`PendingApprovals`, `LspManager`, `FileLockRegistry`（多智能体写协调，见 `core/file_locks.rs`）.
 
 ## Important Compatibility Notes
 
 - **Command Stability**: Public Tauri command names (`start_local_server`, `stop_local_server`, `is_local_server_running`, `call_llm_stream`, etc.) must remain stable to preserve frontend compatibility.
 - **Config Migration**: The `ActivatedModel` struct supports an optional `engine_type` field. Old configs without this field deserialize safely (defaults to `None`), and logic treats `None` as legacy llama.cpp behavior.
 - **Event Names**: `engine-progress` is the generic progress event (all engines default to it); the llama.cpp plugin still emits `llama-progress` for backward compatibility. Other frontend events: `llm-chunk`, `llm-round-start`, `llm-compression`, `llm-compression-failed`, `subagent-start` / `subagent-step` / `subagent-done` / `subagent-error`, `mcp-server-status`, `mcp-server-stderr`, `app-update-progress`. New events must be kebab-case.
+
+## Branch & Release Workflow
+
+单人开发约定（分支名规范 + PR 流程）：
+
+- **日常开发**：从 `dev` 切出功能分支，命名 `dev-<功能>`（Git 不允许在 `dev` 分支存在时创建 `dev/<功能>` 命名空间，故用连字符前缀）；更改提交到功能分支。
+- **功能完成**：功能分支 PR 到 `dev`，merge 后删除功能分支（本地 + 远端）。
+- **发布版本**：决定发版时 `dev` PR 到 `master` 并 merge；`dev` 分支保留不动。随后 bump 版本（CHANGELOG + 三处版本号）、打 `vX.Y.Z` tag 推送触发 `release.yml`。
+- **master** 仅包含已发布版本内容；长期存在的分支只有 `dev` 与 `master`。
 
 ## Build & Dev Commands
 

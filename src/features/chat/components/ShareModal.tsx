@@ -15,7 +15,7 @@ import {
 import { Portal } from 'solid-js/web';
 import { toCanvas, toPng } from 'html-to-image';
 import { saveBinaryFile } from '../../../core/api/attachment';
-import { save } from '@tauri-apps/plugin-dialog';
+import { pickSavePath } from '../../../core/api/dialog';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
 import { jsPDF } from 'jspdf';
@@ -27,11 +27,12 @@ import {
   type ExportOptions,
 } from '../../../core/utils/exportConversation';
 import Icon from '../../../shared/components/Icon';
+import Checkbox from '../../../shared/components/Checkbox';
 import {
   btnClose,
-  btnPrimarySm,
+  btnPrimaryOutlineSm,
   btnSecondary,
-  btnSuccess,
+  btnSuccessOutline,
   btnTabMd,
   btnTabXs,
   tabActive,
@@ -57,7 +58,7 @@ async function downloadBlob(content: string | Blob, filename: string, mime: stri
   const blob = content instanceof Blob ? content : new Blob([content], { type: mime });
   try {
     const buf = new Uint8Array(await blob.arrayBuffer());
-    const filePath = await save({ defaultPath: filename });
+    const filePath = await pickSavePath(filename);
     if (filePath) {
       await saveBinaryFile(filePath, Array.from(buf));
       return;
@@ -365,34 +366,46 @@ const ShareModal: Component<ShareModalProps> = (props) => {
 
       // Scale canvas to fit page width
       const imgWidth = contentWidth;
-      const imgHeight = (canvas.height * contentWidth) / canvas.width;
 
-      // Split into pages if needed
-      let remainingHeight = imgHeight;
-      let page = 0;
-
-      while (remainingHeight > 0) {
+      // Split into pages: each page draws its own slice of the source canvas
+      // (CHAT-5: the historic loop pressed the FULL canvas into every page's
+      // sliceHeight — a multi-page conversation exported as N squashed copies
+      // of the whole image). Source slice height in canvas pixels derived from
+      // the PDF-point slice height via the scale factor.
+      const scale = canvas.width / imgWidth; // canvas px per PDF pt
+      const pageSlicePt = contentHeight;
+      const pageSlicePx = Math.floor(pageSlicePt * scale);
+      const totalPages = Math.max(1, Math.ceil(canvas.height / pageSlicePx));
+      for (let page = 0; page < totalPages; page++) {
         if (page > 0) doc.addPage();
-        const sliceHeight = Math.min(remainingHeight, contentHeight);
+        const srcY = page * pageSlicePx;
+        const srcH = Math.min(pageSlicePx, canvas.height - srcY);
+        if (srcH <= 0) break;
+        // Intermediate slice canvas: copy the source region, then place it 1:1
+        const slice = document.createElement('canvas');
+        slice.width = canvas.width;
+        slice.height = srcH;
+        const ctx = slice.getContext('2d');
+        if (!ctx) break;
+        ctx.fillStyle = '#ffffff'; // gate-allow: color #ffffff
+        ctx.fillRect(0, 0, slice.width, slice.height);
+        ctx.drawImage(canvas, 0, srcY, canvas.width, srcH, 0, 0, canvas.width, srcH);
         doc.addImage(
-          canvas.toDataURL('image/png'),
+          slice.toDataURL('image/png'),
           'PNG',
           margin,
           margin,
           imgWidth,
-          sliceHeight,
+          srcH / scale,
           undefined,
           'FAST',
         );
-
-        remainingHeight -= sliceHeight;
-        page++;
       }
 
       const pdfBytes = doc.output('arraybuffer');
-      const filePath = await save({
-        defaultPath: `${topicName}.pdf`,
-        filters: [{ name: 'PDF', extensions: ['pdf'] }],
+      const filePath = await pickSavePath(`${topicName}.pdf`, {
+        name: 'PDF',
+        extensions: ['pdf'],
       });
 
       if (filePath) {
@@ -408,31 +421,8 @@ const ShareModal: Component<ShareModalProps> = (props) => {
   const tab = () => activeTab();
 
   // ---- filter options row (shared by markdown / screenshot / pdf) ----
-
-  /** Custom checkbox (inline component to avoid an extra file dependency) */
-  const Checkbox = (p: { checked: boolean; onChange: (v: boolean) => void; label: string }) => (
-    <label
-      class="flex items-center gap-1.5 cursor-pointer select-none hover:text-white/70 transition-colors"
-      onClick={() => p.onChange(!p.checked)}
-    >
-      <div
-        class="w-4 h-4 rounded border flex items-center justify-center shrink-0 transition-all duration-150"
-        classList={{
-          'bg-[rgba(var(--primary-rgb),0.25)] border-[rgba(var(--primary-rgb),0.4)]': p.checked,
-          'bg-transparent border-white/[0.15] hover:border-white/[0.3]': !p.checked,
-        }}
-      >
-        <Show when={p.checked}>
-          <Icon
-            name="check"
-            class="w-2.5 h-2.5"
-            style={{ color: 'rgba(var(--primary-rgb),0.9)' }}
-          />
-        </Show>
-      </div>
-      <span>{p.label}</span>
-    </label>
-  );
+  // Checkbox: the shared component (src/shared/components/Checkbox.tsx) — the style
+  // codified here historically is now the app-wide standard.
 
   const FilterOptions = () => (
     <>
@@ -465,7 +455,7 @@ const ShareModal: Component<ShareModalProps> = (props) => {
             'opacity-0 pointer-events-none': isExiting() || isEntering(),
             'opacity-100': !isExiting() && !isEntering(),
           }}
-          class="fixed inset-0 z-[1100] flex items-center justify-center bg-black/60 backdrop-blur-[12px] transition-all duration-200 ease-out"
+          class="fixed inset-0 z-[1100] flex items-center justify-center bg-black/25 transition-all duration-200 ease-out"
           onClick={(e) => e.target === e.currentTarget && handleClose()}
         >
           <div
@@ -475,9 +465,9 @@ const ShareModal: Component<ShareModalProps> = (props) => {
             }}
             class="flex flex-col w-[92%] max-w-[760px] h-[88vh] max-h-[94vh] rounded-xl overflow-hidden transition-all duration-500 ease-out transform"
             style={{
-              background: 'rgba(34, 38, 54, 0.82)',
-              'backdrop-filter': 'blur(var(--acrylic-blur))',
-              border: '1px solid var(--acrylic-border)',
+              background: 'var(--dialog-bg)',
+              'backdrop-filter': 'var(--popup-blur)',
+              border: '1px solid var(--border-dim)',
             }}
           >
             {/* Title bar */}
@@ -624,7 +614,7 @@ const ShareModal: Component<ShareModalProps> = (props) => {
                     {/* buttons */}
                     <div class="flex items-center justify-end gap-3 px-6 py-4 border-t border-white/[0.06] shrink-0 mt-auto">
                       <button
-                        class={`${btnSecondary} ${copied() === 'screenshot' ? btnSuccess : ''}`}
+                        class={`${btnSecondary} ${copied() === 'screenshot' ? btnSuccessOutline : ''}`}
                         disabled={shotCapturing()}
                         onClick={() => handleScreenshotCapture('copy')}
                       >
@@ -636,7 +626,7 @@ const ShareModal: Component<ShareModalProps> = (props) => {
                             : t('export.copyScreenshot')}
                       </button>
                       <button
-                        class={btnPrimarySm}
+                        class={btnPrimaryOutlineSm}
                         disabled={shotCapturing()}
                         onClick={() => handleScreenshotCapture('download')}
                       >
@@ -669,13 +659,16 @@ const ShareModal: Component<ShareModalProps> = (props) => {
                     </div>
                     <div class="flex items-center justify-end gap-3 px-6 py-4 border-t border-white/[0.06] shrink-0">
                       <button
-                        class={`${btnSecondary} ${copied() === 'markdown' ? btnSuccess : ''}`}
+                        class={`${btnSecondary} ${copied() === 'markdown' ? btnSuccessOutline : ''}`}
                         onClick={() => handleCopy('markdown')}
                       >
                         <Icon name="copy" class="w-3.5 h-3.5" />
                         {copied() === 'markdown' ? t('common.copied') : t('export.copyClipboard')}
                       </button>
-                      <button class={btnPrimarySm} onClick={() => handleDownload('markdown')}>
+                      <button
+                        class={btnPrimaryOutlineSm}
+                        onClick={() => handleDownload('markdown')}
+                      >
                         <Icon name="download" class="w-3.5 h-3.5" />
                         {t('export.downloadMd')}
                       </button>
@@ -715,13 +708,13 @@ const ShareModal: Component<ShareModalProps> = (props) => {
                     </div>
                     <div class="flex items-center justify-end gap-3 px-6 py-4 border-t border-white/[0.06] shrink-0">
                       <button
-                        class={`${btnSecondary} ${copied() === 'json' ? btnSuccess : ''}`}
+                        class={`${btnSecondary} ${copied() === 'json' ? btnSuccessOutline : ''}`}
                         onClick={() => handleCopy('json')}
                       >
                         <Icon name="copy" class="w-3.5 h-3.5" />
                         {copied() === 'json' ? t('common.copied') : t('export.copyClipboard')}
                       </button>
-                      <button class={btnPrimarySm} onClick={() => handleDownload('json')}>
+                      <button class={btnPrimaryOutlineSm} onClick={() => handleDownload('json')}>
                         <Icon name="download" class="w-3.5 h-3.5" />
                         {t('export.downloadJson')}
                       </button>
@@ -740,6 +733,10 @@ const ShareModal: Component<ShareModalProps> = (props) => {
                       <iframe
                         ref={pdfIframeRef}
                         srcdoc={htmlContent()}
+                        // CHAT-1: sandbox 禁脚本（toCanvas 只需同源读 DOM）——
+                        // 无 sandbox 时 srcdoc 内联脚本/handlers 虽被页面 CSP 阻断，
+                        // form-action/meta-refresh 导航不受约束
+                        sandbox="allow-same-origin"
                         class="w-full h-full rounded-lg border-0"
                         style={{ background: '#fff' }} // gate-allow: color #fff
                         title="PDF preview"
@@ -747,7 +744,7 @@ const ShareModal: Component<ShareModalProps> = (props) => {
                     </div>
                     <div class="flex items-center justify-end gap-3 px-6 py-4 border-t border-white/[0.06] shrink-0">
                       <button
-                        class={btnPrimarySm}
+                        class={btnPrimaryOutlineSm}
                         disabled={pdfCapturing()}
                         onClick={handlePdfDownload}
                       >

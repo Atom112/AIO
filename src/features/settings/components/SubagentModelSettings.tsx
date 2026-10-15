@@ -25,9 +25,10 @@ import {
 import { getLogo as getLogoByIds } from '../../../core/utils/modelLogo';
 import { findModel, formatContextWindow } from '../../../core/utils/models';
 import Icon from '../../../shared/components/Icon';
+import { getSubagentProfileStyle } from '../../../core/utils/subagentProfileStyle';
 import {
   btnIcon,
-  btnPrimarySm,
+  btnPrimaryOutlineSm,
   btnSecondarySm,
   tabActive,
 } from '../../../shared/components/buttonStyles';
@@ -54,7 +55,13 @@ const BUILTIN_PROFILE_IDS = new Set([
   'vision',
 ]);
 
-const BUILTIN_PROFILES: ProfileInfo[] = [
+/**
+ * FE-06: built lazily per call so `t()` resolves against the live locale signal —
+ * the previous module-level array froze the startup locale for profile names
+ * (and would render the old language after a switch). The consuming `createMemo`
+ * re-runs on locale change because `t()` is tracked inside it.
+ */
+const builtinProfiles = (): ProfileInfo[] => [
   {
     id: 'explorer',
     name: t('subagent.profile.fileBrowser'),
@@ -122,6 +129,28 @@ const SubagentModelSettings: Component = () => {
   /** Cloud models only (exclude local models). */
   const cloudModels = createMemo(() => allAvailableModels().filter((m) => !isLocalModel(m)));
 
+  /**
+   * Cloud models grouped by source provider (owned_by = the provider config's
+   * displayName from allAvailableModels), keeping first-appearance order. Mirrors the
+   * chat input ModelSelector's sectioned list so models configured at different
+   * providers are visually separated instead of mixed into one flat list.
+   */
+  const groupedCloudModels = createMemo(() => {
+    const groups: Array<{ name: string; models: ActivatedModel[] }> = [];
+    const byName = new Map<string, ActivatedModel[]>();
+    for (const m of cloudModels()) {
+      const name = m.owned_by || 'OpenAI';
+      let list = byName.get(name);
+      if (!list) {
+        list = [];
+        byName.set(name, list);
+        groups.push({ name, models: list });
+      }
+      list.push(m);
+    }
+    return groups;
+  });
+
   /** Create custom profile form state */
   const [showCreateForm, setShowCreateForm] = createSignal(false);
   const [newId, setNewId] = createSignal('');
@@ -187,7 +216,7 @@ const SubagentModelSettings: Component = () => {
 
   /** Combined profiles: built-in first, then custom */
   const allProfiles = createMemo<ProfileInfo[]>(() => [
-    ...BUILTIN_PROFILES,
+    ...builtinProfiles(),
     ...customSubagentProfiles().map((c) => ({
       id: c.id,
       name: c.name,
@@ -323,6 +352,8 @@ const SubagentModelSettings: Component = () => {
         {(profile, index) => {
           const current = () => overrideModel(profile.id);
           const isOpen = () => openDropdown() === profile.id;
+          // Role identity chip (same icon/color registry as the conversation view)
+          const ps = getSubagentProfileStyle(profile.id);
           return (
             <div
               class="bg-white/[0.03] rounded-xl border border-[var(--border-dim)] overflow-hidden animate-row-in"
@@ -330,14 +361,22 @@ const SubagentModelSettings: Component = () => {
             >
               {/* Profile header */}
               <div class="p-4 flex items-center justify-between">
-                <div class="flex-1 min-w-0">
-                  <div class="flex items-center gap-1.5">
-                    <span class="text-sm font-semibold text-white">{profile.name}</span>
-                    <span class="text-[10px] px-1.5 py-0.5 rounded bg-pri-20 text-pri font-mono">
-                      {profile.id}
-                    </span>
+                <div class="flex-1 min-w-0 flex items-center gap-3">
+                  <div
+                    class="w-8 h-8 rounded-lg flex items-center justify-center shrink-0 border"
+                    style={{ background: ps.bgColor, 'border-color': ps.borderColor }}
+                  >
+                    <Icon name={ps.icon} size={15} style={{ color: ps.color }} />
                   </div>
-                  <p class="text-xs text-white/40 mt-1">{profile.description}</p>
+                  <div class="min-w-0">
+                    <div class="flex items-center gap-1.5">
+                      <span class="text-sm font-semibold text-white">{profile.name}</span>
+                      <span class="text-[10px] px-1.5 py-0.5 rounded bg-pri-20 text-pri font-mono">
+                        {profile.id}
+                      </span>
+                    </div>
+                    <p class="text-xs text-white/40 mt-1">{profile.description}</p>
+                  </div>
                 </div>
                 <div class="flex items-center gap-2 ml-3 shrink-0">
                   <button
@@ -349,7 +388,7 @@ const SubagentModelSettings: Component = () => {
                     <span class="max-w-[140px] truncate">
                       {current()?.model_id ?? t('subagent.followMain')}
                     </span>
-                    <span class="text-white/30 text-[10px]">&#9662;</span>
+                    <Icon name="triangle-down" size={10} class="text-white/30 shrink-0" />
                   </button>
                   <Show when={!isBuiltin(profile.id)}>
                     <button
@@ -394,60 +433,74 @@ const SubagentModelSettings: Component = () => {
 
                   <div class="my-1.5 mx-2 border-t border-[var(--border-dim)]" />
 
-                  <For each={cloudModels()}>
-                    {(model) => {
-                      const selected = () => isModelSelectedForProfile(profile.id, model);
-                      const meta = () => getMeta(model);
-                      const noKey = () => {
-                        const m = model as any;
-                        return !m.api_key && !m.is_remote;
-                      };
-                      return (
+                  <For each={groupedCloudModels()}>
+                    {(group) => (
+                      <>
+                        {/* Provider section header (ModelSelector's section style) */}
                         <div
-                          class="flex items-center gap-2.5 p-2.5 text-sm rounded-lg cursor-pointer select-none transition-all"
-                          classList={{
-                            '!bg-[rgba(var(--primary-rgb),0.12)] !border-l-[3px] !border-[rgba(var(--primary-rgb),0.2)]':
-                              selected(),
-                          }}
-                          onClick={() => handlePickModel(profile.id, model)}
-                          style={{ color: 'rgba(var(--text-base-rgb),0.5)' }}
-                          onMouseEnter={(e) => {
-                            if (!selected()) {
-                              e.currentTarget.style.background = 'rgba(var(--text-base-rgb),0.06)';
-                              e.currentTarget.style.color = 'white';
-                            }
-                          }}
-                          onMouseLeave={(e) => {
-                            if (!selected()) {
-                              e.currentTarget.style.background = 'transparent';
-                              e.currentTarget.style.color = 'rgba(var(--text-base-rgb),0.5)';
-                            }
-                          }}
+                          class="px-3 pt-2.5 pb-1.5 text-[11px] font-bold uppercase tracking-widest truncate"
+                          style={{ color: 'rgba(var(--text-base-rgb),0.35)' }}
                         >
-                          <div class="w-6 h-6 bg-white rounded-full flex items-center justify-center shrink-0 shadow-sm">
-                            {getModelLogo(model.model_id)}
-                          </div>
-                          <div class="flex-1 flex flex-col items-start justify-center overflow-hidden min-w-0">
-                            <div class="max-w-[180px] text-[13px] text-white font-medium truncate">
-                              {model.model_id}
-                            </div>
-                            <div class="flex gap-1 mt-0.5 flex-wrap">
-                              <Show when={meta()}>
-                                <span class="text-[9px] px-1 py-0.5 rounded bg-pri-20 text-pri">
-                                  {formatContextWindow(meta()!.contextWindow)}
-                                </span>
-                              </Show>
-                              <Show when={noKey()}>
-                                <span class="text-[9px] px-1 py-0.5 rounded bg-yellow-500/20 text-yellow-300 inline-flex items-center gap-0.5">
-                                  <Icon name="alert-triangle" size={9} />{' '}
-                                  {t('project.noKeyConfigured')}
-                                </span>
-                              </Show>
-                            </div>
-                          </div>
+                          {group.name}
                         </div>
-                      );
-                    }}
+                        <For each={group.models}>
+                          {(model) => {
+                            const selected = () => isModelSelectedForProfile(profile.id, model);
+                            const meta = () => getMeta(model);
+                            const noKey = () => {
+                              const m = model as any;
+                              return !m.api_key && !m.is_remote;
+                            };
+                            return (
+                              <div
+                                class="flex items-center gap-2.5 p-2.5 text-sm rounded-lg cursor-pointer select-none transition-all"
+                                classList={{
+                                  '!bg-[rgba(var(--primary-rgb),0.12)] !border-l-[3px] !border-[rgba(var(--primary-rgb),0.2)]':
+                                    selected(),
+                                }}
+                                onClick={() => handlePickModel(profile.id, model)}
+                                style={{ color: 'rgba(var(--text-base-rgb),0.5)' }}
+                                onMouseEnter={(e) => {
+                                  if (!selected()) {
+                                    e.currentTarget.style.background =
+                                      'rgba(var(--text-base-rgb),0.06)';
+                                    e.currentTarget.style.color = 'white';
+                                  }
+                                }}
+                                onMouseLeave={(e) => {
+                                  if (!selected()) {
+                                    e.currentTarget.style.background = 'transparent';
+                                    e.currentTarget.style.color = 'rgba(var(--text-base-rgb),0.5)';
+                                  }
+                                }}
+                              >
+                                <div class="w-6 h-6 bg-white rounded-full flex items-center justify-center shrink-0 shadow-sm">
+                                  {getModelLogo(model.model_id)}
+                                </div>
+                                <div class="flex-1 flex flex-col items-start justify-center overflow-hidden min-w-0">
+                                  <div class="max-w-[180px] text-[13px] text-white font-medium truncate">
+                                    {model.model_id}
+                                  </div>
+                                  <div class="flex gap-1 mt-0.5 flex-wrap">
+                                    <Show when={meta()}>
+                                      <span class="text-[9px] px-1 py-0.5 rounded bg-pri-20 text-pri">
+                                        {formatContextWindow(meta()!.contextWindow)}
+                                      </span>
+                                    </Show>
+                                    <Show when={noKey()}>
+                                      <span class="text-[9px] px-1 py-0.5 rounded bg-yellow-500/20 text-yellow-300 inline-flex items-center gap-0.5">
+                                        <Icon name="alert-triangle" size={9} />{' '}
+                                        {t('project.noKeyConfigured')}
+                                      </span>
+                                    </Show>
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          }}
+                        </For>
+                      </>
+                    )}
                   </For>
 
                   <Show when={cloudModels().length === 0}>
@@ -693,7 +746,7 @@ const SubagentModelSettings: Component = () => {
               >
                 {t('common.cancel')}
               </button>
-              <button class={btnPrimarySm} onClick={() => void handleCreate()}>
+              <button class={btnPrimaryOutlineSm} onClick={() => void handleCreate()}>
                 {t('subagent.create')}
               </button>
             </div>

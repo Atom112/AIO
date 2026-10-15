@@ -55,22 +55,6 @@ fn resolve_root(app: &AppHandle, project_id: &str) -> Result<String, String> {
     file_tools::resolve_project_root(app, Some(project_id))
 }
 
-/// Embed a single text; returns None on failure (retrieval/write falls back to keyword mode).
-async fn embed_one(
-    app: &AppHandle,
-    cfg: &MemoryEmbeddingConfig,
-    text: &str,
-) -> Option<(String, usize, Vec<f32>)> {
-    let embedder = crate::plugins::embed::resolve(app, cfg).ok()?;
-    let v = embedder
-        .embed(&[text.to_string()])
-        .await
-        .ok()?
-        .into_iter()
-        .next()?;
-    Some((embedder.model_key(), v.len(), v))
-}
-
 /// Compute embedder readiness (prefers the actually resolved embedder over the raw config:
 /// provider/model/dimensions in the config may come from a legacy global config snapshot and not match actual usage).
 fn embedder_status(app: &AppHandle, cfg: &MemoryEmbeddingConfig) -> EmbedderStatus {
@@ -180,7 +164,6 @@ pub async fn memory_add(
 ) -> Result<MemoryFact, String> {
     let root = resolve_root(&app, &project_id)?;
     let store = app.state::<MemoryStoreManager>().open(&root)?;
-    let embedding_cfg = crate::services::memory::resolve_project_embedding(&app, &store);
     let fact = NewFact {
         key,
         content: content.clone(),
@@ -190,7 +173,8 @@ pub async fn memory_add(
         source_refs: None,
         pinned: false,
     };
-    let embedding = embed_one(&app, &embedding_cfg, &fact.content).await;
+    // MEM-06: canonical embed_one (dimension-drift guard included)
+    let embedding = crate::services::memory::embed_one(&app, &store, &fact.content).await;
     store.upsert_fact(&fact, embedding)
 }
 
@@ -205,7 +189,6 @@ pub async fn memory_update(
 ) -> Result<MemoryFact, String> {
     let root = resolve_root(&app, &project_id)?;
     let store = app.state::<MemoryStoreManager>().open(&root)?;
-    let embedding_cfg = crate::services::memory::resolve_project_embedding(&app, &store);
     let existing = store.get_fact(&id)?;
     let new_content = content.unwrap_or(existing.content.clone());
     // With a key, go through upsert (in-place update for the same key + version audit); without a key, amend the content directly
@@ -219,7 +202,7 @@ pub async fn memory_update(
             source_refs: existing.source_refs.clone(),
             pinned: existing.pinned,
         };
-        let embedding = embed_one(&app, &embedding_cfg, &new_content).await;
+        let embedding = crate::services::memory::embed_one(&app, &store, &new_content).await;
         store.upsert_fact(&fact, embedding)?
     } else {
         // Keyless fact: amend the content in place; rewrite the vector in place (set_embedding).
@@ -230,7 +213,9 @@ pub async fn memory_update(
             // The category param takes effect via set_category in the keyless branch
             updated = store.set_category(&id, cat)?;
         }
-        if let Some(embedding) = embed_one(&app, &embedding_cfg, &new_content).await {
+        if let Some(embedding) =
+            crate::services::memory::embed_one(&app, &store, &new_content).await
+        {
             if let Err(e) = store.set_embedding(&id, Some(embedding)) {
                 tracing::warn!("记忆 {id} 向量重写失败（保留旧向量）: {e}");
             }
@@ -344,32 +329,78 @@ pub fn memory_prune(app: AppHandle, project_id: String) -> Result<usize, String>
 }
 
 /// Export all memory facts as a JSON file (vectors excluded) to a user-chosen filesystem path.
-/// `path`: absolute target file path (picked via the frontend dialog save).
+/// `path`: absolute target file path — must have been returned by the backend
+/// `pick_save_path` dialog in this session (MEM-10: a bare IPC path string is refused).
+/// HOR-4: full-facts DB read + disk write — async + blocking pool.
 #[tauri::command]
-pub fn memory_export_file(app: AppHandle, project_id: String, path: String) -> Result<(), String> {
-    let root = resolve_root(&app, &project_id)?;
-    let json = app
-        .state::<MemoryStoreManager>()
-        .open(&root)?
-        .export_facts()?;
-    std::fs::write(&path, json)
-        .map_err(|e| ierr!("写入导出文件失败: {}", "Failed to write export file: {}", e))
+pub async fn memory_export_file(
+    app: AppHandle,
+    project_id: String,
+    path: String,
+) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || {
+        if !crate::commands::export::is_approved_save_path(&path) {
+            return Err(ierr!(
+                "导出路径未经过系统保存对话框确认，已拒绝写入",
+                "Export path was not confirmed through the system save dialog; write refused"
+            ));
+        }
+        let root = resolve_root(&app, &project_id)?;
+        let json = app
+            .state::<MemoryStoreManager>()
+            .open(&root)?
+            .export_facts()?;
+        crate::core::fs_util::atomic_write(std::path::Path::new(&path), json.as_bytes())
+            .map_err(|e| ierr!("写入导出文件失败: {}", "Failed to write export file: {}", e))
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
+/// Upper bound for an import file (guards the read-to-string against huge inputs).
+const MEMORY_IMPORT_MAX_BYTES: u64 = 16 * 1024 * 1024;
+
 /// Import memory facts from a user-chosen JSON file (dedup by key; vectors must be rebuilt).
-/// `path`: absolute source file path (picked via the frontend dialog open).
+/// `path`: absolute source file path — must have been returned by the backend
+/// `pick_open_path` dialog in this session; size-capped at 16 MiB, `.json` only.
+/// HOR-4: up-to-16MB read + batch inserts — async + blocking pool.
 #[tauri::command]
-pub fn memory_import_file(
+pub async fn memory_import_file(
     app: AppHandle,
     project_id: String,
     path: String,
 ) -> Result<usize, String> {
-    let root = resolve_root(&app, &project_id)?;
-    let json = std::fs::read_to_string(&path)
-        .map_err(|e| ierr!("读取导入文件失败: {}", "Failed to read import file: {}", e))?;
-    app.state::<MemoryStoreManager>()
-        .open(&root)?
-        .import_facts(&json)
+    tokio::task::spawn_blocking(move || {
+        if !crate::commands::export::is_approved_read_path(&path) {
+            return Err(ierr!(
+                "导入路径未经过系统打开对话框确认，已拒绝读取",
+                "Import path was not confirmed through the system open dialog; read refused"
+            ));
+        }
+        let p = std::path::Path::new(&path);
+        if p.extension().and_then(|e| e.to_str()) != Some("json") {
+            return Err(ierr!(
+                "导入文件必须是 .json 文件",
+                "The import file must be a .json file"
+            ));
+        }
+        if let Ok(meta) = std::fs::metadata(p) {
+            if meta.len() > MEMORY_IMPORT_MAX_BYTES {
+                return Err(ierr!(
+                    "导入文件过大（上限 16 MB）",
+                    "Import file is too large (limit 16 MB)"
+                ));
+            }
+        }
+        let root = resolve_root(&app, &project_id)?;
+        let json = std::fs::read_to_string(&path)
+            .map_err(|e| ierr!("读取导入文件失败: {}", "Failed to read import file: {}", e))?;
+        app.state::<MemoryStoreManager>()
+            .open(&root)?
+            .import_facts(&json)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Index project code for code-level RAG; incremental runs skip unchanged files.
@@ -381,18 +412,35 @@ pub async fn memory_code_index(
     force: Option<bool>,
 ) -> Result<crate::services::memory::code::CodeIndexResult, String> {
     let root = resolve_root(&app, &project_id)?;
-    crate::services::memory::code::index_code(
+    let progress_root = root.clone();
+    let result = crate::services::memory::code::index_code(
         &app,
         &root,
         force.unwrap_or(false),
         move |done, total| {
             let _ = window.emit(
                 ev::CODE_INDEX_PROGRESS,
-                serde_json::json!({ "done": done, "total": total }),
+                serde_json::json!({ "project": progress_root, "done": done, "total": total }),
             );
         },
     )
-    .await
+    .await;
+    // Terminal lifecycle event (background-task menu feed): done or error, with
+    // the same project-root identity the progress events carry.
+    let _ = app.emit(
+        ev::CODE_INDEX_PROGRESS,
+        match &result {
+            Ok(r) => serde_json::json!({
+                "project": root,
+                "status": "done",
+                "files": r.files,
+                "chunks": r.chunks,
+                "elapsedMs": r.elapsed_ms,
+            }),
+            Err(e) => serde_json::json!({ "project": root, "status": "error", "error": e }),
+        },
+    );
+    result
 }
 
 /// Semantic code search (backend for the search_code tool; optional path/symbol filters).
@@ -473,7 +521,8 @@ pub async fn memory_reindex(
     let store = app.state::<MemoryStoreManager>().open(&root)?;
     let cfg = crate::services::memory::resolve_project_embedding(&app, &store);
     let embedder = crate::plugins::embed::resolve(&app, &cfg)?;
-    store
+    let progress_root = root.clone();
+    let result = store
         .reindex(
             |content| {
                 let embedder = embedder.clone();
@@ -487,14 +536,29 @@ pub async fn memory_reindex(
                     }
                 }
             },
-            |done, total| {
+            move |done, total| {
                 let _ = window.emit(
                     ev::REINDEX_PROGRESS,
-                    serde_json::json!({ "done": done, "total": total }),
+                    serde_json::json!({ "project": progress_root, "done": done, "total": total }),
                 );
             },
         )
-        .await
+        .await;
+    // Terminal lifecycle event (background-task menu feed): done or error, with
+    // the same project-root identity the progress events carry.
+    let _ = app.emit(
+        ev::REINDEX_PROGRESS,
+        match &result {
+            Ok((done, failed)) => serde_json::json!({
+                "project": root,
+                "status": "done",
+                "done": done,
+                "failed": failed,
+            }),
+            Err(e) => serde_json::json!({ "project": root, "status": "error", "error": e }),
+        },
+    );
+    result
 }
 
 /// Switch the project embedding model: validate → probe actual dimensions with the selected model → persist to project meta →
@@ -532,8 +596,10 @@ pub async fn memory_update_embedding(
         // Config unchanged: return the current status directly, no destructive operations
         return memory_get_status(app, project_id);
     }
-    // 1) Probe actual dimensions and model key with the selected model (more reliable than hand-filled dimensions/model in the config)
-    let (model_key, dims, _) = embed_one(&app, &config, "embedding probe")
+    // 1) Probe actual dimensions and model key with the selected model (more reliable than hand-filled dimensions/model in the config).
+    // MEM-06: embed_raw — guard-free on purpose: the probe must measure the NEW model's
+    // dimensions even while old vectors still exist (they are cleared in step 3).
+    let (model_key, dims, _) = crate::services::memory::embed_raw(&app, &config, "embedding probe")
         .await
         .ok_or_else(|| {
             ierr!(
@@ -551,7 +617,8 @@ pub async fn memory_update_embedding(
     store.reset_vectors()?;
     // 4) Rebuild the fact index automatically (re-embed with the new model)
     let embedder = crate::plugins::embed::resolve(&app, &resolved)?;
-    let (done, failed) = store
+    let progress_root = root.clone();
+    let reindex_result = store
         .reindex(
             |content| {
                 let embedder = embedder.clone();
@@ -565,14 +632,28 @@ pub async fn memory_update_embedding(
                     }
                 }
             },
-            |done, total| {
+            move |done, total| {
                 let _ = window.emit(
                     ev::REINDEX_PROGRESS,
-                    serde_json::json!({ "done": done, "total": total }),
+                    serde_json::json!({ "project": progress_root, "done": done, "total": total }),
                 );
             },
         )
-        .await?;
+        .await;
+    // Terminal lifecycle event (background-task menu feed) for the model-switch rebuild
+    let _ = app.emit(
+        ev::REINDEX_PROGRESS,
+        match &reindex_result {
+            Ok((done, failed)) => serde_json::json!({
+                "project": root,
+                "status": "done",
+                "done": done,
+                "failed": failed,
+            }),
+            Err(e) => serde_json::json!({ "project": root, "status": "error", "error": e }),
+        },
+    );
+    let (done, failed) = reindex_result?;
     let _ = (done, failed);
     memory_get_status(app, project_id)
 }
@@ -628,5 +709,14 @@ pub async fn memory_consolidate(
     let budget = budget
         .map(|b| b.max(1) as usize)
         .unwrap_or_else(|| load_cfg(&app).memory_consolidate_budget.max(1) as usize);
-    crate::services::memory::consolidate::consolidate(&app, &store, budget).await
+    let result = crate::services::memory::consolidate::consolidate(&app, &store, budget).await;
+    // Terminal lifecycle event for the background-task menu (the pass itself
+    // emitted "running" after taking the per-project lock)
+    crate::services::memory::consolidate::emit_consolidate_terminal(&app, &root, {
+        match &result {
+            Ok(rep) => Ok(rep),
+            Err(e) => Err(e.as_str()),
+        }
+    });
+    result
 }

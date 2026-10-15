@@ -16,19 +16,22 @@
 //! Download control: pause (keeps the `.part` checkpoint, resume via HTTP Range) /
 //! cancel (deletes the checkpoint). Flags are registered per model id in a
 //! process-level control table, set by dedicated commands and checked per chunk.
+//! 阶段4: the control table and the streamed copy tail live in
+//! `services::download` — the single implementation shared with the local GGUF
+//! downloader (the historic two private copies had already drifted once).
 
 use crate::core::events as ev;
 use crate::core::models::EmbeddingModelSetting;
+use crate::ierr;
+// 阶段4: 控制表/注销守卫/流复制尾段——与本地 GGUF 下载器共享（services::download）
+use crate::services::download::{
+    signal_download, stream_to_checkpoint, DownloadControl, DownloadInterrupt, UnregisterGuard,
+};
 use serde::Serialize;
-use std::collections::HashMap;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
-use std::time::{Duration, Instant};
+use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Window};
-use tokio::io::AsyncWriteExt;
-
-use crate::ierr;
 
 // The manifest registry and directory resolution live in core::model_registry
 // (needed by the plugin layer; this command layer only re-exports them).
@@ -64,32 +67,6 @@ pub struct ModelFileInfo {
 pub struct DownloadOutcome {
     pub status: String,
     pub info: ModelInfo,
-}
-
-/// Control flags for an in-flight download (registered per model id).
-#[derive(Clone)]
-struct DownloadControl {
-    cancel: Arc<AtomicBool>,
-    pause: Arc<AtomicBool>,
-}
-
-fn download_controls() -> &'static Mutex<HashMap<String, DownloadControl>> {
-    static CONTROLS: OnceLock<Mutex<HashMap<String, DownloadControl>>> = OnceLock::new();
-    CONTROLS.get_or_init(|| Mutex::new(HashMap::new()))
-}
-
-/// Sets a download flag for the given model; returns whether a download is in flight.
-fn signal_download(id: &str, set: impl Fn(&DownloadControl)) -> bool {
-    match download_controls().lock() {
-        Ok(map) => match map.get(id) {
-            Some(c) => {
-                set(c);
-                true
-            }
-            None => false,
-        },
-        Err(_) => false,
-    }
 }
 
 fn model_info(app: &AppHandle, entry: &'static ManifestEntry) -> ModelInfo {
@@ -147,17 +124,22 @@ pub fn embedding_models_get_dir(app: AppHandle) -> Result<String, String> {
 /// restores the default directory). Downloaded embed models under the old directory are
 /// migrated to the new one (freeing space there); migration is best-effort: per-item
 /// failures are only logged and never block the directory switch.
+/// HOR-4: the migration moves multi-GB model dirs — it runs on the blocking pool
+/// instead of Tauri's main thread.
 #[tauri::command]
-pub fn embedding_models_set_dir(app: AppHandle, dir: String) -> Result<String, String> {
+pub async fn embedding_models_set_dir(app: AppHandle, dir: String) -> Result<String, String> {
     let old = embed_models_dir(&app);
     let mut cfg = crate::core::config::load_app_config(&app)
         .map_err(|e| ierr!("读取配置失败: {}", "Failed to read config: {}", e))?;
     cfg.embedding_models_dir = dir.trim().to_string();
-    crate::commands::config::save_app_config(app.clone(), cfg)
+    crate::core::config::save_app_config(&app, &cfg)
         .map_err(|e| ierr!("保存配置失败: {}", "Failed to save config: {}", e))?;
     let new = embed_models_dir(&app);
     if !same_path(&old, &new) {
-        migrate_embed_models(&old, &new);
+        let new_c = new.clone();
+        tokio::task::spawn_blocking(move || migrate_embed_models(&old, &new_c))
+            .await
+            .map_err(|e| e.to_string())?;
     }
     Ok(new.to_string_lossy().to_string())
 }
@@ -183,7 +165,7 @@ pub fn embedding_model_set_enabled(
         enabled,
     });
     cfg.embedding_models = list;
-    crate::commands::config::save_app_config(app.clone(), cfg)
+    crate::core::config::save_app_config(&app, &cfg)
         .map_err(|e| ierr!("保存配置失败: {}", "Failed to save config: {}", e))?;
     Ok(model_info(&app, entry))
 }
@@ -193,8 +175,32 @@ pub fn embedding_model_set_enabled(
 /// - paused: keeps the `.part` checkpoint, resumed with Range on the next call;
 /// - cancelled: deletes the `.part` checkpoint;
 /// - network/write errors also keep the checkpoint (resumed next time).
+///
+/// Terminal states (ok / paused / cancelled / error) are additionally announced with a
+/// `{id, done: true, status}` event so the background-task menu can close its entry;
+/// `done: true` alone remains the legacy contract the settings page clears rows on.
 #[tauri::command]
 pub async fn embedding_model_download(
+    window: Window,
+    app: AppHandle,
+    id: String,
+) -> Result<DownloadOutcome, String> {
+    let result = embedding_model_download_inner(window, app.clone(), id.clone()).await;
+    let _ = app.emit(
+        ev::MODEL_DOWNLOAD_PROGRESS,
+        match &result {
+            Ok(outcome) => serde_json::json!({ "id": id, "done": true, "status": outcome.status }),
+            Err(e) => {
+                serde_json::json!({ "id": id, "done": true, "status": "error", "error": e })
+            }
+        },
+    );
+    result
+}
+
+/// Body of [`embedding_model_download`] (the command layer wraps it to emit the
+/// terminal lifecycle event on every exit path).
+async fn embedding_model_download_inner(
     window: Window,
     app: AppHandle,
     id: String,
@@ -206,24 +212,33 @@ pub async fn embedding_model_download(
             info: model_info(&app, entry),
         });
     }
-    // Register the control flags (a duplicate download of the same id overwrites the old flags)
+    // Register the control flags.
+    // ENG-05 (embedding side, parity with the GGUF downloader): a concurrent
+    // download of the same id is rejected instead of overwriting the old flags —
+    // the overwrite let the second task cancel/pause the first's state and the
+    // first's exit-guard could drop the successor's entry.
     let control = DownloadControl {
         cancel: Arc::new(AtomicBool::new(false)),
         pause: Arc::new(AtomicBool::new(false)),
     };
-    if let Ok(mut map) = download_controls().lock() {
+    {
+        let mut map = crate::services::download::download_controls()
+            .lock()
+            .map_err(|e| e.to_string())?;
+        if map.contains_key(&id) {
+            return Err(ierr!(
+                "模型 {} 已有下载任务在进行中",
+                "A download is already in progress for model {}",
+                id
+            ));
+        }
         map.insert(id.clone(), control.clone());
     }
-    // Unregister the control flags when the command ends (including if the frontend drops it)
-    struct UnregisterGuard(String);
-    impl Drop for UnregisterGuard {
-        fn drop(&mut self) {
-            if let Ok(mut map) = download_controls().lock() {
-                map.remove(&self.0);
-            }
-        }
-    }
-    let _guard = UnregisterGuard(id.clone());
+    // Unregister the control flags when the command ends (including if the frontend drops it).
+    // 阶段4: the shared guard is ENG-5 identity-matched — a predecessor's exit can
+    // no longer drop a successor's entry (the historic local copy of this guard
+    // removed unconditionally).
+    let _guard = UnregisterGuard::new(&id, &control);
 
     let dir = entry_dir(&app, entry);
     std::fs::create_dir_all(&dir).map_err(|e| {
@@ -298,85 +313,45 @@ pub async fn embedding_model_download(
         if !partial {
             resume_from = 0; // server ignored Range -> restart the whole download
         }
-        let total = resume_from + resp.content_length().unwrap_or(0);
-        let mut stream = resp.bytes_stream();
-        let mut out = if partial {
-            tokio::fs::OpenOptions::new().append(true).open(&tmp).await
-        } else {
-            tokio::fs::OpenOptions::new()
-                .create(true)
-                .write(true)
-                .truncate(true)
-                .open(&tmp)
-                .await
-        }
-        .map_err(|e| {
-            ierr!(
-                "创建临时文件失败: {}",
-                "Failed to create temporary file: {}",
-                e
-            )
-        })?;
-        let mut downloaded: u64 = resume_from;
-        let mut interrupted: Option<&'static str> = None;
-        let mut last_emit: Option<Instant> = None;
-        use futures_util::StreamExt as _;
-        while let Some(chunk) = stream.next().await {
-            let chunk = chunk.map_err(|e| ierr!("下载中断: {}", "Download interrupted: {}", e))?;
-            out.write_all(&chunk)
-                .await
-                .map_err(|e| ierr!("写入失败: {}", "Write failed: {}", e))?;
-            downloaded += chunk.len() as u64;
-            // Throttle progress events (the first chunk is emitted immediately)
-            if last_emit.is_none_or(|t| t.elapsed() >= Duration::from_millis(200)) {
-                last_emit = Some(Instant::now());
-                let _ = window.emit(
-                    ev::MODEL_DOWNLOAD_PROGRESS,
-                    serde_json::json!({
-                        "id": entry.id,
-                        "file": file.name,
-                        "downloaded": downloaded,
-                        "total": total,
-                    }),
-                );
-            }
-            if control.cancel.load(Ordering::Relaxed) {
-                interrupted = Some("cancelled");
-                break;
-            }
-            if control.pause.load(Ordering::Relaxed) {
-                interrupted = Some("paused");
-                break;
-            }
-        }
-        out.flush()
-            .await
-            .map_err(|e| ierr!("落盘失败: {}", "Failed to flush to disk: {}", e))?;
-        drop(out);
-        match interrupted {
-            Some("cancelled") => {
-                let _ = tokio::fs::remove_file(&tmp).await;
+        // 阶段4: streamed copy tail — shared implementation (services::download):
+        // throttled progress events, per-chunk pause/cancel polling, ENG-04
+        // final-length check and the atomic rename. Embedding/rerank models carry
+        // no ETag sidecar.
+        match stream_to_checkpoint(
+            // 阶段5: the engine takes an emit closure (testable without a Tauri app);
+            // the command layer wraps its window here.
+            |event, payload| {
+                let _ = window.emit(event, payload);
+            },
+            ev::MODEL_DOWNLOAD_PROGRESS,
+            &serde_json::json!({ "id": entry.id }),
+            file.name,
+            resp,
+            &tmp,
+            &dest,
+            resume_from,
+            &control,
+            None,
+        )
+        .await?
+        {
+            Some(DownloadInterrupt::Cancelled) => {
                 return Ok(DownloadOutcome {
                     status: "cancelled".into(),
                     info: model_info(&app, entry),
                 });
             }
-            Some("paused") => {
+            Some(DownloadInterrupt::Paused) => {
                 return Ok(DownloadOutcome {
                     status: "paused".into(),
                     info: model_info(&app, entry),
                 });
             }
-            _ => {
-                std::fs::rename(&tmp, &dest)
-                    .map_err(|e| ierr!("重命名失败: {}", "Failed to rename: {}", e))?;
-            }
+            None => {}
         }
     }
-    let _ = window.emit(
-        ev::MODEL_DOWNLOAD_PROGRESS,
-        serde_json::json!({ "id": entry.id, "done": true }),
-    );
+    // Terminal event moved to the command-layer wrapper (embedding_model_download):
+    // it fires on every exit path with the outcome status.
     Ok(DownloadOutcome {
         status: "ok".into(),
         info: model_info(&app, entry),
@@ -392,25 +367,33 @@ pub fn embedding_model_pause_download(id: String) -> bool {
 /// Cancels a model download. `id`: manifest entry id. Returns whether a download was in
 /// flight; when none is (e.g. already paused), it cleans up all `.part` checkpoint files
 /// for the model directly.
+/// HOR-4: the cleanup is disk I/O — off the main thread.
 #[tauri::command]
-pub fn embedding_model_cancel_download(app: AppHandle, id: String) -> Result<bool, String> {
+pub async fn embedding_model_cancel_download(app: AppHandle, id: String) -> Result<bool, String> {
     let active = signal_download(&id, |c| c.cancel.store(true, Ordering::Relaxed));
     if !active {
         if let Some(entry) = find_entry(&id) {
             let dir = entry_dir(&app, entry);
-            if dir.is_dir() {
-                for f in entry.files {
-                    let _ = std::fs::remove_file(dir.join(f.name).with_extension("part"));
+            // Preserve the historic checkpoint naming: <file>.<ext> -> <file>.part
+            let names: Vec<String> = entry.files.iter().map(|f| f.name.to_string()).collect();
+            tokio::task::spawn_blocking(move || {
+                if dir.is_dir() {
+                    for name in names {
+                        let _ = std::fs::remove_file(dir.join(name).with_extension("part"));
+                    }
                 }
-            }
+            })
+            .await
+            .map_err(|e| e.to_string())?;
         }
     }
     Ok(active)
 }
 
 /// Deletes a downloaded model (frees disk space + evicts the in-process loaded instance cache; no-op for bundled models).
+/// HOR-4: recursive removal of a multi-GB model dir — off the main thread.
 #[tauri::command]
-pub fn embedding_model_delete(app: AppHandle, id: String) -> Result<(), String> {
+pub async fn embedding_model_delete(app: AppHandle, id: String) -> Result<(), String> {
     let entry = find_entry(&id).ok_or_else(|| ierr!("未知模型: {}", "Unknown model: {}", id))?;
     if entry.bundled {
         return Ok(());
@@ -421,11 +404,15 @@ pub fn embedding_model_delete(app: AppHandle, id: String) -> Result<(), String> 
         crate::plugins::rerank::local_onnx::evict_model(&id);
     }
     let dir = entry_dir(&app, entry);
-    if dir.exists() {
-        std::fs::remove_dir_all(&dir)
-            .map_err(|e| ierr!("删除模型失败: {}", "Failed to delete model: {}", e))?;
-    }
-    Ok(())
+    tokio::task::spawn_blocking(move || {
+        if dir.exists() {
+            std::fs::remove_dir_all(&dir)
+                .map_err(|e| ierr!("删除模型失败: {}", "Failed to delete model: {}", e))?;
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Compares two directory paths in normalized form (canonicalize when they exist, literal comparison otherwise).

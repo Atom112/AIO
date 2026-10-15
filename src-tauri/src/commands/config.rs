@@ -13,15 +13,67 @@ use std::fs;
 use tauri::{AppHandle, Manager};
 
 /// Save the general app configuration (business logic lives in core::config).
+/// HOR-4: keyring write + atomic disk write — async + blocking pool.
 #[tauri::command]
-pub fn save_app_config(app: AppHandle, config: AppConfig) -> Result<(), String> {
-    crate::core::config::save_app_config(&app, &config)
+pub async fn save_app_config(app: AppHandle, config: AppConfig) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || crate::core::config::save_app_config(&app, &config))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 /// Load the general app configuration (business logic lives in core::config).
+/// HOR-4: keyring read + fs read (plus legacy plaintext migration writes) — async + blocking pool.
 #[tauri::command]
-pub fn load_app_config(app: AppHandle) -> Result<AppConfig, String> {
-    crate::core::config::load_app_config(&app)
+pub async fn load_app_config(app: AppHandle) -> Result<AppConfig, String> {
+    tokio::task::spawn_blocking(move || crate::core::config::load_app_config(&app))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Partial app-config patch accepted by `patch_app_config` (FE-07).
+/// Only the fields the settings page edits per keystroke are patchable;
+/// `None` fields keep their stored value.
+#[derive(serde::Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct PatchAppConfig {
+    max_tool_rounds: Option<i32>,
+    max_concurrent_subagents: Option<i32>,
+}
+
+/// Atomically merge a partial app-config update: load → merge `Some` fields → save,
+/// all inside one backend call (FE-07). The settings page previously ran a full
+/// load→modify→save round-trip from the UI on every keystroke (2 IPC calls plus a
+/// read-modify-write race); it now sends only the changed field, debounced.
+/// Runs on the blocking pool: it touches the OS keychain and the config file.
+#[tauri::command]
+pub async fn patch_app_config(app: AppHandle, patch: PatchAppConfig) -> Result<AppConfig, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut cfg = crate::core::config::load_app_config(&app)?;
+        // Clamp both knobs into their valid domain: -1 (unlimited) is the FLOOR, 0 is
+        // invalid (clamps to the minimum 1) — nothing below -1 may persist
+        if let Some(v) = patch.max_tool_rounds {
+            cfg.max_tool_rounds = Some(if v < -1 {
+                -1
+            } else if v == 0 {
+                1
+            } else {
+                v
+            });
+        }
+        if let Some(v) = patch.max_concurrent_subagents {
+            cfg.max_concurrent_subagents = Some(if v < -1 {
+                -1
+            } else if v == 0 {
+                1
+            } else {
+                v
+            });
+        }
+        crate::core::config::save_app_config(&app, &cfg)?;
+        Ok(cfg)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Sync the frontend locale to the backend (language of user-visible text such as error messages).
@@ -52,9 +104,20 @@ pub async fn load_assistants(state: tauri::State<'_, DbState>) -> Result<Vec<Ass
                 .unwrap_or_default();
             let project_id: Option<String> = row.get(6)?;
             let agent_mode_str: Option<String> = row.get(7)?;
+            // SEC-18 (parity with load_assistant_agent_mode): an unparsable persisted
+            // mode falls back to Off fail-closed, with a visible log — the list path
+            // used to fall back silently.
             let agent_mode = agent_mode_str
+                .clone()
                 .and_then(|s| serde_json::from_str(&format!("\"{}\"", s)).ok())
-                .unwrap_or(crate::core::models::AgentMode::Off);
+                .unwrap_or_else(|| {
+                    if agent_mode_str.is_some() {
+                        tracing::warn!(
+                            "[sec-18] persisted agent_mode failed to parse; list entry falls back to Off (fail-closed)"
+                        );
+                    }
+                    crate::core::models::AgentMode::Off
+                });
             Ok(Assistant {
                 id: row.get(0)?,
                 name: row.get(1)?,
@@ -76,7 +139,7 @@ pub async fn load_assistants(state: tauri::State<'_, DbState>) -> Result<Vec<Ass
 
         // 2. Load topics for each assistant
         let mut t_stmt = conn
-            .prepare("SELECT id, name, summary, renamed, branched_from_message_id, parent_topic_id FROM topics WHERE assistant_id = ?")
+            .prepare("SELECT id, name, summary, renamed, branched_from_message_id, parent_topic_id, context_trim_count FROM topics WHERE assistant_id = ?")
             .map_err(|e| e.to_string())?;
         let topic_iter = t_stmt
             .query_map([&asst.id], |row| {
@@ -88,6 +151,7 @@ pub async fn load_assistants(state: tauri::State<'_, DbState>) -> Result<Vec<Ass
                     renamed: row.get::<_, i64>(3)? != 0,
                     branched_from_message_id: row.get(4)?,
                     parent_topic_id: row.get(5)?,
+                    context_trim_count: row.get::<_, Option<i64>>(6)?.unwrap_or(0),
                     history: vec![],
                 })
             })
@@ -96,8 +160,8 @@ pub async fn load_assistants(state: tauri::State<'_, DbState>) -> Result<Vec<Ass
         for topic in topic_iter {
             let mut topic = topic.map_err(|e| e.to_string())?;
 
-            // 3. Load history messages (including tool_call_id / name / tool_calls_json / input_tokens / output_tokens / cached_input_tokens, so tool-call sessions resume across restarts and token stats are kept)
-            let mut m_stmt = conn.prepare("SELECT id, role, content, model_id, display_files, display_text, reasoning, tool_call_id, name, tool_calls_json, input_tokens, output_tokens, agent_steps_json, interim_content, agent_start_time, parent_message_id, branch_index, images_json, cached_input_tokens FROM messages WHERE topic_id = ? ORDER BY timestamp ASC")
+            // 3. Load history messages (including tool_call_id / name / tool_calls_json / input_tokens / output_tokens / cached_input_tokens / context_tokens, so tool-call sessions resume across restarts and token stats are kept)
+            let mut m_stmt = conn.prepare("SELECT id, role, content, model_id, display_files, display_text, reasoning, tool_call_id, name, tool_calls_json, input_tokens, output_tokens, agent_steps_json, interim_content, agent_start_time, parent_message_id, branch_index, images_json, cached_input_tokens, context_tokens FROM messages WHERE topic_id = ? ORDER BY timestamp ASC")
     .map_err(|e| e.to_string())?;
 
             let msg_iter = m_stmt
@@ -131,6 +195,7 @@ pub async fn load_assistants(state: tauri::State<'_, DbState>) -> Result<Vec<Ass
                         input_tokens: row.get(10)?,        // index 10: input_tokens
                         output_tokens: row.get(11)?,       // index 11: output_tokens
                         cached_input_tokens: row.get(18)?, // index 18: cached_input_tokens
+                        context_tokens: row.get(19)?,      // index 19: context_tokens
                         agent_steps: row
                             .get::<_, Option<String>>(12)?
                             .and_then(|s| serde_json::from_str(&s).ok()), // index 12: agent_steps_json
@@ -244,9 +309,9 @@ fn persist_assistant_inner(
     // 3. Incrementally sync each topic
     for topic in &assistant.topics {
         conn.execute(
-            "INSERT INTO topics (id, assistant_id, name, summary, renamed, branched_from_message_id, parent_topic_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
-             ON CONFLICT(id) DO UPDATE SET name=?3, summary=?4, renamed=?5, branched_from_message_id=?6, parent_topic_id=?7",
-            params![topic.id, assistant.id, topic.name, topic.summary, topic.renamed as i64, topic.branched_from_message_id, topic.parent_topic_id],
+            "INSERT INTO topics (id, assistant_id, name, summary, renamed, branched_from_message_id, parent_topic_id, context_trim_count) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+             ON CONFLICT(id) DO UPDATE SET name=?3, summary=?4, renamed=?5, branched_from_message_id=?6, parent_topic_id=?7, context_trim_count=?8",
+            params![topic.id, assistant.id, topic.name, topic.summary, topic.renamed as i64, topic.branched_from_message_id, topic.parent_topic_id, topic.context_trim_count],
         )
         .map_err(|e| e.to_string())?;
 
@@ -284,11 +349,11 @@ fn persist_assistant_inner(
             let content_json = serde_json::to_string(&msg.content).unwrap_or_default();
             let tool_calls_json = serde_json::to_string(&msg.tool_calls).ok();
 
-            // Persist tool_call_id / name / tool_calls_json / input_tokens / output_tokens / cached_input_tokens so tool-call sessions resume across restarts and token stats are kept.
+            // Persist tool_call_id / name / tool_calls_json / input_tokens / output_tokens / cached_input_tokens / context_tokens so tool-call sessions resume across restarts and token stats are kept.
             // ON CONFLICT(id) DO UPDATE overwrites rows on re-save; DO NOTHING would leave stale content.
             conn.execute(
-                "INSERT INTO messages (id, topic_id, role, content, model_id, display_files, display_text, reasoning, tool_call_id, name, tool_calls_json, input_tokens, output_tokens, agent_steps_json, interim_content, agent_start_time, parent_message_id, branch_index, images_json, cached_input_tokens)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)
+                "INSERT INTO messages (id, topic_id, role, content, model_id, display_files, display_text, reasoning, tool_call_id, name, tool_calls_json, input_tokens, output_tokens, agent_steps_json, interim_content, agent_start_time, parent_message_id, branch_index, images_json, cached_input_tokens, context_tokens)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)
                  ON CONFLICT(id) DO UPDATE SET
                    content = excluded.content,
                    reasoning = excluded.reasoning,
@@ -300,19 +365,52 @@ fn persist_assistant_inner(
                    input_tokens = excluded.input_tokens,
                    output_tokens = excluded.output_tokens,
                    cached_input_tokens = excluded.cached_input_tokens,
+                   context_tokens = excluded.context_tokens,
                    agent_steps_json = excluded.agent_steps_json,
                    interim_content = excluded.interim_content,
                    agent_start_time = excluded.agent_start_time,
                    parent_message_id = excluded.parent_message_id,
                    branch_index = excluded.branch_index,
                    images_json = excluded.images_json",
-                params![msg_id, topic.id, msg.role, content_json, msg.model_id, files_json, msg.display_text, msg.reasoning, msg.tool_call_id, msg.name, tool_calls_json, msg.input_tokens, msg.output_tokens, serde_json::to_string(&msg.agent_steps).ok(), msg.interim_content, msg.agent_start_time, msg.parent_message_id, msg.branch_index, serde_json::to_string(&msg.images).ok(), msg.cached_input_tokens],
+                params![msg_id, topic.id, msg.role, content_json, msg.model_id, files_json, msg.display_text, msg.reasoning, msg.tool_call_id, msg.name, tool_calls_json, msg.input_tokens, msg.output_tokens, serde_json::to_string(&msg.agent_steps).ok(), msg.interim_content, msg.agent_start_time, msg.parent_message_id, msg.branch_index, serde_json::to_string(&msg.images).ok(), msg.cached_input_tokens, msg.context_tokens],
             ).map_err(|e| e.to_string())?;
             sync_message_attachments(conn, &msg_id, msg.display_files.as_ref())?;
         }
     }
 
     Ok(())
+}
+
+/// 读取单个 assistant 的 agent_mode（MCP-13：`run_agent_turn` 的服务端模式裁决——
+/// IPC 参数可伪造，权限模式必须以数据库里的持久化记录为准；找不到记录返回 None，
+/// 调用方回退到最保守的 Off）。
+pub(crate) fn load_assistant_agent_mode(
+    conn: &rusqlite::Connection,
+    assistant_id: &str,
+) -> Option<crate::core::models::AgentMode> {
+    let mode_str: Option<String> = conn
+        .query_row(
+            "SELECT agent_mode FROM assistants WHERE id = ?1",
+            [assistant_id],
+            |row| row.get(0),
+        )
+        .ok()
+        .flatten();
+    mode_str.and_then(|s| match serde_json::from_str(&format!("\"{s}\"")) {
+        Ok(mode) => Some(mode),
+        // SEC-18: an unparseable persisted mode (hand-edited/corrupted DB row, or a
+        // value from a future version) falls back to the caller's fail-closed Off.
+        // That fallback is correct post-SEC-19 (Off = no tools), but the drift must
+        // be visible instead of silently turning an Auto assistant into chat mode.
+        Err(e) => {
+            tracing::warn!(
+                "[sec-18] assistant {} 的 agent_mode 值无法解析（{:?}），回退 Off（fail-closed）: {e}",
+                assistant_id,
+                s
+            );
+            None
+        }
+    })
 }
 
 /// Persist a single assistant (with all its topics and messages).
@@ -416,7 +514,17 @@ fn attachment_ids_for_assistant(
 
 /// Save the activated-models list (api_key is stripped into the system keyring; no plaintext keys on disk)
 #[tauri::command]
-pub fn save_activated_models(app: AppHandle, models: Vec<ActivatedModel>) -> Result<(), String> {
+pub async fn save_activated_models(
+    app: AppHandle,
+    models: Vec<ActivatedModel>,
+) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || save_activated_models_inner(app, models))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// HOR-4: keyring writes per non-empty key + atomic disk write (blocking-pool body).
+fn save_activated_models_inner(app: AppHandle, models: Vec<ActivatedModel>) -> Result<(), String> {
     let path = crate::core::paths::app_config_file("activated_models.json")?;
 
     // Strip api_key into secure_store so persisted models contain no plaintext keys.
@@ -440,13 +548,20 @@ pub fn save_activated_models(app: AppHandle, models: Vec<ActivatedModel>) -> Res
     }
 
     let json = serde_json::to_string_pretty(&sanitized).map_err(|e| e.to_string())?;
-    std::fs::write(path, json).map_err(|e| e.to_string())?;
+    crate::core::fs_util::atomic_write(&path, json.as_bytes()).map_err(|e| e.to_string())?;
     Ok(())
 }
 
 /// Load the activated-models list (api_key restored from the keyring)
 #[tauri::command]
-pub fn load_activated_models(app: AppHandle) -> Result<Vec<ActivatedModel>, String> {
+pub async fn load_activated_models(app: AppHandle) -> Result<Vec<ActivatedModel>, String> {
+    tokio::task::spawn_blocking(move || load_activated_models_inner(app))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// HOR-4: fs read + per-model keyring reads and legacy migration writes (blocking-pool body).
+fn load_activated_models_inner(app: AppHandle) -> Result<Vec<ActivatedModel>, String> {
     let path = crate::core::paths::app_config_dir()?.join("activated_models.json");
 
     if !path.exists() {
@@ -494,7 +609,7 @@ pub fn load_activated_models(app: AppHandle) -> Result<Vec<ActivatedModel>, Stri
             sanitized.push(v);
         }
         if let Ok(json) = serde_json::to_string_pretty(&sanitized) {
-            if let Err(e) = std::fs::write(&path, json) {
+            if let Err(e) = crate::core::fs_util::atomic_write(&path, json.as_bytes()) {
                 tracing::error!("迁移写回 activated_models.json 失败: {e}");
             }
         }
@@ -508,7 +623,7 @@ pub fn load_activated_models(app: AppHandle) -> Result<Vec<ActivatedModel>, Stri
 pub fn save_fetched_models(models: Vec<ModelInfo>) -> Result<(), String> {
     let path = crate::core::paths::app_config_file("fetched_models.json")?;
     let json = serde_json::to_string_pretty(&models).map_err(|e| e.to_string())?;
-    std::fs::write(path, json).map_err(|e| e.to_string())?;
+    crate::core::fs_util::atomic_write(&path, json.as_bytes()).map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -555,8 +670,16 @@ pub fn load_profile_model_overrides() -> Result<Vec<ProfileModelOverride>, Strin
 
 ///
 /// Persist the subagent profile model overrides to disk.
+/// FE-12: the api_key field is stripped before writing — the file only needs
+/// profile → model identity on load (the live key is resolved fresh from the
+/// provider config each turn), so plaintext keys must not land in this file.
 #[tauri::command]
-pub fn save_profile_model_overrides(overrides: Vec<ProfileModelOverride>) -> Result<(), String> {
+pub fn save_profile_model_overrides(
+    mut overrides: Vec<ProfileModelOverride>,
+) -> Result<(), String> {
+    for o in overrides.iter_mut() {
+        o.api_key.clear();
+    }
     let path = crate::core::paths::app_config_file("profile-model-overrides.json")?;
     let file = ProfileModelOverridesFile {
         version: 1,
@@ -564,7 +687,7 @@ pub fn save_profile_model_overrides(overrides: Vec<ProfileModelOverride>) -> Res
         overrides,
     };
     let json = serde_json::to_string_pretty(&file).map_err(|e| e.to_string())?;
-    fs::write(path, json).map_err(|e| e.to_string())?;
+    crate::core::fs_util::atomic_write(&path, json.as_bytes()).map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -646,7 +769,7 @@ pub fn save_custom_subagent_profile(profile: CustomSubagentProfile) -> Result<()
         profiles,
     };
     let json = serde_json::to_string_pretty(&file).map_err(|e| e.to_string())?;
-    fs::write(&path, json).map_err(|e| e.to_string())?;
+    crate::core::fs_util::atomic_write(&path, json.as_bytes()).map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -684,7 +807,7 @@ pub fn delete_custom_subagent_profile(profile_id: String) -> Result<(), String> 
         profiles,
     };
     let json = serde_json::to_string_pretty(&updated).map_err(|e| e.to_string())?;
-    fs::write(&path, json).map_err(|e| e.to_string())?;
+    crate::core::fs_util::atomic_write(&path, json.as_bytes()).map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -695,7 +818,15 @@ pub fn delete_custom_subagent_profile(profile_id: String) -> Result<(), String> 
 /// - macOS: ~/Library/LaunchAgents/com.loch.aio.plist
 /// - Linux: ~/.config/autostart/aio.desktop
 #[tauri::command]
-pub fn set_auto_start(app: AppHandle, enabled: bool) -> Result<(), String> {
+pub async fn set_auto_start(app: AppHandle, enabled: bool) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || set_auto_start_inner(app, enabled))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// HOR-4: spawns `reg` (Windows) / writes launch-agent plist or .desktop file
+/// (macOS/Linux) — subprocess + disk work (blocking-pool body).
+fn set_auto_start_inner(app: AppHandle, enabled: bool) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     let app_name = "AIO";
     // Resolve the current executable path
@@ -711,8 +842,12 @@ pub fn set_auto_start(app: AppHandle, enabled: bool) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
         use std::process::Command;
+        // SEC-06: PATH-only resolution — a bare "reg" spawn would consult the process
+        // cwd before PATH; reg.exe lives in System32 and always resolves.
+        let reg = crate::utils::exec_resolve::resolve_executable("reg")
+            .ok_or_else(|| ierr!("未找到 reg.exe（System32）", "reg.exe not found (System32)"))?;
         if enabled {
-            let output = Command::new("reg")
+            let output = Command::new(reg)
                 .args([
                     "add",
                     r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run",
@@ -741,7 +876,7 @@ pub fn set_auto_start(app: AppHandle, enabled: bool) -> Result<(), String> {
                 ));
             }
         } else {
-            let output = Command::new("reg")
+            let output = Command::new(reg)
                 .args([
                     "delete",
                     r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run",
@@ -798,7 +933,7 @@ pub fn set_auto_start(app: AppHandle, enabled: bool) -> Result<(), String> {
                 crate::core::paths::BUNDLE_ID,
                 exe_str
             );
-            fs::write(&plist_path, plist).map_err(|e| {
+            crate::core::fs_util::atomic_write(&plist_path, plist.as_bytes()).map_err(|e| {
                 ierr!(
                     "写入 LaunchAgent 失败: {}",
                     "Failed to write LaunchAgent: {}",
@@ -835,7 +970,7 @@ Terminal=false
 X-GNOME-Autostart-enabled=true"#,
                 exe_str
             );
-            fs::write(&desktop_path, desktop).map_err(|e| {
+            crate::core::fs_util::atomic_write(&desktop_path, desktop.as_bytes()).map_err(|e| {
                 ierr!(
                     "写入 autostart 失败: {}",
                     "Failed to write autostart file: {}",
@@ -856,16 +991,21 @@ X-GNOME-Autostart-enabled=true"#,
     }
 
     // Persist the state
-    let mut config = load_app_config(app.clone())?;
+    let mut config = crate::core::config::load_app_config(&app)?;
     config.auto_start_enabled = enabled;
-    save_app_config(app, config)
+    crate::core::config::save_app_config(&app, &config)
 }
 
 /// Return whether system auto-start is enabled.
+/// HOR-4: keyring read + fs read — async + blocking pool.
 #[tauri::command]
-pub fn is_auto_start_enabled(app: AppHandle) -> Result<bool, String> {
-    let config = load_app_config(app)?;
-    Ok(config.auto_start_enabled)
+pub async fn is_auto_start_enabled(app: AppHandle) -> Result<bool, String> {
+    tokio::task::spawn_blocking(move || {
+        let config = crate::core::config::load_app_config(&app)?;
+        Ok(config.auto_start_enabled)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 // ====== Topic branching ======
@@ -898,7 +1038,7 @@ pub async fn branch_topic(
             "SELECT id, role, content, model_id, display_files, display_text, reasoning,
              tool_call_id, name, tool_calls_json, input_tokens, output_tokens,
              agent_steps_json, interim_content, agent_start_time, parent_message_id, branch_index,
-             images_json, cached_input_tokens
+             images_json, cached_input_tokens, context_tokens
              FROM messages WHERE topic_id = ?1 ORDER BY timestamp ASC",
         )
         .map_err(|e| e.to_string())?;
@@ -923,6 +1063,7 @@ pub async fn branch_topic(
                 input_tokens: row.get(10)?,
                 output_tokens: row.get(11)?,
                 cached_input_tokens: row.get(18)?,
+                context_tokens: row.get(19)?,
                 agent_steps: row
                     .get::<_, Option<String>>(12)?
                     .and_then(|s| serde_json::from_str(&s).ok()),
@@ -986,12 +1127,15 @@ pub async fn branch_topic(
         renamed: false,
         branched_from_message_id: Some(source_message_id.clone()),
         parent_topic_id: Some(source_topic_id.clone()),
+        // Branch starts a fresh context: copied messages are all sent (the source's
+        // compaction boundary does not carry over — its summary stays with the source)
+        context_trim_count: 0,
     };
 
     // 4. Insert the new topic
     conn.execute(
-        "INSERT INTO topics (id, assistant_id, name, summary, renamed, branched_from_message_id, parent_topic_id)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        "INSERT INTO topics (id, assistant_id, name, summary, renamed, branched_from_message_id, parent_topic_id, context_trim_count)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
         params![
             new_topic_id,
             assistant_id,
@@ -1000,6 +1144,7 @@ pub async fn branch_topic(
             new_topic.renamed as i64,
             new_topic.branched_from_message_id,
             new_topic.parent_topic_id,
+            new_topic.context_trim_count,
         ],
     )
     .map_err(|e| ierr!("创建分支话题失败: {}", "Failed to create branch topic: {}", e))?;
@@ -1013,8 +1158,8 @@ pub async fn branch_topic(
         conn.execute(
             "INSERT INTO messages (id, topic_id, role, content, model_id, display_files, display_text, reasoning,
              tool_call_id, name, tool_calls_json, input_tokens, output_tokens,
-             agent_steps_json, interim_content, agent_start_time, parent_message_id, branch_index, cached_input_tokens)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
+             agent_steps_json, interim_content, agent_start_time, parent_message_id, branch_index, cached_input_tokens, context_tokens)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)",
             params![
                 msg_id,
                 new_topic_id,
@@ -1035,6 +1180,7 @@ pub async fn branch_topic(
                 msg.parent_message_id,
                 msg.branch_index,
                 msg.cached_input_tokens,
+                msg.context_tokens,
             ],
         )
         .map_err(|e| ierr!("插入分支消息失败: {}", "Failed to insert branch messages: {}", e))?;

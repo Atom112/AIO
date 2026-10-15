@@ -27,7 +27,8 @@ import { setActiveSubagentView } from '../../../core/store/store';
 import Icon, { type IconName } from '../../../shared/components/Icon';
 import ToolCallBubble from './ToolCallBubble';
 import Markdown from '../../../shared/components/Markdown';
-import { getSubagentProfileStyle, subagentProfileLabel } from './SubagentConversationView';
+import { subagentProfileLabel } from './SubagentConversationView';
+import { getSubagentProfileStyle } from '../../../core/utils/subagentProfileStyle';
 import { stopSubagent } from '../../../core/api/chat';
 import { t } from '../../../core/i18n';
 
@@ -156,6 +157,21 @@ const StepCard: Component<{
   // animation properties override each other).
   let entranceRef: HTMLDivElement | undefined;
 
+  // Round-11 feedback: the running thinking step's body is a capped scroll box but had
+  // no follow logic — streamed reasoning grew below the fold. Follow the bottom while
+  // the step runs; a wheel-up pauses, scrolling back to the bottom resumes.
+  const thinkingBodyRef: { current: HTMLDivElement | undefined } = { current: undefined };
+  let thinkingFollowPaused = false;
+  createEffect(() => {
+    const step = props.step;
+    const thinkingText = step.thinkingText; // track reasoning growth
+    const el = thinkingBodyRef.current;
+    void thinkingText;
+    if (step.status === 'running' && step.type === 'thinking' && el && !thinkingFollowPaused) {
+      el.scrollTop = el.scrollHeight;
+    }
+  });
+
   // Lock the expanded state during the entrance animation: a fast running → complete flip would
   // collapse the body height and visually squash the animation; real expanded returns once it ends.
   const [entranceDone, setEntranceDone] = createSignal(!isNew);
@@ -183,6 +199,29 @@ const StepCard: Component<{
       setStopping(false);
     }
   };
+
+  // Harness round 11 (live subagent progress): the running subagent's latest streamed
+  // sub-step — a streaming narration tail, a "write_file: 12KB" argument-growth line, or
+  // the newest tool row. Keeps the timeline card informative during multi-minute subagents.
+  const latestSubagentProgress = createMemo(() => {
+    if (props.step.type !== 'subagent' || props.step.status !== 'running') return undefined;
+    const steps = props.step.subagentSteps || [];
+    for (let i = steps.length - 1; i >= 0; i--) {
+      const s = steps[i];
+      const text =
+        s.type === 'streaming'
+          ? s.summary
+          : s.type === 'content'
+            ? tailOf(s.summary || '', 60)
+            : s.toolName
+              ? `${s.toolName} ✓`
+              : undefined;
+      if (text) return text;
+    }
+    return undefined;
+  });
+  const tailOf = (text: string, max: number) =>
+    text.length > max ? `…${text.slice(text.length - max)}` : text;
 
   return (
     <div
@@ -253,6 +292,16 @@ const StepCard: Component<{
           {props.step.type === 'subagent' && props.step.subagentTask && (
             <span class="truncate text-white/30 flex-1 min-w-0">{props.step.subagentTask}</span>
           )}
+          {/* Live progress line (harness round 11): latest streamed sub-step of a running
+              subagent — narration tail / tool-arg growth, so a multi-minute subagent no
+              longer shows as a silent "thinking" card. */}
+          {props.step.type === 'subagent' &&
+            props.step.status === 'running' &&
+            latestSubagentProgress() && (
+              <span class="truncate text-white/40 flex-1 min-w-0 tabular-nums">
+                {latestSubagentProgress()}
+              </span>
+            )}
           {(props.step.type === 'tool_call' || props.step.type === 'subagent') &&
             stepStatusIcon(props.step) && (
               <span class="flex items-center justify-center shrink-0">
@@ -327,7 +376,25 @@ const StepCard: Component<{
       >
         {/* Thinking step: raw text */}
         {props.step.type === 'thinking' && props.step.thinkingText && (
-          <div class="text-[12px] leading-relaxed italic whitespace-pre-wrap break-words text-white/50 px-2 py-1.5 rounded bg-black/[0.12] max-h-[300px] overflow-y-auto">
+          <div
+            ref={(el) => {
+              thinkingBodyRef.current = el;
+              // StepCard instances persist across status updates (stable slot in the
+              // visibleIds list), so a plain assignment suffices; clear on disposal.
+              onCleanup(() => {
+                if (thinkingBodyRef.current === el) thinkingBodyRef.current = undefined;
+              });
+            }}
+            onWheel={(e) => {
+              if (e.deltaY < 0) thinkingFollowPaused = true;
+            }}
+            onScroll={(e) => {
+              const el = e.currentTarget;
+              if (el.scrollHeight - el.scrollTop - el.clientHeight < 50)
+                thinkingFollowPaused = false;
+            }}
+            class="text-[12px] leading-relaxed italic whitespace-pre-wrap break-words text-white/50 px-2 py-1.5 rounded bg-black/[0.12] max-h-[300px] overflow-y-auto"
+          >
             {props.step.thinkingText}
           </div>
         )}
@@ -376,6 +443,12 @@ const AgentProcessBlock: Component<AgentProcessBlockProps> = (props) => {
 
   // ---- Timeline auto-scroll (same pattern as ChatInterface) ----
   let stepsContainerRef: HTMLDivElement | undefined;
+  // Content wrapper layer: the element the stream-following ResizeObserver observes.
+  // The container is max-height-capped (620px) — once the step stack passes the cap,
+  // further growth changes only scrollHeight, never the container's box size, so an
+  // RO on the container itself fires nothing and the follow silently dies (the same
+  // trap the main view and the subagent view fixed by observing the growing wrapper).
+  let stepsContentRef: HTMLDivElement | undefined;
   const [autoScrollSteps, setAutoScrollSteps] = createSignal(true);
   let userScrolledUpSteps = false; // Plain variable: ResizeObserver callback must see it synchronously
   let suppressScrollSteps = false; // Plain variable: suppresses programmatic scroll events
@@ -388,10 +461,13 @@ const AgentProcessBlock: Component<AgentProcessBlockProps> = (props) => {
 
   const snapStepsToBottom = () => {
     if (!stepsContainerRef) return;
-    suppressScrollSteps = true;
     const el = stepsContainerRef;
     const target = Math.max(0, el.scrollHeight - el.clientHeight);
+    // Only suppress the echoed scroll event when the position actually changes: when
+    // already at the bottom (the common stream-following case) no event fires, and
+    // leaving the flag set would swallow the user's next scroll event.
     if (el.scrollTop < target) {
+      suppressScrollSteps = true;
       el.scrollTop = target;
     }
   };
@@ -456,15 +532,16 @@ const AgentProcessBlock: Component<AgentProcessBlockProps> = (props) => {
 
   onCleanup(() => {});
 
-  // Streaming scroll: snap to bottom as content grows (ResizeObserver, fires only on size changes)
+  // Streaming scroll: snap to bottom as content grows. The RO observes the CONTENT
+  // wrapper (grows with every new/updated step), not the capped scroll box.
   createEffect(() => {
-    if (props.isActive && stepsContainerRef) {
+    if (props.isActive && stepsContainerRef && stepsContentRef) {
       const observer = new ResizeObserver(() => {
         if (!userScrolledUpSteps && autoScrollSteps()) {
           snapStepsToBottom();
         }
       });
-      observer.observe(stepsContainerRef);
+      observer.observe(stepsContentRef);
       onCleanup(() => observer.disconnect());
     }
   });
@@ -622,70 +699,74 @@ const AgentProcessBlock: Component<AgentProcessBlockProps> = (props) => {
             onScroll={handleStepsScroll}
             onWheel={handleStepsWheel}
           >
-            {/* === New mode: timeline cards === */}
-            <Show when={hasSteps()}>
-              <div class="flex flex-col gap-2 px-3">
-                <For each={visibleIds()}>
-                  {(id) => {
-                    // Use a memo to fetch the latest step object: status updates (running→complete)
-                    // show live, while <For>'s each is a stable id list so the DOM is not rebuilt
-                    const step = createMemo(() => stepById(id));
-                    return (
-                      <Show when={step()}>
-                        <StepCard
-                          step={step()!}
-                          isActive={props.isActive}
-                          expanded={isStepExpanded(step()!)}
-                          onToggle={() => toggleStep(id)}
-                        />
-                      </Show>
-                    );
-                  }}
-                </For>
-              </div>
-            </Show>
-
-            {/* === Old mode (fallback): flat three blocks === */}
-            <Show when={!hasSteps() && hasOldContent()}>
-              <Show when={props.reasoning && props.reasoning.trim()}>
-                <div class="mb-2">
-                  <div class="flex items-center text-[11px] font-medium mb-1 text-white/40">
-                    <Icon name="brain" size={11} class="mr-1.5 opacity-60" />
-                    {t('agent.step.thinking')}
-                  </div>
-                  <div class="text-[12.5px] leading-relaxed italic whitespace-pre-wrap break-words text-white/55 px-2.5 py-2 rounded-md bg-black/15 border-l-2 border-l-white/[0.08] max-h-[360px] overflow-y-auto">
-                    {props.reasoning}
-                  </div>
-                </div>
-              </Show>
-
-              <Show when={props.interimContent && props.interimContent.trim()}>
-                <div class="mb-2">
-                  <div class="flex items-center text-[11px] font-medium mb-1 text-white/40">
-                    <Icon name="document" size={11} class="mr-1.5 opacity-60" />
-                    {t('agent.step.interim')}
-                  </div>
-                  <div class="text-[12.5px] leading-relaxed italic whitespace-pre-wrap break-words text-white/55 px-2.5 py-2 rounded-md bg-black/15 border-l-2 border-l-white/[0.08] max-h-[360px] overflow-y-auto">
-                    <Markdown content={props.interimContent!} />
-                  </div>
-                </div>
-              </Show>
-
-              <Show when={props.toolCalls && props.toolCalls.length > 0}>
-                <div class="agent-process-toolcalls">
-                  <For each={props.toolCalls}>
-                    {(tc) => (
-                      <ToolCallBubble
-                        toolCall={tc}
-                        state={tc.state ?? 'calling'}
-                        result={tc.result}
-                        error={tc.error}
-                      />
-                    )}
+            {/* RO-observed content wrapper: grows with the step stack even after the
+                container hits its max-height cap (see stepsContentRef comment above) */}
+            <div ref={stepsContentRef}>
+              {/* === New mode: timeline cards === */}
+              <Show when={hasSteps()}>
+                <div class="flex flex-col gap-2 px-3">
+                  <For each={visibleIds()}>
+                    {(id) => {
+                      // Use a memo to fetch the latest step object: status updates (running→complete)
+                      // show live, while <For>'s each is a stable id list so the DOM is not rebuilt
+                      const step = createMemo(() => stepById(id));
+                      return (
+                        <Show when={step()}>
+                          <StepCard
+                            step={step()!}
+                            isActive={props.isActive}
+                            expanded={isStepExpanded(step()!)}
+                            onToggle={() => toggleStep(id)}
+                          />
+                        </Show>
+                      );
+                    }}
                   </For>
                 </div>
               </Show>
-            </Show>
+
+              {/* === Old mode (fallback): flat three blocks === */}
+              <Show when={!hasSteps() && hasOldContent()}>
+                <Show when={props.reasoning && props.reasoning.trim()}>
+                  <div class="mb-2">
+                    <div class="flex items-center text-[11px] font-medium mb-1 text-white/40">
+                      <Icon name="brain" size={11} class="mr-1.5 opacity-60" />
+                      {t('agent.step.thinking')}
+                    </div>
+                    <div class="text-[12.5px] leading-relaxed italic whitespace-pre-wrap break-words text-white/55 px-2.5 py-2 rounded-md bg-black/15 border-l-2 border-l-white/[0.08] max-h-[360px] overflow-y-auto">
+                      {props.reasoning}
+                    </div>
+                  </div>
+                </Show>
+
+                <Show when={props.interimContent && props.interimContent.trim()}>
+                  <div class="mb-2">
+                    <div class="flex items-center text-[11px] font-medium mb-1 text-white/40">
+                      <Icon name="document" size={11} class="mr-1.5 opacity-60" />
+                      {t('agent.step.interim')}
+                    </div>
+                    <div class="text-[12.5px] leading-relaxed italic whitespace-pre-wrap break-words text-white/55 px-2.5 py-2 rounded-md bg-black/15 border-l-2 border-l-white/[0.08] max-h-[360px] overflow-y-auto">
+                      <Markdown content={props.interimContent!} />
+                    </div>
+                  </div>
+                </Show>
+
+                <Show when={props.toolCalls && props.toolCalls.length > 0}>
+                  <div class="agent-process-toolcalls">
+                    <For each={props.toolCalls}>
+                      {(tc) => (
+                        <ToolCallBubble
+                          toolCall={tc}
+                          state={tc.state ?? 'calling'}
+                          result={tc.result}
+                          error={tc.error}
+                        />
+                      )}
+                    </For>
+                  </div>
+                </Show>
+              </Show>
+            </div>
           </div>
         </div>
       </div>

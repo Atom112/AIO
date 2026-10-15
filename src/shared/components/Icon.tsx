@@ -61,7 +61,17 @@ export type IconName =
   | 'chevron-up'
   | 'chevron-down'
   | 'caret-up'
-  | 'caret-down';
+  | 'caret-down'
+  | 'triangle-down'
+  | 'review-search'
+  | 'bug'
+  | 'pen-line'
+  | 'flask-check'
+  | 'compass'
+  | 'rotate-ccw'
+  | 'embedding'
+  | 'arrow-down-up'
+  | 'terminal';
 
 /**
  * Icon path factory table.
@@ -222,6 +232,38 @@ const PATHS: Record<IconName, () => JSX.Element> = {
       <path d="M5 15V5a2 2 0 0 1 2-2h10" />
     </>
   ),
+  // Restore/resume glyph (Lucide rotate-ccw): counter-clockwise arrow — used by the
+  // checkpoint-resume button ("从断点继续").
+  'rotate-ccw': () => (
+    <>
+      <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+      <path d="M3 3v5h5" />
+    </>
+  ),
+  // Embedding: a dashed "vector space" boundary with points scattered inside —
+  // the semantic metaphor for embedding models (texts projected as points in space).
+  embedding: () => (
+    <>
+      <rect x="3" y="5" width="18" height="14" rx="4" stroke-dasharray="3 3" />
+      <path d="M8 10h.01" stroke-width="3.5" />
+      <path d="M13.5 15.5h.01" stroke-width="3.5" />
+      <path d="M16.5 8.5h.01" stroke-width="3.5" />
+    </>
+  ),
+  // Rerank: two opposing arrows (reordering) — cross-encoder re-sorts candidates.
+  'arrow-down-up': () => (
+    <>
+      <path d="M7 4v16M7 20l-3.5-3.5M7 20l3.5-3.5" />
+      <path d="M17 20V4M17 4l-3.5 3.5M17 4l3.5 3.5" />
+    </>
+  ),
+  // Shell command run: terminal window with a prompt cursor.
+  terminal: () => (
+    <>
+      <path d="M4 17l6-5-6-5" />
+      <path d="M12 19h8" />
+    </>
+  ),
   model: () => (
     <>
       <circle cx="12" cy="12" r="3" />
@@ -291,6 +333,52 @@ const PATHS: Record<IconName, () => JSX.Element> = {
   'chevron-down': () => <path d="m6 10 6 6 6-6" />,
   'caret-up': () => <path d="m6 15 6-6 6 6" />,
   'caret-down': () => <path d="m6 9 6 6 6-6" />,
+  // Filled triangle (solid caret): overrides the library's stroke styling — used by
+  // disclosure toggles (task list expand/collapse) where a solid triangle reads better.
+  'triangle-down': () => <path d="M5.5 8.5h13L12 17.5z" fill="currentColor" stroke="none" />,
+  // ---- Subagent role icons (per-profile identity set) ----
+  // reviewer: magnifier over a document (code review)
+  'review-search': () => (
+    <>
+      <path d="M14 3H7a2 2 0 0 0-2 2v9" />
+      <path d="M14 3v5h5" />
+      <circle cx="14.5" cy="16.5" r="3.5" />
+      <path d="m20.5 22-3-3" />
+    </>
+  ),
+  // debugger: bug (lucide "bug")
+  bug: () => (
+    <>
+      <path d="m8 2 1.5 1.5M14.5 3.5 16 2" />
+      <path d="M9 7.1a4 4 0 0 1 6 0l1.5 2.1a3 3 0 0 1 .5 1.7V13a5 5 0 0 1-10 0v-2.1a3 3 0 0 1 .5-1.7Z" />
+      <path d="M9 13h6M12 13v6" />
+      <path d="m3 9 2.5 1M18.5 10 21 9M4 15l2-.5M18 14.5l2 .5" />
+    </>
+  ),
+  // writer: pen writing a line (lucide "pen-line")
+  'pen-line': () => (
+    <>
+      <path d="M12 20h9" />
+      <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
+    </>
+  ),
+  // tester: flask with a tick (lucide "flask-conical" + check)
+  'flask-check': () => (
+    <>
+      <path d="M10 2v6L4.5 18a2 2 0 0 0 1.8 3h8.2" />
+      <path d="M14 2v6l2.3 4.1" />
+      <path d="M9 2h6" />
+      <path d="m14 17 2.5 2.5L21 15" />
+    </>
+  ),
+  // architect: drafting compass (lucide "compass")
+  compass: () => (
+    <>
+      <path d="m16.1 3.9 4 4L8.5 19.5l-4.4 1.1 1.1-4.4Z" />
+      <path d="m12 8 4 4" />
+      <circle cx="12" cy="12" r="9" />
+    </>
+  ),
 };
 
 export interface IconProps extends Omit<JSX.SvgSVGAttributes<SVGSVGElement>, 'children'> {

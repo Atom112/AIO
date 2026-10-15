@@ -1,9 +1,10 @@
 //! MCP HTTP+SSE transport
 //!
-//! Design decision: the HTTP plugin does **not** use McpConnection's pending-map
-//! abstraction (HTTP is request-response and needs no background reader task).
-//! The McpConnection returned by `start()` is merely a handle satisfying the trait
-//! shape (its transport is a no-op implementation); real calls go directly through reqwest.
+//! 阶段4 第3项：请求统一走 [`HttpPlugin::rpc_call`]——与 stdio 的
+//! `McpConnection::request` 同语义的单一 JSON-RPC 出口（共享
+//! `JsonRpcRequest`/`JsonRpcNotification` 编解码、id 关联、超时、result
+//! 剥壳、错误映射——MCP-4/5/19 类两传输分叉的温床从结构上收敛）。
+//! 传输层的 HTTP 循环（重定向拒绝 / SSE 块消费 / 会话头）仍在 `post_json`。
 //!
 //! Per-server transport state (URL/headers/client/id counter) lives in the states
 //! map of **this plugin instance**, whose lifecycle is managed by McpServerManager;
@@ -52,6 +53,67 @@ impl HttpPlugin {
             streamable: true,
         }
     }
+
+    /// 阶段4 第3项：HTTP 传输的统一 JSON-RPC 出口（与 stdio 的
+    /// `McpConnection::request` 同语义）。此前 7 个方法各持一份手搓
+    /// json! 请求体 + 各自的 envelope 拆包——正是 MCP-4/5/19 类分叉的
+    /// 温床。收敛后单一实现负责：state 查找、id 生成、**共享
+    /// `JsonRpcRequest` 编解码**（两传输线格式单一来源）、超时、result
+    /// 剥壳（缺 result → Null，同 stdio）。错误语义在 [`rpc_error`]
+    /// 对齐（-32601 → MethodNotFound，此前 http 一律 Remote）。
+    async fn rpc_call(
+        &self,
+        conn: &super::connection::McpConnection,
+        method: &str,
+        params: Value,
+        dur: Duration,
+    ) -> McpResult<Value> {
+        let state = self
+            .states
+            .lock()
+            .get(&conn.server_id)
+            .cloned()
+            .ok_or_else(|| McpError::NotConnected(conn.server_id.clone()))?;
+        let id = state.next_id();
+        // Shared codec with stdio: JsonRpcRequest serializes to the identical wire shape
+        // the hand-built json! bodies used to approximate per call site.
+        let body = serde_json::to_value(super::connection::JsonRpcRequest::new(
+            id,
+            method,
+            Some(params),
+        ))
+        .map_err(|e| McpError::JsonRpc(e.to_string()))?;
+        let v = tokio::time::timeout(dur, post_json(&state, &body))
+            .await
+            .map_err(|_| McpError::Timeout(dur))??;
+        Ok(v.get("result").cloned().unwrap_or(Value::Null))
+    }
+
+    /// 阶段4 第3项：HTTP 通知出口——与 [`rpc_call`] 同享编解码单一来源
+    /// （`JsonRpcNotification`），此前 initialize 的 notifications/initialized
+    /// 是手搓 json!。
+    async fn rpc_notify(
+        &self,
+        conn: &super::connection::McpConnection,
+        method: &str,
+    ) -> McpResult<()> {
+        let state = self
+            .states
+            .lock()
+            .get(&conn.server_id)
+            .cloned()
+            .ok_or_else(|| McpError::NotConnected(conn.server_id.clone()))?;
+        let n = super::connection::JsonRpcNotification {
+            jsonrpc: "2.0",
+            method: method.to_string(),
+            params: None,
+        };
+        let body = serde_json::to_value(&n).map_err(|e| McpError::JsonRpc(e.to_string()))?;
+        // Servers answer notifications with 202/empty or an SSE stream of zero
+        // response blocks; post_json errors here are expected and non-fatal.
+        let _ = post_json(&state, &body).await;
+        Ok(())
+    }
 }
 
 impl Default for HttpPlugin {
@@ -60,11 +122,17 @@ impl Default for HttpPlugin {
     }
 }
 
-/// Builds a reqwest client with timeouts
+/// Builds a reqwest client with timeouts.
+///
+/// MCP-8: redirects are REFUSED. The reqwest default follows up to 10 redirects and
+/// forwards custom auth headers (X-API-Key etc. — only Authorization/Cookie are
+/// stripped cross-host) to the redirect target; an https→http downgrade would hand
+/// the API key to an attacker-controlled host.
 fn http_client() -> reqwest::Client {
     reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(5))
         .timeout(Duration::from_secs(60))
+        .redirect(reqwest::redirect::Policy::none())
         .build()
         .unwrap_or_else(|_| reqwest::Client::new())
 }
@@ -80,20 +148,62 @@ pub struct HttpTransportState {
     /// Streamable HTTP session: the Mcp-Session-Id from the initialize response,
     /// echoed back on subsequent requests (session expiry is a server-side error; the client just forwards it)
     pub session_id: Arc<parking_lot::Mutex<Option<String>>>,
+    /// MCP-22: which transport kind this state serves — `false` = legacy HTTP+SSE,
+    /// `true` = streamable HTTP. Drives the kind-appropriate endpoint suffix for
+    /// bare-host base URLs (`/sse` vs `/mcp`).
+    pub streamable: bool,
 }
 
 impl HttpTransportState {
+    /// MCP-22: endpoint derivation is kind-aware and never silent.
+    /// - an explicit path ending in `/mcp` or `/sse` is kept verbatim;
+    /// - a BARE host (no path) gets the kind-appropriate suffix — `/sse` for the
+    ///   legacy HTTP+SSE transport, `/mcp` for streamable HTTP — logged at debug;
+    /// - any other explicit path is used AS IS (the historic code silently rewrote
+    ///   `https://host/custom/endpoint` into `https://host/custom/endpoint/mcp`).
     fn endpoint(&self) -> String {
         let trimmed = self.base_url.trim_end_matches('/');
         if trimmed.ends_with("/mcp") || trimmed.ends_with("/sse") {
-            trimmed.to_string()
-        } else {
-            format!("{}/mcp", trimmed)
+            return trimmed.to_string();
         }
+        let has_explicit_path = url::Url::parse(trimmed)
+            .map(|u| !u.path().is_empty() && u.path() != "/")
+            .unwrap_or(true);
+        if has_explicit_path {
+            tracing::debug!(
+                "[mcp:http] 使用配置的完整端点（未追加路径后缀）: {}",
+                trimmed
+            );
+            return trimmed.to_string();
+        }
+        let suffix = if self.streamable { "/mcp" } else { "/sse" };
+        tracing::debug!(
+            "[mcp:http] 基础 URL 未含路径，按 {} transport 追加 {}: {}{}",
+            if self.streamable {
+                "Streamable HTTP"
+            } else {
+                "HTTP+SSE"
+            },
+            suffix,
+            trimmed,
+            suffix
+        );
+        format!("{trimmed}{suffix}")
     }
 
     fn next_id(&self) -> u64 {
         self.next_id.fetch_add(1, Ordering::SeqCst)
+    }
+}
+
+/// MCP-19: our client generates u64 JSON-RPC ids, but some servers echo them back
+/// as strings ("1"). Correlation parses both encodings of the same number; any
+/// other shape yields None (missing-id leniency is preserved by the callers).
+fn rpc_id_as_u64(v: &Value) -> Option<u64> {
+    match v {
+        Value::Number(n) => n.as_u64(),
+        Value::String(s) => s.parse::<u64>().ok(),
+        _ => None,
     }
 }
 
@@ -146,6 +256,7 @@ impl super::McpServerPlugin for HttpPlugin {
             next_id: Arc::new(AtomicU64::new(1)),
             closed: Arc::new(AtomicBool::new(false)),
             session_id: Arc::new(parking_lot::Mutex::new(None)),
+            streamable: self.streamable,
         };
         let dummy_transport = Box::new(DummyHttpTransport {
             closed: state.closed.clone(),
@@ -162,75 +273,35 @@ impl super::McpServerPlugin for HttpPlugin {
         &self,
         conn: &super::connection::McpConnection,
     ) -> McpResult<McpServerInfo> {
-        let state = self
-            .states
-            .lock()
-            .get(&conn.server_id)
-            .cloned()
-            .ok_or_else(|| McpError::NotConnected(conn.server_id.clone()))?;
-        let id = state.next_id();
-        let body = json!({
-            "jsonrpc": "2.0",
-            "id": id,
-            "method": "initialize",
-            "params": {
-                "protocolVersion": "2025-06-18",
-                "capabilities": {},
-                "clientInfo": { "name": "aio", "version": env!("CARGO_PKG_VERSION") }
-            }
-        });
-        let v = post_json(&state, &body).await?;
-        // send notifications/initialized
-        let _ = post_json(
-            &state,
-            &json!({
-                "jsonrpc": "2.0", "method": "notifications/initialized"
-            }),
-        )
-        .await;
-        let info_val = v
-            .get("result")
-            .and_then(|r| r.get("serverInfo"))
-            .cloned()
-            .unwrap_or(json!({}));
-        let name = info_val
-            .get("name")
-            .and_then(|v| v.as_str())
-            .unwrap_or("unknown")
-            .to_string();
-        let version = info_val
-            .get("version")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
-        let capabilities = v
-            .get("result")
-            .and_then(|r| r.get("capabilities"))
-            .and_then(|c| serde_json::from_value(c.clone()).ok());
-        Ok(McpServerInfo {
-            name,
-            version,
-            capabilities,
-        })
+        let result = self
+            .rpc_call(
+                conn,
+                "initialize",
+                json!({
+                    // MCP-20: shared MCP_PROTOCOL_VERSION constant (two transports)
+                    "protocolVersion": super::MCP_PROTOCOL_VERSION,
+                    "capabilities": {},
+                    "clientInfo": { "name": "aio", "version": env!("CARGO_PKG_VERSION") }
+                }),
+                Duration::from_secs(60),
+            )
+            .await?;
+        // notifications/initialized completes the handshake
+        let _ = self.rpc_notify(conn, "notifications/initialized").await;
+        // 阶段4: initialize 解析并入 convert——HTTP 传输的响应多一层 JSON-RPC
+        // envelope，rpc_call 已剥 result（stdio/http 不再各持一份解析）
+        Ok(super::convert::parse_server_info(&result))
     }
 
     async fn list_tools(
         &self,
         conn: &super::connection::McpConnection,
     ) -> McpResult<Vec<ToolSpec>> {
-        let state = self
-            .states
-            .lock()
-            .get(&conn.server_id)
-            .cloned()
-            .ok_or_else(|| McpError::NotConnected(conn.server_id.clone()))?;
-        let id = state.next_id();
-        let body = json!({
-            "jsonrpc": "2.0", "id": id, "method": "tools/list", "params": {}
-        });
-        let v = post_json(&state, &body).await?;
-        let tools = v
-            .get("result")
-            .and_then(|r| r.get("tools"))
+        let result = self
+            .rpc_call(conn, "tools/list", json!({}), Duration::from_secs(60))
+            .await?;
+        let tools = result
+            .get("tools")
             .and_then(|t| t.as_array())
             .cloned()
             .unwrap_or_default();
@@ -245,23 +316,14 @@ impl super::McpServerPlugin for HttpPlugin {
         arguments: Value,
         timeout: Duration,
     ) -> McpResult<ToolResult> {
-        let state = self
-            .states
-            .lock()
-            .get(&conn.server_id)
-            .cloned()
-            .ok_or_else(|| McpError::NotConnected(conn.server_id.clone()))?;
-        let id = state.next_id();
-        let body = json!({
-            "jsonrpc": "2.0",
-            "id": id,
-            "method": "tools/call",
-            "params": { "name": name, "arguments": arguments }
-        });
-        let v = tokio::time::timeout(timeout, post_json(&state, &body))
-            .await
-            .map_err(|_| McpError::Timeout(timeout))??;
-        let result = v.get("result").cloned().unwrap_or(json!({}));
+        let result = self
+            .rpc_call(
+                conn,
+                "tools/call",
+                json!({ "name": name, "arguments": arguments }),
+                timeout,
+            )
+            .await?;
         Ok(super::convert::parse_call_tool_result(&result))
     }
 
@@ -269,18 +331,11 @@ impl super::McpServerPlugin for HttpPlugin {
         &self,
         conn: &super::connection::McpConnection,
     ) -> McpResult<Vec<McpResource>> {
-        let state = self
-            .states
-            .lock()
-            .get(&conn.server_id)
-            .cloned()
-            .ok_or_else(|| McpError::NotConnected(conn.server_id.clone()))?;
-        let id = state.next_id();
-        let body = json!({ "jsonrpc": "2.0", "id": id, "method": "resources/list", "params": {} });
-        let v = post_json(&state, &body).await?;
-        let resources = v
-            .get("result")
-            .and_then(|r| r.get("resources"))
+        let result = self
+            .rpc_call(conn, "resources/list", json!({}), Duration::from_secs(60))
+            .await?;
+        let resources = result
+            .get("resources")
             .and_then(|a| a.as_array())
             .cloned()
             .unwrap_or_default();
@@ -292,19 +347,14 @@ impl super::McpServerPlugin for HttpPlugin {
         conn: &super::connection::McpConnection,
         uri: &str,
     ) -> McpResult<ReadResourceResult> {
-        let state = self
-            .states
-            .lock()
-            .get(&conn.server_id)
-            .cloned()
-            .ok_or_else(|| McpError::NotConnected(conn.server_id.clone()))?;
-        let id = state.next_id();
-        let body = json!({
-            "jsonrpc": "2.0", "id": id, "method": "resources/read",
-            "params": { "uri": uri }
-        });
-        let v = post_json(&state, &body).await?;
-        let result = v.get("result").cloned().unwrap_or(json!({}));
+        let result = self
+            .rpc_call(
+                conn,
+                "resources/read",
+                json!({ "uri": uri }),
+                Duration::from_secs(60),
+            )
+            .await?;
         serde_json::from_value(result).map_err(McpError::from)
     }
 
@@ -312,18 +362,11 @@ impl super::McpServerPlugin for HttpPlugin {
         &self,
         conn: &super::connection::McpConnection,
     ) -> McpResult<Vec<McpPrompt>> {
-        let state = self
-            .states
-            .lock()
-            .get(&conn.server_id)
-            .cloned()
-            .ok_or_else(|| McpError::NotConnected(conn.server_id.clone()))?;
-        let id = state.next_id();
-        let body = json!({ "jsonrpc": "2.0", "id": id, "method": "prompts/list", "params": {} });
-        let v = post_json(&state, &body).await?;
-        let prompts = v
-            .get("result")
-            .and_then(|r| r.get("prompts"))
+        let result = self
+            .rpc_call(conn, "prompts/list", json!({}), Duration::from_secs(60))
+            .await?;
+        let prompts = result
+            .get("prompts")
             .and_then(|a| a.as_array())
             .cloned()
             .unwrap_or_default();
@@ -336,22 +379,13 @@ impl super::McpServerPlugin for HttpPlugin {
         name: &str,
         arguments: Option<Value>,
     ) -> McpResult<GetPromptResult> {
-        let state = self
-            .states
-            .lock()
-            .get(&conn.server_id)
-            .cloned()
-            .ok_or_else(|| McpError::NotConnected(conn.server_id.clone()))?;
-        let id = state.next_id();
         let mut params = json!({ "name": name });
         if let Some(args) = arguments {
             params["arguments"] = args;
         }
-        let body = json!({
-            "jsonrpc": "2.0", "id": id, "method": "prompts/get", "params": params
-        });
-        let v = post_json(&state, &body).await?;
-        let result = v.get("result").cloned().unwrap_or(json!({}));
+        let result = self
+            .rpc_call(conn, "prompts/get", params, Duration::from_secs(60))
+            .await?;
         serde_json::from_value(result).map_err(McpError::from)
     }
 
@@ -366,6 +400,8 @@ async fn post_json(state: &HttpTransportState, body: &Value) -> McpResult<Value>
         return Err(McpError::Server("HTTP transport 已关闭".into()));
     }
     let url = state.endpoint();
+    // MCP-19: accept numeric-string ids echoed by lenient servers
+    let expect_id = body.get("id").and_then(rpc_id_as_u64);
     let mut req = state
         .client
         .post(&url)
@@ -399,6 +435,20 @@ async fn post_json(state: &HttpTransportState, body: &Value) -> McpResult<Value>
     {
         *state.session_id.lock() = Some(sid);
     }
+    // MCP-8: redirect refused (the custom auth headers above must never be forwarded
+    // to a redirect target; https→http downgrade would leak the key)
+    if status.is_redirection() {
+        let target = resp
+            .headers()
+            .get("location")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("<unknown>");
+        return Err(McpError::Server(crate::ierr!(
+            "MCP 端点重定向被拒绝（目标: {}）。请将服务器配置更新为最终地址",
+            "MCP endpoint redirect refused (target: {}). Update the server config to the final URL",
+            target
+        )));
+    }
     if !status.is_success() {
         let body = resp.text().await.unwrap_or_default();
         let truncated = if body.len() > 512 {
@@ -413,43 +463,189 @@ async fn post_json(state: &HttpTransportState, body: &Value) -> McpResult<Value>
     }
     if content_type.starts_with("text/event-stream") {
         // SSE parsing: split into blocks on blank lines; multiple data lines within a
-        // block are joined with \n per the SSE spec; event:/id:/comment lines are ignored;
-        // \r\n is tolerated. Takes the first block containing data (in request-response
-        // mode the server returns the JSON-RPC response as the first event).
+        // block are joined with \n per the SSE spec; event:/id:/comment lines are
+        // ignored; \r\n is tolerated. MCP-4: blocks carrying notifications (a
+        // "method" field) or a non-matching id are skipped — only the response for
+        // OUR request is returned; error responses surface as errors.
         use futures_util::StreamExt;
         let mut stream = resp.bytes_stream();
         let mut buffer = String::new();
+        // PROV-1 family: raw bytes awaiting a complete UTF-8 sequence (a multibyte
+        // char split across chunk boundaries stays here until its tail arrives).
+        let mut raw: Vec<u8> = Vec::new();
         while let Some(item) = stream.next().await {
             let chunk = item.map_err(|e| McpError::Server(format!("SSE read: {}", e)))?;
-            buffer.push_str(&String::from_utf8_lossy(&chunk));
-            // A blank line (\n\n or \r\n\r\n) is the block boundary
-            let block_end = buffer.find("\n\n").or_else(|| buffer.find("\r\n\r\n"));
-            if let Some(pos) = block_end {
-                let block: String = buffer[..pos].to_string();
-                let mut data_lines: Vec<String> = Vec::new();
-                for line in block.lines() {
-                    let line = line.trim_end_matches('\r');
-                    if let Some(rest) = line.strip_prefix("data:") {
-                        data_lines.push(rest.trim_start().to_string());
-                    }
-                    // event: / id: / :comment lines are ignored per the spec
-                }
-                if !data_lines.is_empty() {
-                    let data = data_lines.join("\n");
-                    if !data.is_empty() {
-                        return serde_json::from_str::<Value>(&data)
-                            .map_err(|e| McpError::Server(format!("SSE JSON: {}", e)));
-                    }
-                }
-                // Blocks without data (pure notifications/heartbeats): keep reading the next block
-                buffer.drain(..pos);
+            push_sse_chunk(&mut raw, &mut buffer, &chunk)?;
+            // MCP-5: the undrained buffer must stay bounded — a stream that never
+            // sends a block delimiter used to grow it without limit (only the 60s
+            // request timeout stopped it).
+            if buffer.len() + raw.len() > MAX_SSE_BUFFER_BYTES {
+                return Err(McpError::Server(crate::ierr!(
+                    "MCP SSE 响应超过缓冲上限（{} 字节）——服务器未发送块分隔符或单块过大",
+                    "MCP SSE response exceeded the buffer cap ({} bytes) — no block delimiter or a single oversized block",
+                    MAX_SSE_BUFFER_BYTES
+                )));
+            }
+            // 阶段5: the block-drain loop lives in drain_sse_blocks (exercised by
+            // the malicious/edge-server transcript tests below).
+            if let Some(v) = drain_sse_blocks(&mut buffer, expect_id)? {
+                return Ok(v);
             }
         }
         Err(McpError::Server("SSE 流意外关闭".into()))
     } else {
-        resp.json::<Value>()
+        let v: Value = resp
+            .json()
             .await
-            .map_err(|e| McpError::Server(format!("JSON 解析: {}", e)))
+            .map_err(|e| McpError::Server(format!("JSON 解析: {}", e)))?;
+        // MCP-4: HTTP 200 + {"error":{...}} used to degrade into an empty-result
+        // fake success; the id must match the request (missing id tolerated for
+        // lenient servers, mismatched id is a protocol error).
+        if v.get("method").is_some() {
+            return Err(McpError::Server("MCP 返回了通知而非响应".into()));
+        }
+        if v.get("error").is_some() {
+            return Err(rpc_error(&v));
+        }
+        let resp_id = v.get("id").and_then(rpc_id_as_u64);
+        if resp_id.is_some() && resp_id != expect_id {
+            return Err(McpError::Server(format!(
+                "MCP 响应 id ({resp_id:?}) 与请求 ({expect_id:?}) 不匹配"
+            )));
+        }
+        Ok(v)
+    }
+}
+
+/// MCP-4: 把 JSON-RPC 响应中的 error 对象转成 [`McpError`]。
+/// 阶段4 第3项：错误语义与 stdio 的 `McpConnection::request` 对齐——
+/// -32601 → [`McpError::MethodNotFound`]（此前 http 一律映射 Remote，
+/// 是两传输间的活语义分叉）；其余错误码 → `Remote`。
+fn rpc_error(v: &Value) -> McpError {
+    let err = v.get("error").cloned().unwrap_or(json!({}));
+    let code = err.get("code").and_then(|c| c.as_i64()).unwrap_or(-32603) as i32;
+    let message = err
+        .get("message")
+        .and_then(|m| m.as_str())
+        .unwrap_or("unknown error")
+        .to_string();
+    if code == -32601 {
+        return McpError::MethodNotFound(message);
+    }
+    McpError::Remote { code, message }
+}
+
+/// MCP-5: 从缓冲取下一个完整 SSE 块，返回 (块内容, 含分隔符应消费的长度)。
+/// `None` = 缓冲中尚无完整块。**消费长度必须包含分隔符**——只 drain 到边界
+/// 会让分隔符残留、后续 find 恒命中 0，缓冲只增不消。
+fn next_sse_block(buffer: &str) -> Option<(&str, usize)> {
+    if let Some(p) = buffer.find("\r\n\r\n") {
+        Some((&buffer[..p], p + 4))
+    } else {
+        buffer.find("\n\n").map(|p| (&buffer[..p], p + 2))
+    }
+}
+
+/// 阶段5: drains every complete SSE block currently buffered and returns the
+/// response for `expect_id` when one arrives. Extracted from post_json so the
+/// full MCP-4/MCP-5/MCP-19 consumption pattern (heartbeat-first servers,
+/// notifications, foreign/absent/string ids, error blocks) is testable against
+/// hostile transcripts without a live HTTP server.
+///
+/// Consumed bytes — delimiter included, the MCP-5 regression — are drained from
+/// `buffer`; `Ok(None)` = nothing more to do (stream ended / awaiting more bytes).
+pub(crate) fn drain_sse_blocks(
+    buffer: &mut String,
+    expect_id: Option<u64>,
+) -> McpResult<Option<Value>> {
+    while let Some((block, consumed)) = next_sse_block(buffer) {
+        let block = block.to_string();
+        buffer.drain(..consumed);
+        if let Some(data) = sse_block_data(&block) {
+            if let Some(v) = classify_sse_data(&data, expect_id)? {
+                return Ok(Some(v));
+            }
+        }
+    }
+    Ok(None)
+}
+
+/// MCP-5: hard cap on the undrained SSE buffer (a stream with no block
+/// delimiters must fail fast instead of growing until the request timeout).
+const MAX_SSE_BUFFER_BYTES: usize = 4 * 1024 * 1024;
+
+/// PROV-1 family: append a raw SSE chunk, decoding only complete UTF-8 sequences.
+/// A multibyte char split across chunk boundaries stays in `raw` until its tail
+/// arrives — the historic per-chunk `from_utf8_lossy` replaced it with U+FFFD and
+/// silently corrupted CJK payloads (MCP tool results/notifications carry them).
+/// A complete-but-invalid sequence anywhere is a hard error (never lossy).
+pub(crate) fn push_sse_chunk(
+    raw: &mut Vec<u8>,
+    buffer: &mut String,
+    chunk: &[u8],
+) -> McpResult<()> {
+    raw.extend_from_slice(chunk);
+    match std::str::from_utf8(raw) {
+        Ok(s) => {
+            buffer.push_str(s);
+            raw.clear();
+            Ok(())
+        }
+        Err(e) => {
+            if e.error_len().is_some() {
+                return Err(McpError::Server("SSE 流包含无效 UTF-8 序列".into()));
+            }
+            // Incomplete multibyte tail: decode the valid prefix, keep the rest.
+            let valid = e.valid_up_to();
+            let head = std::str::from_utf8(&raw[..valid])
+                .unwrap_or_default()
+                .to_string();
+            buffer.push_str(&head);
+            raw.drain(..valid);
+            Ok(())
+        }
+    }
+}
+
+/// 提取一个 SSE 块的 data 载荷（多行 `data:` 按 SSE 规范以 `\n` 拼接）。
+/// 无 data 行（心跳/注释/纯 event 行）返回 `None`。
+fn sse_block_data(block: &str) -> Option<String> {
+    let mut data_lines: Vec<String> = Vec::new();
+    for line in block.lines() {
+        let line = line.trim_end_matches('\r');
+        if let Some(rest) = line.strip_prefix("data:") {
+            data_lines.push(rest.trim_start().to_string());
+        }
+    }
+    if data_lines.is_empty() {
+        None
+    } else {
+        Some(data_lines.join("\n"))
+    }
+}
+
+/// MCP-4: 判定一个 SSE data 块是否为期待中的响应。
+/// `Ok(Some(v))` = 命中的响应；`Ok(None)` = 跳过（通知块 / id 不匹配 /
+/// 畸形 JSON 仅告警）；`Err` = 远端错误响应。
+fn classify_sse_data(data: &str, expect_id: Option<u64>) -> McpResult<Option<Value>> {
+    let Ok(v) = serde_json::from_str::<Value>(data) else {
+        tracing::warn!(
+            "[mcp:http] 无法解析的 SSE data 块: {}",
+            data.chars().take(120).collect::<String>()
+        );
+        return Ok(None);
+    };
+    if v.get("method").is_some() {
+        return Ok(None); // notification (e.g. notifications/message) — not a response
+    }
+    if v.get("error").is_some() {
+        return Err(rpc_error(&v));
+    }
+    let resp_id = v.get("id").and_then(rpc_id_as_u64);
+    if resp_id.is_none() || resp_id == expect_id {
+        Ok(Some(v))
+    } else {
+        Ok(None)
     }
 }
 
@@ -469,5 +665,277 @@ impl super::connection::McpTransport for DummyHttpTransport {
     async fn close(&self) -> McpResult<()> {
         self.closed.store(true, Ordering::SeqCst);
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// PROV-1 family 回归：多字节 UTF-8 被切在 chunk 边界时不得产生 U+FFFD——
+    /// 逐 chunk from_utf8_lossy 会把被 TCP 分段切开的 CJK 字符变乱码。
+    #[test]
+    fn sse_multibyte_survives_chunk_boundaries() {
+        let full = "data: {\"text\":\"你好，世界\"}\n\n".to_string();
+        let bytes = full.as_bytes();
+        // 在每个字节边界两段切分，外加逐字节喂入
+        for k in 1..bytes.len() {
+            let mut raw: Vec<u8> = Vec::new();
+            let mut buffer = String::new();
+            push_sse_chunk(&mut raw, &mut buffer, &bytes[..k]).expect("前半段");
+            push_sse_chunk(&mut raw, &mut buffer, &bytes[k..]).expect("后半段");
+            assert!(raw.is_empty(), "切点 {k}：raw 应已清空");
+            assert_eq!(buffer, full, "切点 {k}：重组应与整段一致");
+        }
+        let mut raw: Vec<u8> = Vec::new();
+        let mut buffer = String::new();
+        for b in bytes {
+            push_sse_chunk(&mut raw, &mut buffer, &[*b]).expect("逐字节喂入不应失败");
+        }
+        assert_eq!(buffer, full);
+    }
+
+    /// 完整但非法的 UTF-8 序列是硬错误（绝不 lossy 替换后静默继续）。
+    #[test]
+    fn sse_invalid_utf8_is_a_hard_error() {
+        let mut raw: Vec<u8> = Vec::new();
+        let mut buffer = String::new();
+        assert!(push_sse_chunk(&mut raw, &mut buffer, b"data: \xff\xfe\n\n").is_err());
+    }
+
+    /// MCP-5 回归：心跳/注释块先到时，块消费必须连同分隔符一起删除——
+    /// 历史实现 drain(..pos) 留下 "\n\n"，之后 find 恒命中 0、缓冲只增不消，
+    /// 先发心跳的服务器 100% 连接失败。
+    #[test]
+    fn sse_blocks_drain_including_delimiter() {
+        // 心跳块 + 响应块（模拟服务器先发 :keep-alive 再发 data）
+        let mut buffer =
+            ": keep-alive\n\ndata: {\"jsonrpc\":\"2.0\",\"id\":7,\"result\":{}}\n\n".to_string();
+        // 第一个块：心跳（无 data）
+        let (block, consumed) = next_sse_block(&buffer).expect("应切出第一块");
+        assert_eq!(block, ": keep-alive");
+        assert!(sse_block_data(block).is_none());
+        buffer.drain(..consumed);
+        // 关键回归点：第二块仍能正常切出（分隔符已被消费）
+        let (block2, consumed2) = next_sse_block(&buffer).expect("分隔符残留会卡死在此");
+        assert!(block2.starts_with("data:"));
+        buffer.drain(..consumed2);
+        assert!(buffer.is_empty(), "全部块消费后缓冲应清空");
+        // \r\n 分隔符变体
+        let crlf = "data: x\r\n\r\nrest";
+        let (_, consumed) = next_sse_block(crlf).expect("CRLF 分隔符应命中");
+        assert_eq!(&crlf[consumed..], "rest");
+    }
+
+    /// SSE 多行 data 按规范以 \n 拼接。
+    #[test]
+    fn sse_block_data_joins_multiline() {
+        let block = "event: message\ndata: {\"a\":\ndata: 1}";
+        assert_eq!(sse_block_data(block).as_deref(), Some("{\"a\":\n1}"));
+        assert!(sse_block_data(": comment only").is_none());
+    }
+
+    /// MCP-4 回归：通知块跳过、error 响应浮出、id 匹配才返回。
+    #[test]
+    fn sse_data_classification() {
+        // 通知（带 method）→ 跳过
+        let notification =
+            "{\"jsonrpc\":\"2.0\",\"method\":\"notifications/message\",\"params\":{}}";
+        assert!(classify_sse_data(notification, Some(7)).unwrap().is_none());
+        // 期待 id 的响应 → 命中
+        let response = "{\"jsonrpc\":\"2.0\",\"id\":7,\"result\":{\"tools\":[]}}";
+        assert!(classify_sse_data(response, Some(7)).unwrap().is_some());
+        // 别的 id 的响应 → 跳过
+        let other = "{\"jsonrpc\":\"2.0\",\"id\":99,\"result\":{}}";
+        assert!(classify_sse_data(other, Some(7)).unwrap().is_none());
+        // error 响应 → 报错（此前 200+error 被当空结果假成功）
+        let error_resp =
+            "{\"jsonrpc\":\"2.0\",\"id\":7,\"error\":{\"code\":-32000,\"message\":\"boom\"}}";
+        let err = classify_sse_data(error_resp, Some(7)).unwrap_err();
+        match err {
+            McpError::Remote { code, message } => {
+                assert_eq!(code, -32000);
+                assert_eq!(message, "boom");
+            }
+            other => panic!("应为 Remote 错误: {other:?}"),
+        }
+        // 畸形 JSON → 跳过不致命
+        assert!(classify_sse_data("not json", Some(7)).unwrap().is_none());
+    }
+
+    /// MCP-19: servers that echo the request id back as a STRING ("7") must still
+    /// correlate — the historic u64-only parse dropped the id to None, and in the
+    /// SSE classifier None was treated as "ours" (mismatched string ids slipped
+    /// through as false hits).
+    #[test]
+    fn string_echoed_rpc_ids_correlate() {
+        assert_eq!(rpc_id_as_u64(&json!(7)), Some(7));
+        assert_eq!(rpc_id_as_u64(&json!("7")), Some(7));
+        assert_eq!(rpc_id_as_u64(&json!("x")), None);
+        assert_eq!(rpc_id_as_u64(&json!(null)), None);
+        // SSE classifier: matching string id → hit
+        let hit = "{\"jsonrpc\":\"2.0\",\"id\":\"7\",\"result\":{}}";
+        assert!(classify_sse_data(hit, Some(7)).unwrap().is_some());
+        // SSE classifier: OTHER request's string id → correctly skipped now
+        let other = "{\"jsonrpc\":\"2.0\",\"id\":\"99\",\"result\":{}}";
+        assert!(classify_sse_data(other, Some(7)).unwrap().is_none());
+    }
+
+    /// 阶段5 集成测试：恶意/边缘 server 台本。按 post_json 的真实消费模式——
+    /// 逐 chunk 喂入 drain_sse_blocks（跨 TCP 分段边界），台本依次包含：
+    /// 心跳块（MCP-4：先发心跳的服务器必须能连上）→ 日志通知块（跳过）→
+    /// 他人数字 id 响应（跳过）→ 他人字符串 id 响应（MCP-19：跳过）→
+    /// 我方响应（命中返回）。结尾带一个不完整块，验证它留在缓冲不被误消费。
+    #[test]
+    fn malicious_edge_server_transcript_drains_correctly() {
+        let transcript = concat!(
+            ": keep-alive\r\n\r\n",
+            "event: log\r\ndata: {\"jsonrpc\":\"2.0\",\"method\":\"notifications/message\",\"params\":{}}\r\n\r\n",
+            "data: {\"jsonrpc\":\"2.0\",\"id\":98,\"result\":{\"noise\":true}}\r\n\r\n",
+            "data: {\"jsonrpc\":\"2.0\",\"id\":\"99\",\"result\":{\"noise\":true}}\r\n\r\n",
+            "data: {\"jsonrpc\":\"2.0\",\"id\":7,\"result\":{\"tools\":[{\"name\":\"read\"}]}}\r\n\r\n",
+            "data: {\"jsonrpc\":\"2.0\",\"id\":\"partial-bl",
+        );
+        // Feed in 7-byte chunks: blocks straddle chunk boundaries repeatedly.
+        // The whole transcript is fed (draining stops after the first hit) so the
+        // trailing partial block lands in the buffer exactly as in production.
+        let mut buffer = String::new();
+        let mut found = None;
+        for chunk in transcript.as_bytes().chunks(7) {
+            buffer.push_str(&String::from_utf8_lossy(chunk));
+            if found.is_none() {
+                if let Some(v) = drain_sse_blocks(&mut buffer, Some(7)).unwrap() {
+                    found = Some(v);
+                }
+            }
+        }
+        let v = found.expect("台本中我方响应必须被命中");
+        assert_eq!(v["id"], 7, "命中我方数字 id 响应");
+        assert_eq!(v["result"]["tools"][0]["name"], "read");
+        // The trailing partial block must remain buffered (not consumed).
+        assert!(
+            buffer.contains("partial-bl"),
+            "不完整块应留在缓冲: {buffer:?}"
+        );
+    }
+
+    /// 阶段5 集成测试：我方 id 的 error 块浮出为 Remote 错误（PROV-2 类语义），
+    /// 即使前面隔着多个心跳块——截断/失败不得被当成功吞掉。
+    #[test]
+    fn error_block_surfaces_through_heartbeats() {
+        let transcript = concat!(
+            ": ping\r\n\r\n: ping\r\n\r\n",
+            "data: {\"jsonrpc\":\"2.0\",\"id\":7,\"error\":{\"code\":-32000,\"message\":\"boom\"}}\r\n\r\n",
+        );
+        let mut buffer = String::new();
+        buffer.push_str(transcript);
+        let err = drain_sse_blocks(&mut buffer, Some(7)).unwrap_err();
+        match err {
+            McpError::Remote { code, message } => {
+                assert_eq!(code, -32000);
+                assert_eq!(message, "boom");
+            }
+            other => panic!("应为 Remote 错误: {other:?}"),
+        }
+        assert!(buffer.is_empty(), "错误块应被完整消费");
+    }
+
+    /// 阶段4 第3项回归：错误语义与 stdio 对齐——-32601 (Method not found)
+    /// 映射 [`McpError::MethodNotFound`]，其余错误码仍是 Remote。
+    /// 此前 http 一律 Remote，是两传输间的活语义分叉。
+    #[test]
+    fn rpc_error_maps_32601_to_method_not_found_like_stdio() {
+        let method_missing = json!({
+            "jsonrpc": "2.0", "id": 7,
+            "error": { "code": -32601, "message": "resources/list not supported" }
+        });
+        match rpc_error(&method_missing) {
+            McpError::MethodNotFound(msg) => assert_eq!(msg, "resources/list not supported"),
+            other => panic!("-32601 应映射 MethodNotFound: {other:?}"),
+        }
+        // 其他错误码保持 Remote
+        let server_err = json!({
+            "jsonrpc": "2.0", "id": 8,
+            "error": { "code": -32000, "message": "boom" }
+        });
+        match rpc_error(&server_err) {
+            McpError::Remote { code, message } => {
+                assert_eq!(code, -32000);
+                assert_eq!(message, "boom");
+            }
+            other => panic!("非 -32601 应保持 Remote: {other:?}"),
+        }
+        // 缺 code/message 的畸形 error 对象：默认 -32603/unknown error
+        match rpc_error(&json!({ "error": {} })) {
+            McpError::Remote { code, message } => {
+                assert_eq!(code, -32603);
+                assert_eq!(message, "unknown error");
+            }
+            other => panic!("畸形 error 应降级默认值: {other:?}"),
+        }
+    }
+
+    /// 阶段5 集成测试：流在我方响应到来前结束 → drain 返回 Ok(None)（调用方
+    /// 以"SSE 流意外关闭"报错）；全部完整块均已消费、缓冲只剩无 data 的残留。
+    #[test]
+    fn drain_returns_none_when_stream_ends_without_our_response() {
+        let transcript =
+            ": only heartbeats\r\n\r\ndata: {\"jsonrpc\":\"2.0\",\"id\":99,\"result\":{}}\r\n\r\n";
+        let mut buffer = String::new();
+        buffer.push_str(transcript);
+        assert!(drain_sse_blocks(&mut buffer, Some(7)).unwrap().is_none());
+        assert!(buffer.is_empty(), "所有完整块（含他人 id）都应被消费");
+    }
+
+    /// MCP-22: endpoint derivation is kind-aware and never silently rewrites an
+    /// explicit path; only a bare host gets the transport-appropriate suffix.
+    #[test]
+    fn endpoint_derivation_is_kind_aware_and_explicit_paths_kept() {
+        let mk = |streamable: bool, base: &str| HttpTransportState {
+            base_url: base.to_string(),
+            headers: Arc::new(BTreeMap::new()),
+            client: http_client(),
+            next_id: Arc::new(AtomicU64::new(1)),
+            closed: Arc::new(AtomicBool::new(false)),
+            session_id: Arc::new(parking_lot::Mutex::new(None)),
+            streamable,
+        };
+        // Explicit /sse and /mcp endpoints kept verbatim
+        assert_eq!(
+            mk(true, "https://s.example/mcp").endpoint(),
+            "https://s.example/mcp"
+        );
+        assert_eq!(
+            mk(false, "https://s.example/sse").endpoint(),
+            "https://s.example/sse"
+        );
+        // Bare host: streamable appends /mcp, legacy appends /sse
+        assert_eq!(
+            mk(true, "https://s.example").endpoint(),
+            "https://s.example/mcp"
+        );
+        assert_eq!(
+            mk(false, "https://s.example").endpoint(),
+            "https://s.example/sse"
+        );
+        // Bare host with trailing slash: normalized then suffixed
+        assert_eq!(
+            mk(false, "https://s.example/").endpoint(),
+            "https://s.example/sse"
+        );
+        // Explicit custom path: kept AS IS (historic code appended /mcp silently)
+        assert_eq!(
+            mk(true, "https://s.example/custom/endpoint").endpoint(),
+            "https://s.example/custom/endpoint"
+        );
+        // Localhost + port variants
+        assert_eq!(
+            mk(true, "http://127.0.0.1:3333").endpoint(),
+            "http://127.0.0.1:3333/mcp"
+        );
+        assert_eq!(
+            mk(false, "http://127.0.0.1:3333").endpoint(),
+            "http://127.0.0.1:3333/sse"
+        );
     }
 }

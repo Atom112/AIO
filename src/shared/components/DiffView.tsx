@@ -16,10 +16,20 @@ const ACTION_COLORS: Record<FileChangeInfo['action'], string> = {
   delete: 'rgba(255, 80, 80, 0.8)',
 };
 
-const ACTION_LABELS: Record<FileChangeInfo['action'], string> = {
-  create: t('diff.new'),
-  modify: t('diff.mod'),
-  delete: t('diff.del'),
+/**
+ * FE-06: resolved lazily per render — the previous module-level object froze
+ * `t()` at module-load locale, leaving these labels stuck in the old language
+ * after a switch.
+ */
+const actionLabel = (action: FileChangeInfo['action']): string => {
+  switch (action) {
+    case 'create':
+      return t('diff.new');
+    case 'modify':
+      return t('diff.mod');
+    case 'delete':
+      return t('diff.del');
+  }
 };
 
 function parseDiffLines(diff: string): { type: 'ctx' | 'add' | 'del' | 'hdr'; text: string }[] {
@@ -118,7 +128,7 @@ const DiffView = (props: DiffViewProps) => {
                   border: `1px solid ${ACTION_COLORS[change.action]}33`,
                 }}
               >
-                {ACTION_LABELS[change.action]}
+                {actionLabel(change.action)}
               </span>
               <span class="font-mono text-[12px] shrink-0">
                 <For each={parseSummary(change.summary)}>

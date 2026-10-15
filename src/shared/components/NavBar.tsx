@@ -11,6 +11,7 @@ import {
   datas,
   setDatas,
   setSelectedModel,
+  setConfig,
   ActivatedModel,
   setLocalModelStartProgress,
   isLocalModel,
@@ -49,7 +50,7 @@ const NavBar: Component = () => {
             trustRemoteCode: false,
           });
         } catch (e) {
-          console.error('自动启动本地模型失败:', e);
+          console.error('Failed to auto-start the local model:', e);
         }
       }
       return;
@@ -79,6 +80,9 @@ const NavBar: Component = () => {
     try {
       const [models, config] = await Promise.all([loadActivatedModels(), loadAppConfig()]);
       setDatas('activatedModels', models);
+      // Sync the app-config signal with backend truth: the store must reflect the
+      // persisted config, not the localStorage mirror.
+      setConfig(config);
 
       if (models.length > 0) {
         const lastSelectedId = config.defaultModel;
@@ -90,7 +94,7 @@ const NavBar: Component = () => {
         }
       }
     } catch (e) {
-      console.error('初始化数据失败:', e);
+      console.error('Failed to initialize data:', e);
     }
 
     setIsMaximized(await appWindow.isMaximized());

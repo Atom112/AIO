@@ -266,33 +266,56 @@ pub fn create_job_for_pid(pid: u32) -> Result<JobGuard, String> {
 #[cfg(windows)]
 pub(crate) mod win_appcontainer;
 #[cfg(windows)]
-pub use win_appcontainer::{spawn_in_appcontainer, terminate, wait_with_timeout};
+pub use win_appcontainer::{
+    add_session_rx_grant, revoke_project_grants, session_rx_grants, spawn_in_appcontainer,
+    terminate, wait_with_timeout,
+};
 
 // ====== Linux / macOS command sandbox ======
 //
 // On Unix, Agent commands have no process isolation by default. This is a best-effort wrapper:
 // - Linux: when `bwrap` (bubblewrap) is available, runs with "system read-only + only the
-//   project dir writable + private /tmp + separate PID namespace"; the command can use
-//   the network and write the project, but cannot write anywhere else on the system.
-// - macOS: when `sandbox-exec` is available, uses an SBPL profile configured "only the project dir writable".
+//   project dir writable + private /tmp + separate PID namespace + $HOME read boundary
+//   (tmpfs over the home dir, only common toolchain subdirs re-mounted read-only)". The
+//   command can use the network and write the project, but cannot write anywhere else on
+//   the system, and cannot read home-dir secrets (~/.ssh, cloud tokens, etc.).
+// - macOS: when `sandbox-exec` is available, uses an SBPL profile configured "only the
+//   project dir writable + home reads denied except toolchain subpaths".
 // Both are enabled only when the tool exists; otherwise execution falls back to native
 // (backstopped by `setpgid` process-group cleanup), so no environment regresses on a missing dependency.
 
-/// Looks up an executable in PATH (Unix only).
-#[cfg(unix)]
-fn find_in_path(bin: &str) -> bool {
-    let path = match std::env::var_os("PATH") {
-        Some(p) => p,
-        None => return false,
-    };
-    std::env::split_paths(&path).any(|d| d.join(bin).is_file())
-}
+/// $HOME 下需要**只读回绑**的工具链子目录（命令运行需要它们）。
+/// 其余 home 内容被 tmpfs 遮蔽、对命令不可见——`~/.ssh`、云凭据、
+/// `~/.config` 里其他工具的 token 等一律读不到（SEC-01 读边界）。
+/// 注意刻意不包含 `.local`（`share` 下有多种工具的凭据）与整个 `.config`
+/// （gh / npm / gcloud 的 token 都在里面），git 配置只放行 `.config/git`。
+const HOME_TOOLCHAIN_SUBDIRS: &[&str] = &[
+    ".cargo",
+    ".rustup",
+    ".nvm",
+    ".volta",
+    ".bun",
+    ".deno",
+    ".pyenv",
+    ".rbenv",
+    ".go",
+    ".m2",
+    ".gradle",
+    ".config/git",
+];
+
+/// $HOME 下需要只读回绑的单个文件（git 全局配置）。
+const HOME_TOOLCHAIN_FILES: &[&str] = &[".gitconfig"];
 
 /// Builds the Linux bubblewrap wrapper argv (fully replaces the "sh -c cmd" launch argv). Pure function, unit-testable cross-platform.
 ///
 /// Network egress control: `allow_network=false` (default) appends `--unshare-net` —
 /// the command runs in an isolated network namespace with no external egress (including localhost);
 /// `true` keeps the host network (dependency downloads, API calls, etc., declared explicitly by the model).
+///
+/// Read boundary (SEC-01): after the whole-root read-only bind, `$HOME` is covered by a tmpfs
+/// and only [`HOME_TOOLCHAIN_SUBDIRS`] / [`HOME_TOOLCHAIN_FILES`] are re-mounted read-only —
+/// the rest of the home directory (credentials) is invisible to the command.
 #[allow(dead_code)]
 pub fn build_bwrap_argv(
     project_root: &str,
@@ -300,6 +323,7 @@ pub fn build_bwrap_argv(
     shell_arg: &str,
     command: &str,
     allow_network: bool,
+    protect_git_ro: bool,
 ) -> Option<Vec<String>> {
     let root = std::path::Path::new(project_root)
         .canonicalize()
@@ -315,7 +339,17 @@ pub fn build_bwrap_argv(
         "/".to_string(),
         "--bind".to_string(),
         root.clone(),
-        root,
+        root.clone(),
+    ];
+    // Codex 式仓库历史保护：read-only 回绑盖在 RW 根绑定之上（argv 顺序即挂载
+    // 叠加顺序），.git 子树对沙箱内命令只读。--ro-bind-try：无 .git 的目录无害跳过。
+    if protect_git_ro {
+        let git_dir = format!("{root}/.git");
+        argv.push("--ro-bind-try".to_string());
+        argv.push(git_dir.clone());
+        argv.push(git_dir);
+    }
+    argv.extend([
         "--tmpfs".to_string(),
         "/tmp".to_string(),
         "--dev".to_string(),
@@ -324,7 +358,27 @@ pub fn build_bwrap_argv(
         "/proc".to_string(),
         "--unshare-pid".to_string(),
         "--unshare-user".to_string(),
-    ];
+    ]);
+    // SEC-01: home read boundary. Ordering matters — bwrap applies mounts in argv
+    // order, so the tmpfs shadows the real home bound by --ro-bind / /, and the
+    // toolchain re-binds land on top of the tmpfs. (Pure string building — cross-
+    // platform testable; the argv itself is only consumed on Linux.)
+    if let Some(home) = std::env::var("HOME").ok().filter(|h| !h.is_empty()) {
+        argv.push("--tmpfs".to_string());
+        argv.push(home.clone());
+        for sub in HOME_TOOLCHAIN_SUBDIRS {
+            let path = format!("{home}/{sub}");
+            argv.push("--ro-bind-try".to_string());
+            argv.push(path.clone());
+            argv.push(path);
+        }
+        for file in HOME_TOOLCHAIN_FILES {
+            let path = format!("{home}/{file}");
+            argv.push("--ro-bind-try".to_string());
+            argv.push(path.clone());
+            argv.push(path);
+        }
+    }
     if !allow_network {
         argv.push("--unshare-net".to_string());
     }
@@ -335,7 +389,8 @@ pub fn build_bwrap_argv(
     Some(argv)
 }
 
-/// Builds the macOS sandbox-exec wrapper argv (write protection: only the project dir is writable). Pure function, unit-testable cross-platform.
+/// Builds the macOS sandbox-exec wrapper argv (write protection: only the project dir is writable;
+/// read protection: home denied except toolchain subpaths). Pure function, unit-testable cross-platform.
 ///
 /// Network egress control: `allow_network=false` (default) appends
 /// `(deny network*)` to the SBPL — blocking all network egress; `true` keeps the host network.
@@ -346,6 +401,7 @@ pub fn build_sandbox_exec_argv(
     shell_arg: &str,
     command: &str,
     allow_network: bool,
+    protect_git_ro: bool,
 ) -> Option<Vec<String>> {
     let root = std::path::Path::new(project_root)
         .canonicalize()
@@ -357,9 +413,33 @@ pub fn build_sandbox_exec_argv(
     } else {
         "(deny network*)\n".to_string()
     };
+    // Codex 式仓库历史保护：deny 追加在 allow 之后（SBPL 后匹配者胜），.git 子树
+    // 在「项目根可写」内被单独抠回只读。
+    let git_rule = if protect_git_ro {
+        format!("(deny file-write* (subpath \"{root}/.git\"))\n")
+    } else {
+        String::new()
+    };
+    // SEC-01: home read boundary — deny home reads, then allow the toolchain
+    // subpaths (more specific SBPL subpath rules take precedence). Pure string
+    // building — cross-platform testable; the profile is only consumed on macOS.
+    let home_rules = std::env::var("HOME")
+        .ok()
+        .filter(|h| !h.is_empty())
+        .map(|home| {
+            let mut rules = format!("(deny file-read* (subpath \"{home}\"))\n");
+            for sub in HOME_TOOLCHAIN_SUBDIRS {
+                rules.push_str(&format!("(allow file-read* (subpath \"{home}/{sub}\"))\n"));
+            }
+            for file in HOME_TOOLCHAIN_FILES {
+                rules.push_str(&format!("(allow file-read* (subpath \"{home}/{file}\"))\n"));
+            }
+            rules
+        })
+        .unwrap_or_default();
     let profile = format!(
-        "(version 1)\n(allow default)\n(deny file-write*)\n(allow file-write* (subpath \"{}\"))\n{}",
-        root, network_rule
+        "(version 1)\n(allow default)\n(deny file-write*)\n(allow file-write* (subpath \"{}\"))\n{}{}{}",
+        root, git_rule, home_rules, network_rule
     );
     Some(vec![
         "sandbox-exec".into(),
@@ -376,27 +456,54 @@ pub fn build_sandbox_exec_argv(
 ///
 /// `allow_network`: false (default) = no network egress inside the sandbox (Linux `--unshare-net` /
 /// macOS SBPL `deny network*`); true = keep the host network (explicitly declared by the model, visible in approvals).
+/// `protect_git_ro`: Codex-style `<root>/.git` deny-write inside the sandbox.
+/// Windows 构建下无调用方（bwrap/SBPL 仅 Unix）——保留接口供 Unix 目标。
 #[allow(unused_variables)]
+#[cfg_attr(windows, allow(dead_code))]
 pub fn sandbox_command_prefix(
     shell: &str,
     shell_arg: &str,
     command: &str,
     project_root: &str,
     allow_network: bool,
+    protect_git_ro: bool,
 ) -> Option<Vec<String>> {
     #[cfg(target_os = "linux")]
     {
-        if !find_in_path("bwrap") {
+        // SEC-06: resolve the sandbox wrapper PATH-only — spawning a bare `bwrap`
+        // would consult untrusted lookup rules; the resolved absolute path is the
+        // binary that the existence check validated.
+        let Some(bwrap) = crate::utils::exec_resolve::resolve_executable("bwrap") else {
             return None;
-        }
-        build_bwrap_argv(project_root, shell, shell_arg, command, allow_network)
+        };
+        let mut argv = build_bwrap_argv(
+            project_root,
+            shell,
+            shell_arg,
+            command,
+            allow_network,
+            protect_git_ro,
+        )?;
+        argv[0] = bwrap.to_string_lossy().into_owned();
+        Some(argv)
     }
     #[cfg(target_os = "macos")]
     {
-        if !find_in_path("sandbox-exec") {
+        // SEC-06: same PATH-only resolution for the macOS wrapper.
+        let Some(sandbox_exec) = crate::utils::exec_resolve::resolve_executable("sandbox-exec")
+        else {
             return None;
-        }
-        build_sandbox_exec_argv(project_root, shell, shell_arg, command, allow_network)
+        };
+        let mut argv = build_sandbox_exec_argv(
+            project_root,
+            shell,
+            shell_arg,
+            command,
+            allow_network,
+            protect_git_ro,
+        )?;
+        argv[0] = sandbox_exec.to_string_lossy().into_owned();
+        Some(argv)
     }
     #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     {
@@ -405,17 +512,17 @@ pub fn sandbox_command_prefix(
 }
 
 /// Whether the sandbox is available (fail-closed check):
-/// - Linux: bwrap exists in PATH
-/// - macOS: sandbox-exec exists in PATH (system-provided)
+/// - Linux: bwrap resolvable via PATH (SEC-06: same PATH-only lookup the launcher uses)
+/// - macOS: sandbox-exec resolvable via PATH (system-provided)
 /// - Windows: always true (Job Object has no external dependency; AppContainer is covered separately)
 pub fn sandbox_available() -> bool {
     #[cfg(target_os = "linux")]
     {
-        find_in_path("bwrap")
+        crate::utils::exec_resolve::resolve_executable("bwrap").is_some()
     }
     #[cfg(target_os = "macos")]
     {
-        find_in_path("sandbox-exec")
+        crate::utils::exec_resolve::resolve_executable("sandbox-exec").is_some()
     }
     #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     {
@@ -431,7 +538,7 @@ mod tests {
     fn bwrap_argv_shape() {
         let root = std::env::temp_dir();
         let root = root.to_string_lossy().into_owned();
-        let argv = build_bwrap_argv(&root, "sh", "-c", "echo hi", true).expect("argl");
+        let argv = build_bwrap_argv(&root, "sh", "-c", "echo hi", true, false).expect("argl");
         assert_eq!(argv[0], "bwrap");
         assert!(argv.contains(&"--die-with-parent".to_string()));
         assert!(argv.contains(&"--ro-bind".to_string()));
@@ -452,23 +559,68 @@ mod tests {
     #[test]
     fn bwrap_network_isolation() {
         let root = std::env::temp_dir().to_string_lossy().into_owned();
-        let no_net = build_bwrap_argv(&root, "sh", "-c", "curl x", false).expect("argv");
+        let no_net = build_bwrap_argv(&root, "sh", "-c", "curl x", false, false).expect("argv");
         assert!(
             no_net.contains(&"--unshare-net".to_string()),
             "默认应隔离网络: {no_net:?}"
         );
-        let with_net = build_bwrap_argv(&root, "sh", "-c", "curl x", true).expect("argv");
+        let with_net = build_bwrap_argv(&root, "sh", "-c", "curl x", true, false).expect("argv");
         assert!(
             !with_net.contains(&"--unshare-net".to_string()),
             "显式声明网络时不应隔离: {with_net:?}"
         );
     }
 
+    /// SEC-01: home is shadowed by a tmpfs and only toolchain subdirs/files are
+    /// re-mounted read-only; credential locations (.ssh / .aws / whole .config)
+    /// stay invisible to the command.
+    #[test]
+    fn bwrap_home_read_boundary() {
+        let home = match std::env::var("HOME") {
+            Ok(h) if !h.is_empty() => h,
+            // Windows CI without HOME: the boundary block is skipped by design
+            _ => return,
+        };
+        let root = std::env::temp_dir().to_string_lossy().into_owned();
+        let argv = build_bwrap_argv(&root, "sh", "-c", "ls ~", true, false).expect("argv");
+        let joined = argv.join(" ");
+        assert!(
+            joined.contains(&format!("--tmpfs {home}")),
+            "home 应被 tmpfs 遮蔽: {joined}"
+        );
+        assert!(joined.contains(&format!("--ro-bind-try {home}/.cargo {home}/.cargo")));
+        assert!(joined.contains(&format!(
+            "--ro-bind-try {home}/.gitconfig {home}/.gitconfig"
+        )));
+        for secret in [".ssh", ".aws", ".gnupg"] {
+            assert!(
+                !joined.contains(secret),
+                "不得回绑凭据目录 {secret}: {joined}"
+            );
+        }
+    }
+
+    /// SEC-01 (macOS): the SBPL denies home reads and re-allows toolchain subpaths only.
+    #[test]
+    fn sandbox_exec_home_read_boundary() {
+        let home = match std::env::var("HOME") {
+            Ok(h) if !h.is_empty() => h,
+            _ => return,
+        };
+        let root = std::env::temp_dir().to_string_lossy().into_owned();
+        let argv = build_sandbox_exec_argv(&root, "sh", "-c", "ls ~", true, false).expect("argv");
+        let profile = &argv[2];
+        assert!(profile.contains(&format!("(deny file-read* (subpath \"{home}\"))")));
+        assert!(profile.contains(&format!("(allow file-read* (subpath \"{home}/.cargo\"))")));
+        assert!(!profile.contains(".ssh"));
+    }
+
     #[test]
     fn sandbox_exec_argv_shape() {
         let root = std::env::temp_dir();
         let root = root.to_string_lossy().into_owned();
-        let argv = build_sandbox_exec_argv(&root, "sh", "-c", "echo hi", true).expect("argv");
+        let argv =
+            build_sandbox_exec_argv(&root, "sh", "-c", "echo hi", true, false).expect("argv");
         assert_eq!(argv[0], "sandbox-exec");
         assert_eq!(argv[1], "-p");
         assert!(argv[2].contains("deny file-write*"));
@@ -484,17 +636,77 @@ mod tests {
     #[test]
     fn sandbox_exec_network_isolation() {
         let root = std::env::temp_dir().to_string_lossy().into_owned();
-        let no_net = build_sandbox_exec_argv(&root, "sh", "-c", "curl x", false).expect("argv");
+        let no_net =
+            build_sandbox_exec_argv(&root, "sh", "-c", "curl x", false, false).expect("argv");
         assert!(
             no_net[2].contains("(deny network*)"),
             "默认应阻断网络: {}",
             no_net[2]
         );
-        let with_net = build_sandbox_exec_argv(&root, "sh", "-c", "curl x", true).expect("argv");
+        let with_net =
+            build_sandbox_exec_argv(&root, "sh", "-c", "curl x", true, false).expect("argv");
         assert!(
             !with_net[2].contains("(deny network*)"),
             "显式声明网络时不应阻断: {}",
             with_net[2]
+        );
+    }
+
+    /// Codex 式仓库历史保护（Linux）：.git 以 read-only 回绑盖在 RW 根绑定之上；
+    /// 关闭保护时不出现该绑定。
+    #[test]
+    fn bwrap_git_ro_protection() {
+        let root = std::env::temp_dir().to_string_lossy().into_owned();
+        // 构建器内部 canonicalize（Windows 产出 \\?\ 前缀路径），期望值须同源
+        let root = std::path::Path::new(&root)
+            .canonicalize()
+            .expect("canon")
+            .to_string_lossy()
+            .into_owned();
+        let protected = build_bwrap_argv(&root, "sh", "-c", "ls", true, true).expect("argv");
+        let joined = protected.join(" ");
+        let expected = format!("--ro-bind-try {root}/.git {root}/.git");
+        assert!(joined.contains(&expected), "应有 .git 只读回绑: {joined}");
+        // 叠加顺序：RW 根绑定在前、.git 只读回绑在后（argv 顺序即挂载叠加顺序）
+        let rw_pos = joined
+            .find(&format!("--bind {root} {root}"))
+            .expect("rw bind");
+        let ro_pos = joined.find(&expected).expect("ro-bind");
+        assert!(ro_pos > rw_pos, "只读回绑必须盖在 RW 绑定之后: {joined}");
+        let unprotected = build_bwrap_argv(&root, "sh", "-c", "ls", true, false).expect("argv");
+        assert!(
+            !unprotected.join(" ").contains(&expected),
+            "关闭保护时不应有 .git 回绑"
+        );
+    }
+
+    /// Codex 式仓库历史保护（macOS）：deny file-write* 追加在项目根 allow 之后
+    /// （SBPL 后匹配者胜），关闭保护时不含该规则。
+    #[test]
+    fn sandbox_exec_git_ro_protection() {
+        let root = std::env::temp_dir().to_string_lossy().into_owned();
+        let root = std::path::Path::new(&root)
+            .canonicalize()
+            .expect("canon")
+            .to_string_lossy()
+            .into_owned();
+        let protected = build_sandbox_exec_argv(&root, "sh", "-c", "ls", true, true).expect("argv");
+        let expected = format!("(deny file-write* (subpath \"{root}/.git\"))");
+        assert!(
+            protected[2].contains(&expected),
+            "SBPL 应含 .git 拒写规则: {}",
+            protected[2]
+        );
+        let allow_pos = protected[2]
+            .find(&format!("(allow file-write* (subpath \"{root}\"))"))
+            .expect("root allow");
+        let deny_pos = protected[2].find(&expected).expect("git deny");
+        assert!(deny_pos > allow_pos, "deny 必须在 allow 之后（后匹配者胜）");
+        let unprotected =
+            build_sandbox_exec_argv(&root, "sh", "-c", "ls", true, false).expect("argv");
+        assert!(
+            !unprotected[2].contains(&expected),
+            "关闭保护时不应有 .git 拒写规则"
         );
     }
 }

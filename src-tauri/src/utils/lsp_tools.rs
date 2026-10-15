@@ -75,21 +75,59 @@ pub async fn execute(
         .collect();
 
     if active_clients.is_empty() {
-        return Ok(tool_ok(format!(
-            "当前项目没有运行中的语言服务器。可用的语言包括：{}。\n请使用 auto_detect_ls 检测项目语言，然后 start_lsp_server 启动对应服务器。",
-            lsp_mgr
-                .languages
-                .iter()
-                .map(|l| l.name.as_str())
-                .collect::<Vec<_>>()
-                .join("、")
-        )));
+        return Ok(tool_ok(
+            "当前项目没有运行中的语言服务器（打开项目时会自动检测并启动；未运行通常意味着对应服务器未安装，如 pyright-langserver、rust-analyzer、typescript-language-server、gopls）。\n对具体代码文件调用 lsp_symbols 等 LSP 工具时会按需启动对应服务器。".to_string(),
+        ));
     }
 
-    // Build the output
-    let output = build_diagnostics_output(&lsp_mgr, &project_root, &file_paths, severity);
+    // Best-effort: sync the explicitly requested files into their (already
+    // running) language servers — didOpen makes the server analyze the file and
+    // publish its diagnostics instead of waiting for the whole workspace scan.
+    for fp in &file_paths {
+        let Ok((language_id, relative)) =
+            crate::utils::lsp_agent_tools::resolve_language_and_path(project_path, fp)
+        else {
+            continue;
+        };
+        let Some(client) =
+            crate::utils::lsp_agent_tools::passive_lsp_client(app, project_path, &language_id)
+        else {
+            continue;
+        };
+        let Ok(uri) = crate::utils::lsp_agent_tools::file_path_to_uri(&project_root, &relative)
+        else {
+            continue;
+        };
+        let Ok(canonical) = crate::utils::file_tools::safe_path(project_path, &relative, true)
+        else {
+            continue;
+        };
+        if let Ok(text) = tokio::fs::read_to_string(&canonical).await {
+            let _ = client.sync_document(&uri, &language_id, &text).await;
+        }
+    }
+
+    // Diagnostics are published asynchronously after the server (re)analyzes a
+    // document — a query racing a freshly started server or a just-opened file
+    // would otherwise report "no problems" spuriously. Bounded retry: only when
+    // nothing has been published yet AND servers are running.
+    let mut output = build_diagnostics_output(&lsp_mgr, &project_root, &file_paths, severity);
+    if is_empty_diagnostic_output(&output) {
+        for _ in 0..3 {
+            tokio::time::sleep(std::time::Duration::from_millis(700)).await;
+            output = build_diagnostics_output(&lsp_mgr, &project_root, &file_paths, severity);
+            if !is_empty_diagnostic_output(&output) {
+                break;
+            }
+        }
+    }
 
     Ok(tool_ok(output))
+}
+
+/// Whether the formatted diagnostics output carries zero problems.
+fn is_empty_diagnostic_output(output: &str) -> bool {
+    output.starts_with("✅")
 }
 
 fn build_diagnostics_output(

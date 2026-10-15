@@ -7,6 +7,7 @@ import { Component, Show } from 'solid-js';
 import type { ModelMeta } from '@aio/models-data';
 import { formatContextWindow, formatReleaseDate } from '../../core/utils/models';
 import Icon from './Icon';
+import Switch from './Switch';
 import { t } from '../../core/i18n';
 
 const ModelRow: Component<{
@@ -117,31 +118,14 @@ const ModelRow: Component<{
           </div>
         </Show>
       </div>
-      <button
-        type="button"
-        class="relative inline-flex items-center h-[22px] w-[40px] rounded-full bg-white/[0.08] border border-white/[0.08] cursor-pointer shrink-0 focus:outline-none focus-visible:shadow-[0_0_0_3px_rgba(var(--primary-rgb),0.25)]"
-        style={{
-          transition:
-            'background 0.3s cubic-bezier(0.4, 0, 0.2, 1), border-color 0.3s ease, box-shadow 0.3s ease',
-          ...(props.enabled
-            ? {
-                background: 'rgba(var(--primary-rgb), 0.7)',
-                'border-color': 'rgba(var(--primary-rgb), 0.5)',
-                'box-shadow': '0 0 12px rgba(var(--primary-rgb), 0.35)',
-              }
-            : {}),
-        }}
-        onClick={(e) => {
-          e.stopPropagation();
-          props.onToggle();
-        }}
-        title={props.enabled ? t('common.disable') : t('common.enable')}
-      >
-        <span
-          class="inline-block h-4 w-4 rounded-full bg-white transition-transform duration-300 shadow-[0_2px_6px_rgba(0,0,0,0.4)]"
-          style={{ transform: props.enabled ? 'translateX(21px)' : 'translateX(3px)' }}
-        />
-      </button>
+      {/* 阶段4（设置样板收敛）: the glow switch is the shared component (was a hand-copied inline variant) */}
+      <Switch
+        variant="glow"
+        checked={props.enabled}
+        onChange={() => props.onToggle()}
+        stopPropagation
+        label={props.enabled ? t('common.disable') : t('common.enable')}
+      />
     </div>
   );
 };

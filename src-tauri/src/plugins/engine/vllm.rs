@@ -73,8 +73,13 @@ fn python_candidates() -> Vec<String> {
     let mut candidates: Vec<String> = Vec::new();
 
     // 1. PATH names
+    // SEC-06: bare names resolve through the PATH-only resolver — a bare
+    // "python3"/"python" spawn would consult the process cwd on Windows
+    // (CreateProcess search order), letting a planted interpreter win.
     for name in ["python3", "python"] {
-        candidates.push(name.to_string());
+        if let Some(p) = crate::utils::exec_resolve::resolve_executable(name) {
+            candidates.push(p.display().to_string());
+        }
     }
 
     // 2. VIRTUAL_ENV (user virtual env)
@@ -215,7 +220,10 @@ impl LocalEnginePlugin for VllmPlugin {
     }
 
     fn is_platform_supported(&self) -> bool {
-        cfg!(not(target_os = "windows"))
+        // ENG-15: vLLM ships official Windows wheels (0.8+); the is_installed probe
+        // (python scan for a vllm install + HTTP fallback) is the accurate gate, so
+        // the historic hard `not(windows)` block hid a working setup.
+        true
     }
 
     fn install_path(&self, app: &AppHandle) -> PathBuf {
@@ -259,12 +267,31 @@ impl LocalEnginePlugin for VllmPlugin {
 
     fn build_command(
         &self,
-        _exe_path: &Path,
-        _model_path: &str,
-        _port: u16,
+        exe_path: &Path,
+        model_path: &str,
+        port: u16,
         _gpu_layers: i32,
     ) -> std::process::Command {
-        std::process::Command::new("python")
+        // ENG-16: builds the REAL server argv — the historic stub returned a bare
+        // `Command::new(python)` that start() never executed (dead trait code while
+        // the actual argv lived inline in start); start() now consumes this method.
+        create_progress_cmd(
+            &exe_path.to_string_lossy(),
+            &[
+                "-m",
+                "vllm.entrypoints.openai.api_server",
+                "--model",
+                model_path,
+                "--port",
+                &port.to_string(),
+                "--host",
+                "127.0.0.1",
+                "--dtype",
+                "auto",
+                "--max-model-len",
+                "4096",
+            ],
+        )
     }
 
     fn start<'a>(
@@ -306,12 +333,10 @@ impl LocalEnginePlugin for VllmPlugin {
                     return Err(ierr!(
                         "未找到已安装 vllm 的 Python 解释器。\n\
                          请执行: pip install --user vllm\n\
-                         或: pip install vllm\n\n\
-                         注意：vLLM 仅支持 Linux/macOS，需要 CUDA 工具链支持。",
+                         或: pip install vllm",
                         "No Python interpreter with vllm installed.\n\
                          Run: pip install --user vllm\n\
-                         Or: pip install vllm\n\n\
-                         Note: vLLM supports Linux/macOS only and requires the CUDA toolchain."
+                         Or: pip install vllm"
                     ));
                 }
             };
@@ -320,23 +345,12 @@ impl LocalEnginePlugin for VllmPlugin {
 
             let _ = app.emit(self.progress_event_name(), 0.15);
 
-            let mut cmd = create_progress_cmd(
-                &python,
-                &[
-                    "-m",
-                    "vllm.entrypoints.openai.api_server",
-                    "--model",
-                    model_path,
-                    "--port",
-                    &port.to_string(),
-                    "--host",
-                    "127.0.0.1",
-                    "--dtype",
-                    "auto",
-                    "--max-model-len",
-                    "4096",
-                ],
-            );
+            // ENG-16: the argv is owned by build_command (single source — it was a
+            // dead stub while start() kept a diverging inline copy).
+            let mut cmd = self.build_command(Path::new(&python), model_path, port, gpu_layers);
+            // ENG-07: 服务进程 stdout piped 从无人读——64KB 管道填满后引擎静默
+            // 挂死；stderr 有人读保持 piped，stdout 改 null
+            cmd.stdout(std::process::Stdio::null());
             if trust_remote_code {
                 cmd.arg("--trust-remote-code");
             }
@@ -411,17 +425,44 @@ impl LocalEnginePlugin for VllmPlugin {
                 .unwrap_or_else(|_| reqwest::Client::new());
             let health_url = format!("http://127.0.0.1:{}/health", port);
 
-            match client.get(&health_url).send().await {
-                Ok(_) => {
-                    let _ = app.emit(self.progress_event_name(), 1.0);
-                }
-                Err(_) => {
+            // ENG-03: 轮询代替"固定等待 5s + 单发（15s 超时）"——vLLM 冷启动
+            // 普遍 30s~数分钟，20s 窗口几乎必败被误杀；健康判定要求 2xx
+            // （端口被占时旧服务的任意响应不再被当作健康）。
+            let deadline = std::time::Instant::now() + Duration::from_secs(180);
+            loop {
+                if std::time::Instant::now() > deadline {
+                    // ENG-06: kill 后 wait，避免 Unix 僵尸进程
                     let _ = child.kill();
+                    let _ = child.wait();
                     return Err(ierr!(
-                        "vLLM 服务未响应健康检查，可能启动失败。\n请检查：1) CUDA 工具链是否正确安装 2) 显存是否充足 3) 模型路径是否有效",
-                        "vLLM service did not respond to the health check, startup may have failed.\nPlease check: 1) the CUDA toolchain is correctly installed 2) VRAM is sufficient 3) the model path is valid"
+                        "vLLM 启动超时（180 秒内健康检查未通过）。\n请检查：1) CUDA 工具链是否正确安装 2) 显存是否充足 3) 模型路径是否有效",
+                        "vLLM startup timed out (health check did not pass within 180s).\nPlease check: 1) the CUDA toolchain is correctly installed 2) VRAM is sufficient 3) the model path is valid"
                     ));
                 }
+                match child.try_wait() {
+                    Ok(None) => {}
+                    Ok(Some(status)) => {
+                        return Err(ierr!(
+                            "vLLM 进程启动后立即退出，退出码: {}。\n常见原因：CUDA 不可用、模型路径错误、显存不足。",
+                            "vLLM process exited immediately after startup, exit code: {}.\nCommon causes: CUDA unavailable, wrong model path, or insufficient VRAM.",
+                            status
+                        ));
+                    }
+                    Err(e) => {
+                        return Err(ierr!(
+                            "无法检查进程状态: {}",
+                            "Failed to check process status: {}",
+                            e
+                        ))
+                    }
+                }
+                if let Ok(resp) = client.get(&health_url).send().await {
+                    if resp.status().is_success() {
+                        let _ = app.emit(self.progress_event_name(), 1.0);
+                        break;
+                    }
+                }
+                sleep(Duration::from_millis(1_000)).await;
             }
 
             state.lock().insert(
@@ -453,8 +494,23 @@ mod tests {
 
     #[test]
     fn find_python_prefers_path_name_when_working() {
-        let result = find_python_impl(|c| c == "python3");
-        assert_eq!(result, Ok("python3".to_string()));
+        // SEC-06: bare "python3"/"python" candidates are resolved through the
+        // PATH-only resolver before entering the list — the winning candidate
+        // is the absolute path of the first python3 on PATH (when one exists).
+        let result = find_python_impl(|c| c.ends_with("python3"));
+        match crate::utils::exec_resolve::resolve_executable("python3") {
+            Some(_) => {
+                let picked = result.expect("PATH 上存在 python3 时必须命中");
+                assert!(
+                    picked.ends_with("python3"),
+                    "命中项应为 PATH 上的 python3: {picked}"
+                );
+            }
+            None => assert!(
+                result.is_err(),
+                "PATH 无 python3 时不应伪造候选: {result:?}"
+            ),
+        }
     }
 
     #[test]
@@ -516,15 +572,27 @@ mod tests {
     #[test]
     fn python_candidates_starts_with_path_names() {
         let _guard = ENV_LOCK.lock().unwrap();
-        // Verify the first two entries of the candidate list are PATH names
+        // SEC-06: the PATH segment no longer holds bare names — each name is
+        // resolved to its absolute PATH hit first (a bare spawn would consult
+        // the process cwd on Windows). Resolution order (python3, python) is kept.
         let old_conda = std::env::var_os("CONDA_PREFIX");
         let old_venv = std::env::var_os("VIRTUAL_ENV");
         std::env::remove_var("CONDA_PREFIX");
         std::env::remove_var("VIRTUAL_ENV");
 
         let candidates = python_candidates();
-        assert_eq!(candidates[0], "python3", "第一个候选应为 python3");
-        assert_eq!(candidates[1], "python", "第二个候选应为 python");
+        let resolved: Vec<String> = ["python3", "python"]
+            .iter()
+            .filter_map(|n| crate::utils::exec_resolve::resolve_executable(n))
+            .map(|p| p.display().to_string())
+            .collect();
+        for (i, expect) in resolved.iter().enumerate() {
+            assert_eq!(
+                candidates.get(i),
+                Some(expect),
+                "PATH 段候选必须按解析序（python3 → python）排列"
+            );
+        }
 
         restore_env("CONDA_PREFIX", old_conda);
         restore_env("VIRTUAL_ENV", old_venv);

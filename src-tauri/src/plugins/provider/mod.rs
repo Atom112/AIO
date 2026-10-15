@@ -19,6 +19,7 @@ pub mod openai_compat;
 
 use crate::core::models::LiveModel;
 use crate::ierr;
+use std::sync::Arc;
 
 /// Builds a reqwest client with timeout and proxy (shared implementation for all four plugins).
 /// The user-agent carries the crate version, avoiding a hardcoded version drifting out of date across releases.
@@ -74,6 +75,26 @@ pub trait ProviderPlugin: Send + Sync {
     /// Attaches auth headers to the RequestBuilder
     fn apply_auth(&self, req: reqwest::RequestBuilder, api_key: &str) -> reqwest::RequestBuilder;
 
+    /// Auth for the CHAT completions path — 阶段4 第5项（聊天路径统一出口）.
+    ///
+    /// Distinct from [`apply_auth`] only where a provider runs two API surfaces:
+    /// Google's model-list fetch hits the native Gemini endpoint (x-goog-api-key)
+    /// while chat goes through the OpenAI-compat endpoint whose documented auth is
+    /// Bearer; Anthropic sends its native headers on both. Default = the
+    /// OpenAI-compat Bearer convention (empty key sends no header — local engines
+    /// need none); Anthropic and Ollama override.
+    fn apply_chat_auth(
+        &self,
+        req: reqwest::RequestBuilder,
+        api_key: &str,
+    ) -> reqwest::RequestBuilder {
+        if api_key.is_empty() {
+            req
+        } else {
+            req.bearer_auth(api_key)
+        }
+    }
+
     /// Parses the JSON response into the unified LiveModel list
     fn parse_models(&self, body: &serde_json::Value) -> Vec<LiveModel>;
 
@@ -90,7 +111,7 @@ pub trait ProviderPlugin: Send + Sync {
 
 /// Provider plugin manager: dispatches by host to the first matching plugin
 pub struct ProviderManager {
-    plugins: Vec<Box<dyn ProviderPlugin>>,
+    plugins: Vec<Arc<dyn ProviderPlugin>>,
 }
 
 impl ProviderManager {
@@ -99,42 +120,34 @@ impl ProviderManager {
             plugins: Vec::new(),
         };
         // Registration order matters: dedicated plugins first; openai_compat must stay last as the fallback
-        mgr.register(Box::new(google::GoogleProvider));
-        mgr.register(Box::new(anthropic::AnthropicProvider));
-        mgr.register(Box::new(ollama::OllamaProvider));
-        mgr.register(Box::new(openai_compat::OpenAICompatProvider));
+        mgr.register(Arc::new(google::GoogleProvider));
+        mgr.register(Arc::new(anthropic::AnthropicProvider));
+        mgr.register(Arc::new(ollama::OllamaProvider));
+        mgr.register(Arc::new(openai_compat::OpenAICompatProvider));
         mgr
     }
 
-    pub fn register(&mut self, plugin: Box<dyn ProviderPlugin>) {
+    pub fn register(&mut self, plugin: Arc<dyn ProviderPlugin>) {
         self.plugins.push(plugin);
     }
 
-    /// Finds the first plugin matching the api_url; returns the last one when nothing matches (openai_compat fallback)
-    pub fn for_url(&self, api_url: &str) -> &dyn ProviderPlugin {
+    /// Finds the first plugin matching the api_url; returns the last one when nothing matches (openai_compat fallback).
+    /// 阶段4 第5项: returns an OWNED Arc clone, so the plugin outlives the manager —
+    /// the historic `boxed_for_url` second registry (identifier → rebuild a Box, one
+    /// more list to touch per new plugin, and it silently mis-dispatched plugins that
+    /// were registered but not re-mapped) is gone: registering in [`ProviderManager::new`]
+    /// is now the single list.
+    pub fn for_url(&self, api_url: &str) -> Arc<dyn ProviderPlugin> {
         self.plugins
             .iter()
             .find(|p| p.matches(api_url))
-            .map(|p| p.as_ref())
+            .cloned()
             .unwrap_or_else(|| {
                 self.plugins
                     .last()
                     .expect("at least one provider plugin must be registered")
-                    .as_ref()
+                    .clone()
             })
-    }
-
-    /// Owned version of [`for_url`]: rebuilds a `Box<dyn ProviderPlugin>` by identifier.
-    /// Use when the plugin must outlive the manager's scope (e.g. the command layer's "test connection / fetch models");
-    /// when adding a new plugin, a branch must be registered here (the order test keeps the fallback last).
-    pub fn boxed_for_url(&self, api_url: &str) -> Box<dyn ProviderPlugin> {
-        let matched = self.for_url(api_url).identifier();
-        match matched {
-            "google" => Box::new(google::GoogleProvider),
-            "anthropic" => Box::new(anthropic::AnthropicProvider),
-            "ollama" => Box::new(ollama::OllamaProvider),
-            _ => Box::new(openai_compat::OpenAICompatProvider),
-        }
     }
 }
 
@@ -155,10 +168,138 @@ mod manager_tests {
             "openai_compat"
         );
     }
+
+    /// PROV-5 regression: look-alike hosts must NOT claim the native plugins —
+    /// the historic whole-string `contains` dispatch sent x-api-key (Anthropic)
+    /// and Bearer credentials to foreign hosts like `api.anthropic.com.evil.io`.
+    /// They must fall through to the openai_compat fallback (whose auth is
+    /// whatever the user configured for that URL, never a native header set).
+    #[test]
+    fn lookalike_hosts_do_not_claim_native_plugins() {
+        let mgr = ProviderManager::new();
+        assert_eq!(
+            mgr.for_url("https://api.anthropic.com.evil.io/v1")
+                .identifier(),
+            "openai_compat"
+        );
+        assert_eq!(
+            mgr.for_url("https://generativelanguage.googleapis.com.evil.io/v1beta")
+                .identifier(),
+            "openai_compat"
+        );
+        // The genuine hosts still dispatch to their native plugins.
+        assert_eq!(
+            mgr.for_url("https://api.anthropic.com/v1").identifier(),
+            "anthropic"
+        );
+        assert_eq!(
+            mgr.for_url("https://generativelanguage.googleapis.com/v1beta")
+                .identifier(),
+            "google"
+        );
+    }
+
+    /// 阶段4 第5项回归：新注册的插件经 for_url 即刻生效，返回的 Arc 超越管理器存活。
+    /// 旧 boxed_for_url 的 identifier→重建第二注册表对新插件一无所知——同一个 URL
+    /// 会静默重建出 openai_compat 兜底（错误分发），这是双注册表结构的固有缺陷。
+    struct TestProvider;
+    impl ProviderPlugin for TestProvider {
+        fn identifier(&self) -> &'static str {
+            "test_provider"
+        }
+        fn matches(&self, api_url: &str) -> bool {
+            api_url.contains("test.example.com")
+        }
+        fn models_url(&self, api_url: &str) -> String {
+            format!("{api_url}/models")
+        }
+        fn apply_auth(
+            &self,
+            req: reqwest::RequestBuilder,
+            _api_key: &str,
+        ) -> reqwest::RequestBuilder {
+            req
+        }
+        fn parse_models(&self, _body: &serde_json::Value) -> Vec<LiveModel> {
+            Vec::new()
+        }
+    }
+
+    #[test]
+    fn for_url_dispatches_newly_registered_plugin_without_a_second_registry() {
+        let mut mgr = ProviderManager::new();
+        mgr.register(Arc::new(TestProvider));
+        let plugin = mgr.for_url("https://test.example.com/v1");
+        assert_eq!(plugin.identifier(), "test_provider");
+        // The Arc clone outlives the manager (the reason boxed_for_url existed)
+        drop(mgr);
+        assert_eq!(plugin.identifier(), "test_provider");
+        assert_eq!(
+            plugin.chat_completions_url("https://test.example.com/v1"),
+            "https://test.example.com/v1/chat/completions"
+        );
+    }
 }
 
-/// Classifies a reqwest error into a user-friendly message (locale-aware)
+/// PROV-5: host-suffix match against the URL authority.
+/// The historic whole-string `contains` dispatch let look-alike hosts
+/// (`api.anthropic.com.evil.io`) claim the native plugin and receive its auth
+/// headers (x-api-key / Bearer) — credential leakage to a foreign host. The
+/// host must equal `host` or be a subdomain of it; a URL that cannot be parsed
+/// claims no dedicated plugin (falls through to openai_compat).
+pub fn url_host_matches(api_url: &str, host: &str) -> bool {
+    let parsed = if api_url.contains("://") {
+        url::Url::parse(api_url)
+    } else {
+        url::Url::parse(&format!("https://{api_url}"))
+    };
+    match parsed
+        .ok()
+        .and_then(|u| u.host_str().map(|h| h.to_lowercase()))
+    {
+        Some(h) => h == host || h.ends_with(&format!(".{host}")),
+        None => false,
+    }
+}
+
+/// Strips the query string and fragment from a URL (PROV-11): Gemini-style auth puts
+/// the API key in `?key=…`, and full URLs otherwise end up verbatim in toasts and
+/// logs when errors are echoed. Non-URL input is returned unchanged.
+pub fn redact_url(url: &str) -> String {
+    match url::Url::parse(url) {
+        Ok(parsed) => {
+            let mut out = format!(
+                "{}://{}",
+                parsed.scheme(),
+                parsed.host_str().unwrap_or("host")
+            );
+            if let Some(port) = parsed.port() {
+                out = format!("{out}:{port}");
+            }
+            out.push_str(parsed.path());
+            out
+        }
+        Err(_) => url.to_string(),
+    }
+}
+
+/// Replaces every URL embedded in free-form text (error bodies, reqwest Display
+/// strings) with its redacted form (PROV-11) — credentials in query strings never
+/// reach the UI or the logs.
+pub fn redact_urls_in(text: &str) -> String {
+    static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    let re = RE.get_or_init(|| {
+        regex::Regex::new(r#"https?://[^\s'"<>()\[\]]+"#).expect("固定 URL 正则必然编译成功")
+    });
+    re.replace_all(text, |caps: &regex::Captures| redact_url(&caps[0]))
+        .into_owned()
+}
+
+/// Classifies a reqwest error into a user-friendly message (locale-aware).
+/// PROV-11: `host` may actually be a full request URL (callers pass api_url), and
+/// reqwest's Display carries the complete URL — both are redacted before display.
 pub fn classify_reqwest_error(err: &reqwest::Error, host: &str) -> String {
+    let host = redact_url(host);
     if err.is_timeout() {
         ierr!(
             "请求超时 ({}): 请检查网络或代理设置",
@@ -172,9 +313,18 @@ pub fn classify_reqwest_error(err: &reqwest::Error, host: &str) -> String {
             host
         )
     } else if err.is_request() {
-        ierr!("请求错误 ({}): {}", "Request error ({}): {}", host, err)
+        ierr!(
+            "请求错误 ({}): {}",
+            "Request error ({}): {}",
+            host,
+            redact_urls_in(&err.to_string())
+        )
     } else {
-        ierr!("HTTP 客户端错误: {}", "HTTP client error: {}", err)
+        ierr!(
+            "HTTP 客户端错误: {}",
+            "HTTP client error: {}",
+            redact_urls_in(&err.to_string())
+        )
     }
 }
 
@@ -201,5 +351,36 @@ mod tests {
         assert_eq!(unix_to_ymd(946_684_800), Some("2000-01-01".to_string()));
         // 1970-01-01 00:00:00 UTC = 0
         assert_eq!(unix_to_ymd(0), Some("1970-01-01".to_string()));
+    }
+
+    /// PROV-11: URLs echoed in error text are redacted before display — the
+    /// query string (Gemini `?key=…`) never reaches toasts or logs.
+    #[test]
+    fn url_redaction_strips_credentials() {
+        assert_eq!(
+            redact_url(
+                "https://generativelanguage.googleapis.com/v1beta/models?key=AIzaSyVERYSECRET"
+            ),
+            "https://generativelanguage.googleapis.com/v1beta/models"
+        );
+        assert_eq!(
+            redact_url("http://localhost:8080/v1/chat"),
+            "http://localhost:8080/v1/chat"
+        );
+        // Non-URL input passes through unchanged
+        assert_eq!(redact_url("api.example.com"), "api.example.com");
+        // Embedded URLs inside free-form error text are redacted in place
+        let text =
+            "error sending request for url (https://x.example.com/v1?q=SECRET) after 3 tries";
+        assert_eq!(
+            redact_urls_in(text),
+            "error sending request for url (https://x.example.com/v1) after 3 tries"
+        );
+        assert!(
+            redact_urls_in(text).contains("error sending request"),
+            "重试逻辑依赖的错误子串必须保留"
+        );
+        // Text without URLs is untouched
+        assert_eq!(redact_urls_in("plain error"), "plain error");
     }
 }

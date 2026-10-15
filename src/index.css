@@ -31,6 +31,11 @@
   /* ── Warning color ── */
   --color-warn: #facc15;
 
+  /* ── Reasoning-intensity level accents (chat input slider) ── */
+  --color-reasoning-low: #6fd3a0;
+  --color-reasoning-medium: #e8b26a;
+  --color-reasoning-high: #b48ce8;
+
   /* ── Shadows ── */
   --shadow-theme-inner: inset 0 0 20px rgba(0, 0, 0, 0.3);
   --shadow-acrylic: 0 8px 32px rgba(0, 0, 0, 0.25);
@@ -100,8 +105,29 @@
   --acrylic-blur: 40px;
   --acrylic-radius: 12px;
 
-  /* ── Modal/panel background (grey to avoid a pure-black look in dark theme) ── */
-  --panel-bg: #3b3f4a;
+  /* ── Popup surfaces (dropdowns, menus, small popovers) ──
+     Light theme: more translucent so the acrylic backdrop reads through;
+     dark theme: more opaque for contrast against the near-black base. */
+  --popup-bg: rgba(var(--surface-bg), 0.62);
+  --popup-blur: blur(40px) saturate(160%);
+  /* ── Dialog surfaces (modals over a dim overlay) ──
+     The dialog is a plain translucent tint: the colorful glow comes from the
+     backdrop-filter blurring the REAL main-page background behind the dialog
+     (not a self-drawn copy), so dialogs of any height share the exact same look. */
+  --dialog-bg: rgba(var(--surface-bg), 0.55);
+
+  /* ── Subagent role palette (per-profile identity colors, used by SubagentConversationView) ── */
+  --role-explorer-rgb: 100, 149, 237;
+  --role-coder-rgb: 76, 175, 144;
+  --role-reviewer-rgb: 96, 205, 255;
+  --role-debugger-rgb: 255, 107, 107;
+  --role-writer-rgb: 64, 196, 180;
+  --role-tester-rgb: 139, 195, 74;
+  --role-requirements-rgb: 255, 183, 77;
+  --role-architect-rgb: 149, 117, 205;
+  --role-vision-rgb: 255, 105, 180;
+  --role-general-rgb: 186, 104, 200;
+  --role-default-rgb: 156, 163, 175;
 
   /* ── App background (light/default theme): same as VaporGit (four corner glows + #2f2f2f base) ── */
   --app-bg:
@@ -122,8 +148,8 @@
   --acrylic-bg: rgba(var(--surface-bg), 0.85);
   --acrylic-border: rgba(var(--border-rgb), 0.1);
 
-  /* Modal/panel background (dark theme: grey rather than pure black) */
-  --panel-bg: #2a2e38;
+  --popup-bg: rgba(var(--surface-bg), 0.82);
+  --dialog-bg: rgba(var(--surface-bg), 0.85);
 
   /* Same as VaporGit dark (faint four-corner glows + pure black base) */
   --app-bg:
@@ -131,6 +157,18 @@
     radial-gradient(circle at 80% 30%, rgba(236, 72, 153, 0.04) 0, transparent 500px),
     radial-gradient(circle at 60% 80%, rgba(56, 189, 248, 0.03) 0, transparent 500px),
     radial-gradient(circle at 10% 90%, rgba(255, 113, 200, 0.03) 0, transparent 500px), #000;
+}
+
+/* ── Graceful degradation: engines without backdrop-filter (old WebKitGTK) get
+   near-solid popup surfaces — a translucent panel with no blur would be unreadable ── */
+@supports not (backdrop-filter: blur(1px)) {
+  :root {
+    --popup-bg: rgba(var(--surface-bg), 0.95);
+    --popup-blur: none;
+  }
+  [data-theme='dark'] {
+    --popup-bg: rgba(var(--surface-bg), 0.97);
+  }
 }
 
 /* ══════════════════════════════════════════════
@@ -258,6 +296,16 @@
   }
 }
 
+@keyframes reasoning-twinkle {
+  0%,
+  100% {
+    opacity: 0.3;
+  }
+  50% {
+    opacity: 0.85;
+  }
+}
+
 @keyframes fade-in {
   0% {
     opacity: 0;
@@ -336,6 +384,47 @@
   }
 }
 
+/* ── Subagent work-state: a dot orbits the profile chip while running ── */
+@keyframes subagentOrbit {
+  from {
+    transform: rotate(0deg) translateX(9px) rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg) translateX(9px) rotate(-360deg);
+  }
+}
+
+@keyframes subagentPulse {
+  0%,
+  100% {
+    opacity: 1;
+    box-shadow: 0 0 0 0 rgba(var(--text-base-rgb), 0.18);
+  }
+  50% {
+    opacity: 0.75;
+    box-shadow: 0 0 0 3px rgba(var(--text-base-rgb), 0);
+  }
+}
+
+.subagent-work-orbit {
+  position: absolute;
+  inset: -3px;
+  border-radius: 50%;
+  pointer-events: none;
+}
+.subagent-work-orbit::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 3.5px;
+  height: 3.5px;
+  margin: -1.75px 0 0 -1.75px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: subagentOrbit 1.6s linear infinite;
+}
+
 /* ── Row entrance ── */
 @keyframes rowIn {
   from {
@@ -346,6 +435,23 @@
     opacity: 1;
     transform: translateY(0);
   }
+}
+
+/* Opacity-only entrance for sections mounted by user interaction (e.g. the usage
+   page's per-day model breakdown): rowIn's translateY(6px) transiently extends the
+   parent's scrollable overflow (transforms count toward it), flashing a scrollbar
+   when the content sits within 6px of the container edge. */
+@keyframes fadeOnly {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.animate-fade-only {
+  animation: fadeOnly 0.25s ease-out backwards;
 }
 
 /* ── Thinking icon ── */
@@ -711,6 +817,17 @@ body {
   --vscode-ctp-blue: #89b4fa;
   --vscode-ctp-lavender: #b4befe;
   --vscode-ctp-text: #cdd6f4;
+}
+
+/* ── Dropdown menu surface (shared Dropdown component) ──
+   The panel is intentionally MORE opaque than a plain --popup-bg wash: blur alone
+   over text right underneath reads as "no blur" (achromatic content blurs into a
+   barely-changed wash), so the panel carries enough tint to visually separate. */
+.dropdown-menu {
+  background: var(--popup-bg);
+  backdrop-filter: var(--popup-blur);
+  border: 1px solid var(--border-dim);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
 }
 
 /* ── Theme-aware text colors (use in place of text-white/XX) ── */

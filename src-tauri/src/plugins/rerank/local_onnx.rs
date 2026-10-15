@@ -106,14 +106,17 @@ impl LocalReranker {
         Self { model_id: id }
     }
 
-    fn model(&self) -> Result<Arc<TextRerank>, String> {
+    /// Loads (or fetches from the in-process cache) the model for `model_id`.
+    /// PROV-9: reads + graph-builds a multi-hundred-MB ONNX — callers must run this
+    /// on the blocking pool, never on an async worker thread.
+    fn load_cached(model_id: &str) -> Result<Arc<TextRerank>, String> {
         if let Ok(map) = model_cache().lock() {
-            if let Some(m) = map.get(&self.model_id) {
+            if let Some(m) = map.get(model_id) {
                 return Ok(m.clone());
             }
         }
-        let dir = model_dir(&self.model_id)?;
-        let onnx_rel = onnx_rel_path(&self.model_id)?;
+        let dir = model_dir(model_id)?;
+        let onnx_rel = onnx_rel_path(model_id)?;
         let onnx = dir.join(onnx_rel);
         if !onnx.exists() {
             return Err(ierr!(
@@ -152,7 +155,7 @@ impl LocalReranker {
             })?,
         );
         if let Ok(mut map) = model_cache().lock() {
-            map.insert(self.model_id.clone(), m.clone());
+            map.insert(model_id.to_string(), m.clone());
         }
         Ok(m)
     }
@@ -176,13 +179,23 @@ impl Reranker for LocalReranker {
         if docs.is_empty() {
             return Ok(Vec::new());
         }
-        let m = self.model()?;
+        // PROV-9: the model load runs on the blocking pool
+        let model_id = self.model_id.clone();
+        let m = tokio::task::spawn_blocking(move || Self::load_cached(&model_id))
+            .await
+            .map_err(|e| e.to_string())??;
         let texts: Vec<String> = docs.iter().map(|(_, t)| t.clone()).collect();
         let query = query.to_string();
-        let result = tokio::task::spawn_blocking(move || m.rerank(query, texts, false, Some(16)))
-            .await
-            .map_err(|e| e.to_string())?
-            .map_err(|e| e.to_string())?;
+        // PROV-10: rerank the WHOLE candidate set (capped). The historic fixed
+        // top_k=16 left every candidate beyond the 16th carrying its raw RRF score
+        // (~0.01) next to cross-encoder scores (~0.0-1.0) — a mixed-metric ordering
+        // where unrered docs randomly interleaved below/above reranked ones.
+        let top_k = docs.len().min(50);
+        let result =
+            tokio::task::spawn_blocking(move || m.rerank(query, texts, false, Some(top_k)))
+                .await
+                .map_err(|e| e.to_string())?
+                .map_err(|e| e.to_string())?;
         // RerankResult.index is the document index; map back to (id, score) and sort descending
         let mut out: Vec<(String, f32)> = Vec::with_capacity(result.len());
         for r in result {

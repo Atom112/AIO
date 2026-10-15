@@ -21,9 +21,9 @@ The `ProjectSettingsModal` supports changing the project name, binding a preferr
 The chat input area provides the following controls:
 
 - **Model**: Select a remote or local model for the current assistant.
-- **Reasoning Intensity**: Off, Low, Medium, High. AIO injects corresponding prompts, and when the Provider returns native `reasoning_content`, it is displayed separately.
+- **Reasoning Intensity**: Off, Low, Medium, High (slider control). For models that accept a native reasoning parameter (detected via the model catalog's reasoning capability flag), the level is sent as a real request parameter — `reasoning_effort` on OpenAI-compatible endpoints, a converted `thinking` budget on Anthropic endpoints; unsupported models fall back to injected prompts. When the Provider returns native `reasoning_content`, it is displayed separately.
 - **Web Search**: Allows the Agent to use `web_search` and `web_fetch`. Normal chat only receives a web search prompt and does not automatically get project tools.
-- **Agent Mode**: Switch between Chat, Normal, Auto, Plan, and Workflow.
+- **Agent Mode**: Switch between Read-only, Workspace edit, Full permission, and Plan.
 
 `Ctrl+Shift+R` cycles through reasoning intensity levels, `Ctrl+Shift+S` toggles web search, and `Esc` stops the current generation. Settings are persisted in the local WebView.
 
@@ -43,7 +43,8 @@ Components are located in `src/features/chat/components/` (`SessionStats.tsx`, `
 - **Delete**: Deleting a single message also updates the corresponding record in SQLite.
 - **Branch**: Create a new topic from a specific message; the original topic remains unchanged.
 - **Auto-title**: A title is generated after the first round of replies completes; if the request fails, a locally truncated version of the first user message is used as the fallback title.
-- **Stop**: Terminates the current stream and Agent loop. Already produced text, steps, and file changes are retained.
+- **Stop**: Terminates the current stream and Agent loop. Already produced text, steps, and file changes are retained. Stopping is two-phase: a cooperative cancel signal first (a running command is killed together with its whole process tree), then a force-terminate if the task has not responded within about 2 seconds — the stop path then performs the terminal bookkeeping itself, so stop always works, with no app restart needed.
+- **Disconnects and recovery**: a stream with no data for 120 seconds is declared broken and errors out; a checkpoint is written at the end of every tool round, so after a crash or unexpected exit the turn can resume from the latest round; after an interface refresh (e.g. a WebView reload), a startup reconciliation re-discovers turns still running in the backend, keeping the stop button and thinking state functional. The in-flight assistant message is persisted incrementally as each tool result lands — even if the app dies mid-turn, finished steps and generated text stay in the transcript; on cold start, leftover "calling/running" states are marked interrupted and empty placeholders are dropped. When a turn is resumed from a checkpoint, the text generated before the crash is merged with the post-resume text into the same message.
 
 ### Sidebar Collapse
 
@@ -54,26 +55,25 @@ Both sidebars support collapsing to expand the message area:
 
 ## Agent Modes
 
-| Mode     | Reading and Analysis                                                      | Write File / Git Changes                                              | Shell and Other Tools                                                                 |
-| -------- | ------------------------------------------------------------------------- | --------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
-| Chat     | No Agent tools available                                                  | Denied                                                                | Denied                                                                                |
-| Normal   | File search, reading, Git status, etc. allowed by default                 | Writing, deletion, `git add`, `git commit`, etc. require confirmation | Tools not explicitly allowed require confirmation                                     |
-| Auto     | Regular read/write, Git changes, and command execution allowed by default | File deletions still require confirmation                             | Still constrained by path sandbox, dangerous command detection, and custom deny rules |
-| Plan     | Read, search, Git status/Diff/Log allowed                                 | Writing, directory creation, deletion, and Git changes denied         | Web tools denied; other MCP tools evaluated per rules                                 |
-| Workflow | Reads and executes by split steps                                         | Regular writes execute automatically, deletions require confirmation  | Suitable for well-defined multi-step tasks with automated verification                |
+| Mode               | Reading and Analysis                         | Write File / Git Changes                                            | Shell and Other Tools                                       |
+| ------------------ | -------------------------------------------- | ------------------------------------------------------------------- | ----------------------------------------------------------- |
+| Read-only          | File reads, search, Git history, web queries | Denied                                                              | Denied; without a project selected this is pure chat        |
+| Workspace edit     | Allowed by default                           | Writes, edits, directory creation run directly; deletions still ask | Commands, `git add`/`git commit`, etc. require confirmation |
+| Full permission    | Allowed by default                           | Allowed by default                                                  | Commands run directly; sandbox denials auto-expand          |
+| Machine full trust | Allowed by default                           | Allowed by default                                                  | Commands run OUTSIDE the sandbox with full user privileges  |
+| Plan               | Read, search, Git status/Diff/Log allowed    | Writing, directory creation, deletion, and Git changes denied       | Web tools allowed; other MCP tools evaluated per rules      |
 
-### Workflow Mode
+### Full-Permission Mode
 
-Workflow mode splits a task into independent steps and executes them serially or in parallel. The interface shows a horizontal pipeline diagram (`WorkflowVisualization` component) displaying step names, status icons (pending -> running -> completed -> failed), and elapsed time. Suitable for well-defined multi-step tasks with automated acceptance criteria.
-
-#### Differences from Plan Mode
-
-- **Plan Mode**: Researches and outputs a plan but does not execute it.
-- **Workflow Mode**: Automatically splits steps and executes them; regular writes execute automatically, deletions require confirmation.
-
-Auto and Workflow modes significantly reduce interactive confirmation but are not a bypass for security boundaries. `deny` rules in `.aio/permissions.json` take precedence over `allow` rules, and file paths remain constrained to the project root directory.
+Entering full-permission mode first shows a risk confirmation: in this mode commands (including network-declaring ones) no longer ask per command, and sandbox denials auto-remediate under a narrowed policy without the ask-once throttling — "interpreter/toolchain invisible" denials grant the session first, and a grant that lands and succeeds is remembered permanently; **access-denied denials (write targets, `.git` protection) never leave the sandbox**; the sole exception is a NOT-FOUND denial whose grant failed to land, which retries once outside the sandbox only with `sandboxUnsandboxedFallback` explicitly enabled (default off) and is annotated in the result. The whole flow runs unattended. `.git` stays read-only inside the sandbox (`sandboxProtectGit`; Git writes go through the builtin `git_*` tools), and tools from untrusted MCP servers still ask per call (project servers are trusted via the project-open confirmation — trusted ones no longer prompt; mark global servers trusted in MCP settings; or click "Always allow" in the approval bubble to write the tool rule into the project's `.aio/permissions.json` — no more prompts, restarts included). `deny` and custom `ask` rules in `.aio/permissions.json` still take precedence, and file paths remain constrained to the project root directory.
 
 ![Agent File Diff and Approval](../../assets/screenshots/agent-diff-approval.webp)
+
+### Machine-Full-Trust Mode
+
+One tier above full permission: the same full autonomy, plus commands **entirely outside the OS sandbox**, running natively with full user privileges — no path restrictions, no network restrictions, no `.git` protection; the global sandbox configuration (`sandboxWindows`/`sandboxProtectGit`, etc.) does not apply in this tier. It exists for scenarios where the boundary is carried by the environment itself: disposable test machines, containers, VMs (the counterpart of Codex's `--dangerously-bypass-approvals-and-sandbox` / DSH's danger-full-access).
+
+Entering shows a **dedicated red risk warning** (confirmed once per session) stating that commands take effect on the entire machine. Do not use this tier on a daily development machine — full-permission mode already covers zero-confirmation needs with the sandbox carrying the boundary; machine-full-trust removes the app-layer fence, and only makes sense when the outer environment is disposable.
 
 ## Agent Built-in Tools
 
@@ -82,7 +82,8 @@ Agent mode provides several built-in tools. In addition to file, Git, and search
 ### execute_command
 
 - **Purpose**: Execute system commands in the project directory, returning stdout, stderr, and the exit code.
-- **Permission Model**: Requires approval in `Normal` mode, auto-allowed in `Auto`/`Workflow` mode, denied in `Chat`/`Plan` mode.
+- **Shell**: Windows defaults to **PowerShell** (pwsh 7, falling back to `powershell.exe` 5.1), switchable to `cmd` via the `shellWindows` config; the exit code propagates via `exit $LASTEXITCODE` and the command text travels via `-EncodedCommand` (base64) to avoid quote-escaping issues; Linux/macOS use `sh`.
+- **Permission Model**: Requires approval in `Workspace edit` mode, auto-allowed in `Full permission`/`Machine full trust` mode, denied in `Read-only`/`Plan` mode.
 - **Security**: Child processes are isolated via a Windows Job Object sandbox (`src-tauri/src/utils/sandbox.rs`); dangerous command detection (`shell_tools::check_dangerous_command`) catches destructive, installation, and network operations.
 - **Dangerous Command Categories**:
   - Destructive: `rm`/`del`/`format`;
@@ -95,6 +96,8 @@ Agent mode provides several built-in tools. In addition to file, Git, and search
 ## Agent Process and File Changes
 
 Agent replies display steps including reasoning, tool calls, sub-agents, and elapsed time. Steps, tool results, and final text are written to the message record and persist after app restart; overly long results are truncated in the UI to avoid bloating the message area.
+
+The "Background Tasks" pull-up menu on the right of the Agent status bar (left of the sub-agent menu) tracks the app's own background async jobs live: automatic memory extraction and consolidation (fired asynchronously after each turn, scheduled daily in the background), index rebuilds, code indexing, embedding / local GGUF model downloads, and commands still running after 5 seconds (builds, tests and other shell scripts the app is waiting on, including ones launched by sub-agents — they show the command text and elapsed time, and stop together with their turn, so no separate control is needed). Each entry shows the kind, the owning project / model / command text, and a progress bar or elapsed time — download progress stays visible after leaving the settings page, and entries vanish automatically once their job settles. The jobs themselves are still controlled from their own surfaces (the project memory panel and the model settings pages).
 
 Before file tool execution, a unified Diff can be shown in the approval bubble. After execution, a summary below the reply shows added/deleted lines per file and allows expanding the Diff.
 

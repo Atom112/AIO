@@ -135,7 +135,7 @@ const ProjectSidebar: Component<ProjectSidebarProps> = (props) => {
         setCurrentTopicId(asst.topics[0].id);
       }
     } catch (e) {
-      console.error('切换项目失败:', e);
+      console.error('Failed to switch project:', e);
     }
   };
 

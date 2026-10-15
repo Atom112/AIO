@@ -3,7 +3,7 @@ import {
   addMcpServer,
   checkMcpCatalogRuntime,
   installMcpCatalogServer,
-  listMcpCatalog,
+  listMcpCatalogAll,
   listMcpServers,
   removeMcpServer,
   stopMcpServer,
@@ -20,6 +20,9 @@ import {
   setMcpServerStatus,
   startMcpServerAndRefresh,
   currentProjectId,
+  currentProject,
+  dismissProjectMcpServer,
+  refreshMcpToolsCache,
 } from '../../../core/store/store';
 import type {
   McpCatalogDelivery,
@@ -29,17 +32,19 @@ import type {
 } from '../../../core/types/mcp';
 import { statusColor, statusLabel, transportLabel } from '../../../core/utils/mcp';
 import Icon from '../../../shared/components/Icon';
+import Dropdown from '../../../shared/components/Dropdown';
 import {
-  btnBadge,
   btnBadgeBar,
-  btnDanger,
+  btnDangerOutline,
+  btnPrimaryOutlineSm,
   btnSecondary,
   btnSecondarySm,
-  btnSuccess,
+  btnSuccessOutline,
   btnTabXs,
   tabActive,
 } from '../../../shared/components/buttonStyles';
 import McpServerDetail from './McpServerDetail';
+import { createJsonCache } from '../../../core/utils/cache';
 import { formatNumber, reportError, t } from '../../../core/i18n';
 
 type ViewMode = 'market' | 'downloaded';
@@ -58,33 +63,23 @@ interface McpCatalogCache {
   nextCursor?: string;
 }
 
-const readCatalogCache = (): McpCatalogCache | null => {
-  try {
-    const raw = localStorage.getItem(CATALOG_CACHE_KEY);
-    if (!raw) return null;
-    const cache = JSON.parse(raw) as McpCatalogCache;
-    if (!cache.updatedAt || !Array.isArray(cache.servers)) return null;
-    return cache;
-  } catch {
-    return null;
-  }
-};
-
-const writeCatalogCache = (cache: McpCatalogCache) => {
-  try {
-    localStorage.setItem(CATALOG_CACHE_KEY, JSON.stringify(cache));
-  } catch {
-    // Cache write failure must not block catalog browsing.
-  }
-};
+// 阶段4（设置样板收敛）: localStorage JSON cache via the shared factory
+// (core/utils/cache) — read is parse-memoized, write swallows quota errors.
+const catalogCache = createJsonCache<McpCatalogCache>(CATALOG_CACHE_KEY, (raw) => {
+  if (!raw || typeof raw !== 'object') return null;
+  const cache = raw as Partial<McpCatalogCache>;
+  if (!cache.updatedAt || !Array.isArray(cache.servers)) return null;
+  return cache as McpCatalogCache;
+});
 
 const McpServerList: Component = () => {
   const [view, setView] = createSignal<ViewMode>('market');
   const [catalog, setCatalog] = createSignal<McpCatalogServer[]>([]);
-  const [nextCursor, setNextCursor] = createSignal<string | undefined>();
+  // Client-side display window over the full table (search filters the whole
+  // table instantly; the window only caps how many cards render at once)
+  const [visibleCount, setVisibleCount] = createSignal(30);
   const [query, setQuery] = createSignal('');
   const [loading, setLoading] = createSignal(false);
-  const [loadingMore, setLoadingMore] = createSignal(false);
   const [refreshing, setRefreshing] = createSignal(false);
   const [editingConfig, setEditingConfig] = createSignal<McpServerConfig | null>(null);
   const [installing, setInstalling] = createSignal<McpCatalogServer | null>(null);
@@ -92,44 +87,44 @@ const McpServerList: Component = () => {
   const [installValues, setInstallValues] = createSignal<Record<string, string>>({});
   const [runtimeAvailable, setRuntimeAvailable] = createSignal(true);
   const [installingId, setInstallingId] = createSignal<string | null>(null);
+  const [installScope, setInstallScope] = createSignal<'global' | 'project'>('global');
   const [error, setError] = createSignal<string | null>(null);
+  // Ids living in the global config file — a merged-list id missing here is project-scoped
+  const [globalIds, setGlobalIds] = createSignal<ReadonlySet<string>>(new Set());
 
   const loadLocal = async () => {
-    const list = await listMcpServers(currentProjectId());
+    const pid = currentProjectId();
+    const [list, globalList] = await Promise.all([
+      listMcpServers(pid),
+      pid ? listMcpServers(null) : Promise.resolve(null),
+    ]);
     setMcpServers(Object.fromEntries(list.map((server) => [server.id, server])));
+    setGlobalIds(new Set((globalList ?? list).map((server) => server.id)));
   };
 
-  const loadCatalog = async (forceRefresh = false, cursor?: string) => {
+  const isProjectScoped = (id: string) => !!currentProjectId() && !globalIds().has(id);
+
+  // The market now works on the FULL registry table (backend downloads every
+  // page once and disk-caches it 6h): typing filters locally with zero network
+  // round-trips; the refresh button is the only path that re-downloads.
+  const loadCatalog = async (forceRefresh = false) => {
     // Only show the blocking spinner when there is nothing to render yet;
     // with cached data the refresh happens silently in the background.
-    const isBackground = !!cursor || catalog().length > 0;
-    if (cursor) setLoadingMore(true);
-    else if (!isBackground) setLoading(true);
+    if (catalog().length === 0) setLoading(true);
     setError(null);
     try {
-      const page = await listMcpCatalog({
-        search: query().trim(),
-        cursor: cursor ?? null,
-        limit: 30,
-        forceRefresh,
+      const all = await listMcpCatalogAll(forceRefresh);
+      setCatalog(all);
+      // Persist a small head slice for the instant-render-on-mount path
+      // (the full table can exceed the localStorage budget).
+      catalogCache.write({
+        updatedAt: Date.now(),
+        servers: all.slice(0, 30),
       });
-      setCatalog(cursor ? [...catalog(), ...page.servers] : page.servers);
-      setNextCursor(page.nextCursor);
-      // Persist the default first page (no search, no pagination) for the
-      // instant-render-on-mount path; searched/paginated views rely on the
-      // backend cache alone.
-      if (!cursor && !query().trim()) {
-        writeCatalogCache({
-          updatedAt: Date.now(),
-          servers: page.servers,
-          nextCursor: page.nextCursor,
-        });
-      }
     } catch (e) {
       setError(reportError('error.load', e));
     } finally {
       setLoading(false);
-      setLoadingMore(false);
     }
   };
 
@@ -137,11 +132,10 @@ const McpServerList: Component = () => {
     try {
       // Render the persisted snapshot synchronously: the market opens with
       // content immediately; a fresh cache skips the network entirely.
-      const cache = readCatalogCache();
-      const cacheIsFresh = !!cache && Date.now() - cache.updatedAt < CATALOG_CACHE_TTL_MS;
+      const cache = catalogCache.read();
+      const cacheIsFresh = !!cache && catalogCache.isFresh(cache.updatedAt, CATALOG_CACHE_TTL_MS);
       if (cache) {
         setCatalog(cache.servers);
-        setNextCursor(cache.nextCursor);
       }
       await Promise.all([loadLocal(), cacheIsFresh ? Promise.resolve() : loadCatalog()]);
     } catch (e) {
@@ -172,16 +166,28 @@ const McpServerList: Component = () => {
     );
   });
 
+  // Real-time local filter over the full registry table (no network per keystroke)
+  const filteredCatalog = createMemo(() => {
+    const keyword = query().trim().toLowerCase();
+    if (!keyword) return catalog();
+    return catalog().filter((server) =>
+      `${server.displayName} ${server.name} ${server.description}`.toLowerCase().includes(keyword),
+    );
+  });
+  const visibleCatalog = createMemo(() => filteredCatalog().slice(0, visibleCount()));
+  const hasMoreCatalog = createMemo(() => filteredCatalog().length > visibleCount());
+
+  const onQueryInput = (value: string) => {
+    setQuery(value);
+    setVisibleCount(30);
+  };
+
   const resultCount = createMemo(() =>
-    view() === 'market' ? catalog().length : filteredLocal().length,
+    view() === 'market' ? filteredCatalog().length : filteredLocal().length,
   );
   const selectedDelivery = createMemo(() =>
     installing()?.deliveries.find((delivery) => delivery.id === selectedDeliveryId()),
   );
-
-  const search = () => {
-    if (view() === 'market') void loadCatalog();
-  };
 
   const refresh = async () => {
     setRefreshing(true);
@@ -216,6 +222,10 @@ const McpServerList: Component = () => {
       const next = { ...mcpServers() };
       delete next[id];
       setMcpServers(next);
+      // A pending trust confirmation must not outlive the deleted server
+      dismissProjectMcpServer(id);
+      // Drop the deleted server's tools from the display cache immediately
+      void refreshMcpToolsCache();
       const affected = datas.assistants
         .filter((a) => a.mcpServerIds?.includes(id))
         .map((a) => a.id);
@@ -295,6 +305,7 @@ const McpServerList: Component = () => {
         deliveryId: delivery.id,
         values,
         secrets,
+        projectId: installScope() === 'project' ? currentProjectId() : null,
       };
       const config = await installMcpCatalogServer(request);
       setMcpServers({ ...mcpServers(), [config.id]: config });
@@ -355,14 +366,13 @@ const McpServerList: Component = () => {
             <input
               class="w-[280px] max-w-full bg-black/25 border border-white/[0.08] rounded-lg text-white transition-[border-color,background,box-shadow] duration-200 placeholder:text-white/30 hover:border-white/[0.14] focus:outline-none pl-8 pr-3 py-2 text-sm"
               value={query()}
-              onInput={(event) => setQuery(event.currentTarget.value)}
-              onKeyDown={(event) => event.key === 'Enter' && search()}
+              onInput={(event) => onQueryInput(event.currentTarget.value)}
               placeholder={t('mcp.search')}
             />
           </div>
           <span class="text-xs self-center" style={{ color: 'rgba(var(--text-base-rgb),0.4)' }}>
             {t('mcp.results', {
-              count: `${formatNumber(resultCount())}${nextCursor() ? '+' : ''}`,
+              count: formatNumber(resultCount()),
             })}
           </span>
           <Show when={view() === 'market'}>
@@ -406,7 +416,7 @@ const McpServerList: Component = () => {
         <Show when={!loading() && view() === 'market'}>
           <div class="grid grid-cols-1 lg:grid-cols-2 gap-3">
             <For
-              each={catalog()}
+              each={visibleCatalog()}
               fallback={
                 <div
                   class="col-span-full py-12 text-center text-sm"
@@ -468,10 +478,10 @@ const McpServerList: Component = () => {
                         disabled={!server.repositoryUrl && !server.websiteUrl}
                         onClick={() => void openSafeUrl(server.repositoryUrl || server.websiteUrl)}
                       >
-                        Official MCP Registry
+                        {t('mcp.detail.officialRegistry')}
                       </button>
                       <button
-                        class={installed() ? btnSuccess : btnSecondarySm}
+                        class={installed() ? btnSuccessOutline : btnSecondarySm}
                         disabled={installed() || installingId() === server.id}
                         onClick={() => openInstall(server)}
                       >
@@ -487,14 +497,10 @@ const McpServerList: Component = () => {
               }}
             </For>
           </div>
-          <Show when={nextCursor()}>
+          <Show when={hasMoreCatalog()}>
             <div class="flex justify-center py-5">
-              <button
-                class={btnSecondary}
-                disabled={loadingMore()}
-                onClick={() => void loadCatalog(false, nextCursor())}
-              >
-                {loadingMore() ? t('common.loading') : t('mcp.loadMore')}
+              <button class={btnSecondary} onClick={() => setVisibleCount((c) => c + 30)}>
+                {t('mcp.loadMore')}
               </button>
             </div>
           </Show>
@@ -540,6 +546,17 @@ const McpServerList: Component = () => {
                             Registry
                           </span>
                         </Show>
+                        <Show when={isProjectScoped(config.id)}>
+                          <span
+                            class="text-[10px] px-1.5 py-0.5 rounded"
+                            style={{
+                              background: 'rgba(var(--text-base-rgb),0.07)',
+                              color: 'rgba(var(--text-base-rgb),0.55)',
+                            }}
+                          >
+                            {t('mcp.scopeBadgeProject')}
+                          </span>
+                        </Show>
                       </div>
                       <div
                         class="text-xs truncate mt-1"
@@ -553,19 +570,25 @@ const McpServerList: Component = () => {
                     </div>
                     <div class="flex items-center gap-2 ml-3">
                       <Show when={status() !== 'connected' && status() !== 'connecting'}>
-                        <button class={btnSuccess} onClick={() => void handleStart(config.id)}>
+                        <button
+                          class={btnSuccessOutline}
+                          onClick={() => void handleStart(config.id)}
+                        >
                           {t('mcp.start')}
                         </button>
                       </Show>
                       <Show when={status() === 'connected'}>
-                        <button class={btnDanger} onClick={() => void handleStop(config.id)}>
+                        <button class={btnDangerOutline} onClick={() => void handleStop(config.id)}>
                           {t('mcp.stop')}
                         </button>
                       </Show>
-                      <button class={btnBadge} onClick={() => setEditingConfig({ ...config })}>
+                      <button
+                        class={btnSecondarySm}
+                        onClick={() => setEditingConfig({ ...config })}
+                      >
                         {t('common.edit')}
                       </button>
-                      <button class={btnDanger} onClick={() => void handleRemove(config.id)}>
+                      <button class={btnDangerOutline} onClick={() => void handleRemove(config.id)}>
                         {t('common.delete')}
                       </button>
                     </div>
@@ -579,14 +602,14 @@ const McpServerList: Component = () => {
 
       <Show when={installing()}>
         <div
-          class="fixed inset-0 z-50 flex items-center justify-center p-6"
-          style={{ background: 'rgba(0,0,0,0.6)', 'backdrop-filter': 'blur(8px)' }}
+          class="fixed inset-0 z-50 flex items-center justify-center p-6 bg-black/25"
           onClick={(event) => event.target === event.currentTarget && setInstalling(null)}
         >
           <div
             class="w-[620px] max-w-full max-h-[90vh] overflow-y-auto rounded-xl p-6 flex flex-col gap-4"
             style={{
-              background: 'rgba(var(--surface-bg),0.98)',
+              background: 'var(--dialog-bg)',
+              'backdrop-filter': 'var(--popup-blur)',
               border: '1px solid var(--border-dim)',
             }}
           >
@@ -600,25 +623,40 @@ const McpServerList: Component = () => {
             </div>
             <label class="flex flex-col gap-1 text-xs">
               {t('mcp.installMethod')}
-              <select
-                class="px-3 py-2 rounded text-sm"
-                style={{
-                  background: 'rgba(var(--surface-alt-bg),0.95)',
-                  border: '1px solid var(--border-dim)',
-                }}
+              <Dropdown
+                variant="ghost"
+                class="w-full"
                 value={selectedDeliveryId()}
-                onChange={(event) => {
-                  const delivery = installing()!.deliveries.find(
-                    (item) => item.id === event.currentTarget.value,
-                  );
+                onChange={(id) => {
+                  const delivery = installing()!.deliveries.find((item) => item.id === id);
                   if (delivery) void chooseDelivery(delivery);
                 }}
-              >
-                <For each={installing()!.deliveries}>
-                  {(delivery) => <option value={delivery.id}>{delivery.label}</option>}
-                </For>
-              </select>
+                options={installing()!.deliveries.map((delivery) => ({
+                  value: delivery.id,
+                  label: delivery.label,
+                }))}
+              />
             </label>
+            {/* Install scope (mirrors the skills market): global is the default so a
+                catalog install never silently writes into the repo's .aio/ */}
+            <Show when={currentProjectId()}>
+              <label class="flex flex-col gap-1 text-xs">
+                {t('mcp.installScope')}
+                <Dropdown
+                  variant="ghost"
+                  class="w-full"
+                  value={installScope()}
+                  onChange={(v) => setInstallScope(v === 'project' ? 'project' : 'global')}
+                  options={[
+                    { value: 'global', label: t('mcp.scopeGlobal') },
+                    {
+                      value: 'project',
+                      label: t('mcp.scopeProject', { name: currentProject()?.name ?? '' }),
+                    },
+                  ]}
+                />
+              </label>
+            </Show>
             <Show when={selectedDelivery()?.kind !== 'http' && !runtimeAvailable()}>
               <div
                 class="px-3 py-2 rounded text-xs"
@@ -647,7 +685,7 @@ const McpServerList: Component = () => {
                     </span>
                     <input
                       type={input.secret ? 'password' : 'text'}
-                      class="px-3 py-2 rounded text-sm outline-none"
+                      class="px-3 py-2 rounded-lg text-sm outline-none"
                       style={{
                         background: 'rgba(0,0,0,0.3)',
                         border: '1px solid var(--border-dim)',
@@ -670,7 +708,7 @@ const McpServerList: Component = () => {
                 {t('common.cancel')}
               </button>
               <button
-                class={btnSecondarySm}
+                class={btnPrimaryOutlineSm}
                 disabled={installingId() !== null || !runtimeAvailable()}
                 onClick={() => void install()}
               >

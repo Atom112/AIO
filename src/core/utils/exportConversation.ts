@@ -220,22 +220,28 @@ function escapeHtml(s: string): string {
 /**
  * Convert Markdown text to simple HTML (only common inline styles + code blocks + lists; no full markdown parser).
  * Used for print-friendly HTML generation.
+ *
+ * CHAT-1: the whole input is escaped BEFORE markup replacement — the historic
+ * implementation only escaped the captured code/bold fragments, so plain
+ * paragraph text passed through raw into the sandboxless srcdoc iframe
+ * (form-action / meta-refresh navigation is not constrained by the page CSP,
+ * enabling in-app phishing / session-content exfiltration links).
  */
 function mdToHtml(md: string): string {
-  let html = md;
-  // Code block ```...```
+  let html = escapeHtml(md);
+  // Code block ```...``` (content is already escaped above)
   html = html.replace(
     /```(\w*)\n([\s\S]*?)```/g,
-    (_m, lang, code: string) => `<pre><code>${escapeHtml(code.trimEnd())}</code></pre>`,
+    (_m, _lang, code: string) => `<pre><code>${code.trimEnd()}</code></pre>`,
   );
   // Inline code `...`
-  html = html.replace(/`([^`\n]+)`/g, (_m, code: string) => `<code>${escapeHtml(code)}</code>`);
+  html = html.replace(/`([^`\n]+)`/g, (_m, code: string) => `<code>${code}</code>`);
   // Bold **...**
-  html = html.replace(/\*\*([^*\n]+)\*\*/g, (_m, s: string) => `<strong>${escapeHtml(s)}</strong>`);
+  html = html.replace(/\*\*([^*\n]+)\*\*/g, (_m, s: string) => `<strong>${s}</strong>`);
   // Italic *...*
-  html = html.replace(/\*([^*\n]+)\*/g, (_m, s: string) => `<em>${escapeHtml(s)}</em>`);
+  html = html.replace(/\*([^*\n]+)\*/g, (_m, s: string) => `<em>${s}</em>`);
   // List item - ...
-  html = html.replace(/^- (.+)$/gm, (_m, s: string) => `<li>${escapeHtml(s)}</li>`);
+  html = html.replace(/^- (.+)$/gm, (_m, s: string) => `<li>${s}</li>`);
   // wrap consecutive <li> in <ul>
   html = html.replace(/((?:<li>.*<\/li>\n?)+)/g, '<ul>$1</ul>');
   // Double newline -> paragraph

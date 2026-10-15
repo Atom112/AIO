@@ -1,6 +1,6 @@
 [package]
 name = "aio"
-version = "0.8.0"
+version = "0.8.1"
 description = "A lightweight cross-platform AI assistant desktop client"
 authors = ["Loch"]
 edition = "2021"
@@ -20,8 +20,12 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2.11.3", features = ["protocol-asset", "macos-private-api"] }
-tauri-plugin-opener = "2"
+# Version alignment: the tauri crate minor MUST match the @tauri-apps/api npm
+# package minor (tauri-build's check fails the build on drift — the npm side is
+# locked to ~2.12). Plugin crate minors likewise match their npm packages
+# (~2.7 opener / ~2.7 dialog). Keep this table in sync with package.json.
+tauri = { version = "2.12", features = ["protocol-asset", "macos-private-api"] }
+tauri-plugin-opener = "2.7"
 tauri-plugin-updater = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -37,8 +41,6 @@ dashmap = "6.0"
 once_cell = "1"
 parking_lot = "0.12"
 tauri-plugin-dialog = "2.7.1"
-tauri-plugin-shell = "2.3.5"
-tauri-plugin-fs = "2.5.1"
 uuid = { version = "1", features = ["v4", "fast-rng", "serde"] }
 base64 = "0.22.1"
 rusqlite = { version = "0.39.0", features = ["bundled"] }
@@ -62,3 +64,14 @@ auto-launch = "0.6"
 sqlite-vec = "0.1.9"
 sysinfo = "0.33"
 fastembed = { version = "4", default-features = false, features = ["ort-download-binaries"] }
+
+[dev-dependencies]
+# http is already in the dependency tree via reqwest 0.13 (same major version);
+# declaring it lets the download kill-recovery tests build synthetic 206
+# responses (reqwest::Response: From<http::Response>) without a live server.
+http = "1"
+# test-util (NOT part of tokio "full") enables #[tokio::test(start_paused)] for the
+# StreamManager generation tests — auto-advancing time makes the sleep-based
+# replacement-window sequencing deterministic and instant. Dev-only: the release
+# build keeps the lean runtime.
+tokio = { version = "1", features = ["test-util"] }

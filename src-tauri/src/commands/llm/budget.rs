@@ -1,5 +1,17 @@
 //! Context token estimation and error classification helpers (rough pre-check / overflow detection / retryability).
 
+/// Context budget triple: (effective_window, reserve, budget).
+///
+/// LOOP-4: the effective window floor is 2k and reserve is proportional (15%,
+/// min 1k, capped at 25% of the window). The historic `.max(16_000)` floor plus
+/// a fixed 16384 reserve made small-window local models (4k/8k GGUF) compute a
+/// zero budget — every round then re-compressed (one summary LLM call per round).
+pub(crate) fn context_budget(window: Option<u32>) -> (usize, usize, usize) {
+    let window_n = window.unwrap_or(128_000).max(2_048) as usize;
+    let reserve = (window_n / 100 * 15).max(1_024).min(window_n / 100 * 25);
+    (window_n, reserve, window_n.saturating_sub(reserve))
+}
+
 /// Estimate the token count of a single API message (local tiktoken count; falls back to chars/2 on failure).
 /// Used to decide when to trigger context compression and the retention budget.
 pub(crate) fn estimate_message_tokens(model: &str, msg: &serde_json::Value) -> usize {
@@ -49,6 +61,28 @@ pub(crate) fn estimate_context_tokens(
         .iter()
         .map(|m| estimate_message_tokens(model, m))
         .sum()
+}
+
+/// LOOP-8: near-budget exact counting is CPU-bound (tiktoken encodes the whole
+/// context). Running it inline stalls an async worker thread for tens/hundreds of
+/// ms; the estimate runs on the blocking pool instead. The rough pre-check inside
+/// keeps the common far-below-budget case nearly free either way.
+///
+/// On a join failure (panicking task — effectively never) the estimate falls back
+/// to exactly `budget`, which triggers compression: erring toward compressing is
+/// the safe direction (a missed trigger only surfaces as an overflow API error).
+pub(crate) async fn estimate_context_tokens_offload(
+    model: &str,
+    messages: &[serde_json::Value],
+    budget: usize,
+) -> usize {
+    let model = model.to_string();
+    // One owned copy for the 'static closure — only taken when the estimate runs
+    // (near budget); the common path returns after the cheap rough pre-check.
+    let messages = messages.to_vec();
+    tokio::task::spawn_blocking(move || estimate_context_tokens(&model, &messages, budget))
+        .await
+        .unwrap_or(budget)
 }
 
 /// Whether an API error is caused by context-length overflow (used for overflow auto-recovery: retry once after compression).
@@ -133,5 +167,25 @@ mod tests {
         assert_eq!(rough_tokens("abcd"), 1); // 4 quarters / 4
         assert_eq!(rough_tokens("abcde"), 1); // 5 quarters / 4 = 1
         assert!(rough_tokens("中") >= 1);
+    }
+
+    /// LOOP-4 regression: small-window models must keep a positive budget (the old
+    /// 16k floor + fixed 16384 reserve made 4k/8k windows compute budget = 0 and
+    /// re-compress every single round).
+    #[test]
+    fn small_context_windows_keep_positive_budget() {
+        for window in [2_048u32, 4_096, 8_192, 16_384] {
+            let (w, reserve, budget) = context_budget(Some(window));
+            assert!(budget > 0, "窗口 {window} 的预算必须为正: budget={budget}");
+            assert!(reserve < w, "reserve 不应反超窗口: {reserve} >= {w}");
+        }
+        // 大窗口保持 15% 比例
+        let (w, reserve, budget) = context_budget(Some(128_000));
+        assert_eq!(w, 128_000);
+        assert_eq!(reserve, 19_200);
+        assert_eq!(budget, 108_800);
+        // 缺省窗口
+        let (_, _, budget) = context_budget(None);
+        assert_eq!(budget, 108_800);
     }
 }

@@ -199,6 +199,12 @@ pub struct Message {
     /// Anthropic `message_start.usage.cache_read_input_tokens`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cached_input_tokens: Option<u32>,
+    /// Peak context tokens: `input_tokens` of the LAST API call of the turn (= actual
+    /// context-window occupancy, system + tools + history + round output). Distinct from
+    /// `input_tokens` (cumulative round sum, for cost stats). Persisted so the frontend
+    /// context bar survives restarts instead of falling back to the round sum.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_tokens: Option<u32>,
     /// Agent work steps (JSON-serialized AgentStep[]), persisted across restarts
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_steps: Option<serde_json::Value>,
@@ -320,6 +326,11 @@ pub struct Topic {
         rename = "parentTopicId"
     )]
     pub parent_topic_id: Option<String>,
+    /// Compaction context boundary: the first `context_trim_count` messages of
+    /// `history` are condensed into `summary` and excluded from LLM requests
+    /// (context = summary + history[trim..]) while staying visible in the UI.
+    #[serde(default, rename = "contextTrimCount")]
+    pub context_trim_count: i64,
 }
 
 /// AI assistant preset with a system prompt and its conversation topics.

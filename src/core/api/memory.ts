@@ -1,4 +1,5 @@
 // Tauri command wrappers for memory (mirrors commands/memory.rs, commands/embedding.rs, commands/rerank.rs, commands/model_download.rs)
+// (moved from core/utils/memory.ts — FE-25: Tauri invoke wrappers belong to the api layer)
 import { invoke } from '@tauri-apps/api/core';
 
 /** Bundled default local embedding model id (shipped with the app; kept in sync with backend core::model_registry::BUNDLED_EMBED_ID) */

@@ -158,26 +158,19 @@ pub struct AppConfig {
     /// Auto-start the app at system login. Default off.
     #[serde(default, rename = "autoStartEnabled")]
     pub auto_start_enabled: bool,
-    /// Maximum concurrent subagents (None = use default 5). Caps concurrency of delegate_tasks and multiple delegate_task calls.
+    /// Maximum concurrent subagents (-1 = unlimited; 0 is invalid and clamps to 1 at
+    /// the consumer; None = use default 5). Caps concurrency of delegate_tasks and
+    /// multiple delegate_task calls.
     #[serde(default, rename = "maxConcurrentSubagents")]
-    pub max_concurrent_subagents: Option<u32>,
-    /// Maximum tool-call rounds per agent run (None = use the default). On hitting the cap the run wraps up gracefully instead of being hard-interrupted, to bound API cost.
+    pub max_concurrent_subagents: Option<i32>,
+    /// Maximum tool-call rounds per agent run (-1 = unlimited; 0 is invalid and clamps
+    /// to 1 at the consumer; None = use the default). On hitting the cap the run wraps
+    /// up gracefully instead of being hard-interrupted, to bound API cost.
     #[serde(default, rename = "maxToolRounds")]
-    pub max_tool_rounds: Option<u32>,
-    /// Permission mode for workflow steps: "inherit" inherits the parent turn's mode (default; write actions
-    /// still require per-action approval under Normal), "auto" forces Auto mode (legacy behavior: step tools are auto-approved).
-    #[serde(default = "default_workflow_step_mode", rename = "workflowStepMode")]
-    pub workflow_step_mode: String,
+    pub max_tool_rounds: Option<i32>,
     /// Whether read-only tools in the same response block execute concurrently (default true). Off falls back to fully serial execution.
     #[serde(default = "default_true", rename = "parallelToolExecution")]
     pub parallel_tool_execution: bool,
-    /// Main agent built-in tool set: "hybrid" (default: read-only tools direct, mutating tools via subagents),
-    /// "orchestrator" (strict orchestrator, legacy behavior), "full" (all built-in tools, Claude Code style).
-    #[serde(
-        default = "default_main_agent_tool_access",
-        rename = "mainAgentToolAccess"
-    )]
-    pub main_agent_tool_access: String,
     /// Retries for the pre-flight phase of main model calls (POST + status check) (default 3, backoff 1s/2s/4s).
     /// Only covers failures before any content is emitted; mid-stream errors are not retried.
     #[serde(default = "default_model_call_retries", rename = "modelCallRetries")]
@@ -194,6 +187,34 @@ pub struct AppConfig {
     /// system dirs rely on the built-in ALL APPLICATION PACKAGES ACE and need no configuration).
     #[serde(default, rename = "sandboxWindowsToolchainDirs")]
     pub sandbox_windows_toolchain_dirs: Vec<String>,
+    /// Codex-style repository-history protection: inside the sandbox `<root>/.git` is
+    /// denied write/delete recursively (default true). Read-only git ops (status/diff/log)
+    /// keep working; shell-level git mutations fail inside the sandbox — use the builtin
+    /// git_* tools (host process) or, in full-permission mode, the sandbox self-heal chain.
+    #[serde(default = "default_true", rename = "sandboxProtectGit")]
+    pub sandbox_protect_git: bool,
+    /// Whether full-permission (Auto) sandbox self-heal may fall back to ONE unsandboxed
+    /// retry when a session grant cannot land for a NOT-FOUND denial (interpreter/toolchain
+    /// invisible; e.g. an EDR blocked the ACL write) — the ONLY escalation class;
+    /// access-denied denials never escalate. Default **false** (safe default: the
+    /// runtime never breaks the sandbox boundary unless explicitly opted in).
+    #[serde(default, rename = "sandboxUnsandboxedFallback")]
+    pub sandbox_unsandboxed_fallback: bool,
+    /// Consecutive ENVIRONMENT-class failures (missing command / permission denied /
+    /// missing dependency) before a tool is disabled for the rest of the turn
+    /// (harness round 3, P1-1: configurable). Business failures (command ran, nonzero
+    /// exit) never trip the breaker. 0 = default (6).
+    /// Windows shell for `execute_command` (default "powershell": pwsh 7 with a
+    /// powershell.exe 5.1 fallback; "cmd" restores the legacy cmd.exe invocation).
+    #[serde(default = "default_shell_windows", rename = "shellWindows")]
+    pub shell_windows: String,
+    #[serde(default, rename = "toolBreakerThreshold")]
+    pub tool_breaker_threshold: u32,
+}
+
+/// Default value of the Windows shell selection ("powershell").
+pub(crate) fn default_shell_windows() -> String {
+    "powershell".into()
 }
 
 /// Default value of the Windows command sandbox mode.
@@ -204,11 +225,6 @@ pub(crate) fn default_sandbox_windows() -> String {
 /// Default value of main model call retries.
 pub(crate) fn default_model_call_retries() -> u32 {
     3
-}
-
-/// Default value of the main agent built-in tool set.
-pub(crate) fn default_main_agent_tool_access() -> String {
-    "hybrid".into()
 }
 
 impl Default for AppConfig {
@@ -224,13 +240,15 @@ impl Default for AppConfig {
             auto_start_enabled: false,
             max_concurrent_subagents: None,
             max_tool_rounds: None,
-            workflow_step_mode: default_workflow_step_mode(),
             parallel_tool_execution: default_true(),
-            main_agent_tool_access: default_main_agent_tool_access(),
             model_call_retries: default_model_call_retries(),
             sandbox_required: default_true(),
             sandbox_windows: default_sandbox_windows(),
             sandbox_windows_toolchain_dirs: Vec::new(),
+            sandbox_protect_git: default_true(),
+            sandbox_unsandboxed_fallback: default_true(),
+            shell_windows: default_shell_windows(),
+            tool_breaker_threshold: 0,
             memory_enabled: false,
             memory_auto_inject: default_true(),
             memory_auto_extract: default_true(),
@@ -251,11 +269,6 @@ impl Default for AppConfig {
 
 /// Default maximum tool-call rounds per agent run.
 pub const DEFAULT_MAX_TOOL_ROUNDS: u32 = 50;
-
-/// Default value of the workflow step permission mode: inherit the parent turn's mode.
-pub(crate) fn default_workflow_step_mode() -> String {
-    "inherit".into()
-}
 
 pub(crate) fn default_auto_retry_enabled() -> bool {
     true

@@ -97,7 +97,9 @@ pub async fn generate_image(
         }))
         .send()
         .await
-        .map_err(|e| emit_error(e.to_string()))?;
+        // PROV-11 same-family: reqwest Display embeds the full URL (query string
+        // included) — redact before the error reaches the chat message.
+        .map_err(|e| emit_error(crate::plugins::provider::redact_urls_in(&e.to_string())))?;
 
     let status = response.status();
     if !status.is_success() {

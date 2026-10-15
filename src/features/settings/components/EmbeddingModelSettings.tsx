@@ -9,10 +9,16 @@
  * Project-level RAG memory settings (model selection) stay in the project memory panel; this page only manages global models.
  */
 import { Component, createMemo, createSignal, For, Show, onMount } from 'solid-js';
+import { createStore, reconcile } from 'solid-js/store';
 import { listen } from '@tauri-apps/api/event';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
-import Icon from '../../../shared/components/Icon';
-import { btnDangerBadge, btnSecondarySm } from '../../../shared/components/buttonStyles';
+import Icon, { type IconName } from '../../../shared/components/Icon';
+import Switch from '../../../shared/components/Switch';
+import {
+  btnDangerOutline,
+  btnPrimaryOutlineSm,
+  btnSecondarySm,
+} from '../../../shared/components/buttonStyles';
 import { t } from '../../../core/i18n';
 import {
   embeddingModelCancelDownload,
@@ -23,13 +29,18 @@ import {
   embeddingModelSetEnabled,
   embeddingModelsGetDir,
   embeddingModelsSetDir,
-} from '../../../core/utils/memory';
+} from '../../../core/api/memory';
 import type { EmbeddingModelInfo } from '../../../core/types/memory';
 import { formatSize } from '../../../core/utils/format';
 import { EVENTS } from '../../../core/api/events';
 
 const EmbeddingModelSettings: Component = () => {
-  const [models, setModels] = createSignal<EmbeddingModelInfo[]>([]);
+  // Model list is a Solid store (not a signal): <For> is keyed by item REFERENCE, so
+  // replacing an item object (as the old `setModels(prev => prev.map(...))` did) tore
+  // the row down and remounted it — replaying the row-in animation on every enable
+  // toggle. The store + reconcile patches properties in place: the item proxy keeps
+  // its identity (row DOM survives) and property reads stay reactive.
+  const [models, setModels] = createStore<EmbeddingModelInfo[]>([]);
   const [installDir, setInstallDir] = createSignal('');
   const [dirInput, setDirInput] = createSignal('');
   const [savingDir, setSavingDir] = createSignal(false);
@@ -42,17 +53,26 @@ const EmbeddingModelSettings: Component = () => {
   // Paused models (keep the .part resume data; show a "resume download" button)
   const [pausedIds, setPausedIds] = createSignal<Record<string, boolean>>({});
 
-  const embedModels = createMemo(() => models().filter((m) => m.kind === 'embed'));
-  const rerankModels = createMemo(() => models().filter((m) => m.kind === 'rerank'));
+  const embedModels = createMemo(() => models.filter((m) => m.kind === 'embed'));
+  const rerankModels = createMemo(() => models.filter((m) => m.kind === 'rerank'));
+
+  /** Transient feedback line (auto-clears; sits on its own row under the page title) */
+  let noticeTimer = 0;
+  const showNotice = (msg: string) => {
+    setNotice(msg);
+    window.clearTimeout(noticeTimer);
+    noticeTimer = window.setTimeout(() => setNotice(''), 4000);
+  };
 
   const load = async () => {
     try {
       const [list, dir] = await Promise.all([embeddingModelList(), embeddingModelsGetDir()]);
-      setModels(list);
+      // reconcile by id: unchanged models keep their row DOM (no re-animation on reload)
+      setModels(reconcile(list, { key: 'id' }));
       setInstallDir(dir);
       setDirInput(dir);
     } catch {
-      setNotice(t('settings.embeddingModels.loadFail'));
+      showNotice(t('settings.embeddingModels.loadFail'));
     }
   };
 
@@ -73,10 +93,10 @@ const EmbeddingModelSettings: Component = () => {
       const effective = await embeddingModelsSetDir(dirInput());
       setInstallDir(effective);
       setDirInput(effective);
-      setNotice(t('settings.embeddingModels.dirSaved'));
+      showNotice(t('settings.embeddingModels.dirSaved'));
       await load();
     } catch {
-      setNotice(t('settings.embeddingModels.dirSaveFail'));
+      showNotice(t('settings.embeddingModels.dirSaveFail'));
     } finally {
       setSavingDir(false);
     }
@@ -90,9 +110,10 @@ const EmbeddingModelSettings: Component = () => {
   const toggleEnabled = async (m: EmbeddingModelInfo) => {
     try {
       const next = await embeddingModelSetEnabled(m.id, !m.enabled);
-      setModels((prev) => prev.map((x) => (x.id === next.id ? next : x)));
+      // reconcile at the matched item: patches fields in place, keeps the row alive
+      setModels((x) => x.id === next.id, reconcile(next));
     } catch {
-      setNotice(t('settings.embeddingModels.toggleFail'));
+      showNotice(t('settings.embeddingModels.toggleFail'));
     }
   };
 
@@ -129,15 +150,15 @@ const EmbeddingModelSettings: Component = () => {
       const outcome = await embeddingModelDownload(m.id);
       await load();
       if (outcome.status === 'ok') {
-        setNotice(t('settings.embeddingModels.downloaded', { name: m.id }));
+        showNotice(t('settings.embeddingModels.downloaded', { name: m.id }));
       } else if (outcome.status === 'paused') {
         setPausedIds((prev) => ({ ...prev, [m.id]: true }));
-        setNotice(t('settings.embeddingModels.downloadPaused', { name: m.id }));
+        showNotice(t('settings.embeddingModels.downloadPaused', { name: m.id }));
       } else {
-        setNotice(t('settings.embeddingModels.downloadCancelled', { name: m.id }));
+        showNotice(t('settings.embeddingModels.downloadCancelled', { name: m.id }));
       }
     } catch {
-      setNotice(t('settings.embeddingModels.downloadFail', { name: m.id }));
+      showNotice(t('settings.embeddingModels.downloadFail', { name: m.id }));
     } finally {
       unlisten?.();
       setDownloading((prev) => ({ ...prev, [m.id]: false }));
@@ -164,7 +185,7 @@ const EmbeddingModelSettings: Component = () => {
     // if a download is in progress, download()'s promise resolves as cancelled and handles cleanup itself
     if (!wasActive) {
       setPausedIds((prev) => ({ ...prev, [m.id]: false }));
-      setNotice(t('settings.embeddingModels.downloadCancelled', { name: m.id }));
+      showNotice(t('settings.embeddingModels.downloadCancelled', { name: m.id }));
     }
   };
 
@@ -173,9 +194,9 @@ const EmbeddingModelSettings: Component = () => {
     try {
       await embeddingModelDelete(m.id);
       await load();
-      setNotice(t('settings.embeddingModels.deleted', { name: m.id }));
+      showNotice(t('settings.embeddingModels.deleted', { name: m.id }));
     } catch {
-      setNotice(t('settings.embeddingModels.deleteFail', { name: m.id }));
+      showNotice(t('settings.embeddingModels.deleteFail', { name: m.id }));
     }
   };
 
@@ -206,7 +227,7 @@ const EmbeddingModelSettings: Component = () => {
         style={{ 'animation-delay': (index() + 1) * 30 + 'ms' }}
       >
         <div
-          class="flex items-center justify-center w-9 h-9 rounded-lg shrink-0"
+          class="flex items-center justify-center w-8 h-8 rounded-lg shrink-0"
           style={{
             background: m.bundled
               ? 'rgba(var(--primary-rgb),0.15)'
@@ -214,7 +235,7 @@ const EmbeddingModelSettings: Component = () => {
             color: m.bundled ? 'var(--primary-color)' : 'rgba(var(--text-base-rgb),0.5)',
           }}
         >
-          <Icon name={m.bundled ? 'check-circle' : 'model'} size={18} />
+          <Icon name={m.kind === 'rerank' ? 'arrow-down-up' : 'embedding'} size={16} />
         </div>
         <div class="grow min-w-0">
           <div class="flex items-center gap-2">
@@ -276,7 +297,11 @@ const EmbeddingModelSettings: Component = () => {
                   }
                 >
                   <>
-                    <button type="button" class={btnSecondarySm} onClick={() => void download(m)}>
+                    <button
+                      type="button"
+                      class={btnPrimaryOutlineSm}
+                      onClick={() => void download(m)}
+                    >
                       <Icon name={isPaused() ? 'play' : 'download'} size={12} />
                       {isPaused()
                         ? t('settings.embeddingModels.resume')
@@ -297,13 +322,14 @@ const EmbeddingModelSettings: Component = () => {
               </div>
             }
           >
-            <span class="text-[11px] text-green-400/70">
+            <span class="inline-flex items-center gap-1 text-[11px] text-success">
+              <Icon name="check" size={10} />
               {t('settings.embeddingModels.installed')}
             </span>
             <Show when={!m.bundled}>
               <button
                 type="button"
-                class={btnDangerBadge}
+                class={btnDangerOutline}
                 disabled={isDownloading()}
                 onClick={() => void removeModel(m)}
               >
@@ -312,32 +338,16 @@ const EmbeddingModelSettings: Component = () => {
               </button>
             </Show>
           </Show>
-          <button
-            type="button"
-            class="relative inline-flex items-center h-[22px] w-[40px] rounded-full bg-white/[0.08] border border-white/[0.08] cursor-pointer shrink-0 focus:outline-none"
-            style={{
-              transition:
-                'background 0.3s cubic-bezier(0.4, 0, 0.2, 1), border-color 0.3s ease, box-shadow 0.3s ease',
-              ...(m.enabled
-                ? {
-                    background: 'rgba(var(--primary-rgb), 0.7)',
-                    'border-color': 'rgba(var(--primary-rgb), 0.5)',
-                    'box-shadow': '0 0 12px rgba(var(--primary-rgb), 0.35)',
-                  }
-                : {}),
-            }}
-            onClick={() => void toggleEnabled(m)}
-            title={
+          <Switch
+            variant="glow"
+            checked={m.enabled}
+            onChange={() => void toggleEnabled(m)}
+            label={
               m.enabled
                 ? t('settings.embeddingModels.disable')
                 : t('settings.embeddingModels.enable')
             }
-          >
-            <span
-              class="inline-block h-4 w-4 rounded-full bg-white transition-transform duration-300 shadow-[0_2px_6px_rgba(0,0,0,0.4)]"
-              style={{ transform: m.enabled ? 'translateX(21px)' : 'translateX(3px)' }}
-            />
-          </button>
+          />
         </div>
       </div>
     );
@@ -347,35 +357,49 @@ const EmbeddingModelSettings: Component = () => {
   const ModelRowItem: Component<{ m: EmbeddingModelInfo; index: () => number }> = (p) =>
     renderModelRow(p.m, p.index);
 
+  /** Section header: icon chip + title + description (shared by the three cards) */
+  const SectionHeader: Component<{ icon: IconName; title: string; desc: string }> = (p) => (
+    <div class="flex items-center gap-3 mb-3">
+      <div
+        class="w-8 h-8 rounded-lg flex items-center justify-center shrink-0 border"
+        style={{
+          background: 'rgba(var(--text-base-rgb),0.05)',
+          'border-color': 'rgba(var(--text-base-rgb),0.12)',
+          color: 'rgba(var(--text-base-rgb),0.55)',
+        }}
+      >
+        <Icon name={p.icon} size={15} />
+      </div>
+      <div class="min-w-0">
+        <div class="text-sm text-white font-medium">{p.title}</div>
+        <div class="text-[11px] mt-0.5" style={{ color: 'rgba(var(--text-base-rgb),0.4)' }}>
+          {p.desc}
+        </div>
+      </div>
+    </div>
+  );
+
   return (
     <div class="space-y-1">
       <div class="pb-3 border-b border-[var(--border-dim)] animate-row-in">
-        <div class="flex items-center justify-between gap-3">
-          <h2 class="text-lg text-white font-semibold m-0">
-            {t('settings.embeddingModels.title')}
-          </h2>
-          <Show when={notice()}>
-            <span class="text-[11px] text-pri/80">{notice()}</span>
-          </Show>
-        </div>
+        <h2 class="text-lg text-white font-semibold m-0">{t('settings.embeddingModels.title')}</h2>
       </div>
+
+      {/* Transient feedback (own row, auto-clears after 4s) */}
+      <Show when={notice()}>
+        <div class="text-[11px] px-1 text-pri/80 animate-row-in">{notice()}</div>
+      </Show>
 
       {/* Install directory */}
       <div
         class="bg-white/[0.03] rounded-xl border border-[var(--border-dim)] p-4 animate-row-in"
         style={{ 'animation-delay': '30ms' }}
       >
-        <div class="flex items-center justify-between gap-3 mb-2">
-          <div class="min-w-0">
-            <div class="text-sm text-white font-medium">
-              {t('settings.embeddingModels.dirTitle')}
-            </div>
-            <div class="text-[11px] mt-0.5" style={{ color: 'rgba(var(--text-base-rgb),0.4)' }}>
-              {t('settings.embeddingModels.dirDesc')}
-            </div>
-          </div>
-          <Icon name="folder" size={18} class="text-white/25 shrink-0" />
-        </div>
+        <SectionHeader
+          icon="folder"
+          title={t('settings.embeddingModels.dirTitle')}
+          desc={t('settings.embeddingModels.dirDesc')}
+        />
         <div class="flex items-center gap-2">
           <input
             type="text"
@@ -397,7 +421,7 @@ const EmbeddingModelSettings: Component = () => {
           </button>
           <button
             type="button"
-            class={btnSecondarySm}
+            class={btnPrimaryOutlineSm}
             disabled={savingDir() || dirInput() === installDir()}
             onClick={() => void saveDir()}
           >
@@ -411,17 +435,11 @@ const EmbeddingModelSettings: Component = () => {
         class="bg-white/[0.03] rounded-xl border border-[var(--border-dim)] p-4 animate-row-in"
         style={{ 'animation-delay': '60ms' }}
       >
-        <div class="flex items-center justify-between mb-3">
-          <div class="min-w-0">
-            <div class="text-sm text-white font-medium">
-              {t('settings.embeddingModels.listTitle')}
-            </div>
-            <div class="text-[11px] mt-0.5" style={{ color: 'rgba(var(--text-base-rgb),0.4)' }}>
-              {t('settings.embeddingModels.listDesc')}
-            </div>
-          </div>
-        </div>
-
+        <SectionHeader
+          icon="embedding"
+          title={t('settings.embeddingModels.listTitle')}
+          desc={t('settings.embeddingModels.listDesc')}
+        />
         <div class="flex flex-col gap-1.5">
           <For each={embedModels()}>{(m, i) => <ModelRowItem m={m} index={i} />}</For>
         </div>
@@ -432,17 +450,11 @@ const EmbeddingModelSettings: Component = () => {
         class="bg-white/[0.03] rounded-xl border border-[var(--border-dim)] p-4 animate-row-in"
         style={{ 'animation-delay': '90ms' }}
       >
-        <div class="flex items-center justify-between mb-3">
-          <div class="min-w-0">
-            <div class="text-sm text-white font-medium">
-              {t('settings.embeddingModels.rerankTitle')}
-            </div>
-            <div class="text-[11px] mt-0.5" style={{ color: 'rgba(var(--text-base-rgb),0.4)' }}>
-              {t('settings.embeddingModels.rerankDesc')}
-            </div>
-          </div>
-        </div>
-
+        <SectionHeader
+          icon="arrow-down-up"
+          title={t('settings.embeddingModels.rerankTitle')}
+          desc={t('settings.embeddingModels.rerankDesc')}
+        />
         <div class="flex flex-col gap-1.5">
           <For each={rerankModels()}>{(m, i) => <ModelRowItem m={m} index={i} />}</For>
         </div>

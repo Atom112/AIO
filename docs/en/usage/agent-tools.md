@@ -8,7 +8,9 @@ Agent mode provides 20+ built-in tools across 6 categories. The following table 
 >
 > **Main agent tool set**: hybrid by default — read-only built-in tools are called directly, mutating work is delegated to subagents (`mainAgentToolAccess`: hybrid / orchestrator / full).
 >
-> **MCP tools**: tools from MCP servers enabled for the assistant are injected into the agent loop (the `general` subagent profile also gets them); name collisions are auto-renamed to `mcp__<server>__<tool>`. Tools from untrusted servers still prompt for each call in Auto/Workflow mode (the "Trusted" toggle in MCP settings).
+> **Subject scope**: the table and permission matrix above describe the **main agent**. Subagent tool sets are assembled per role (`SubagentProfile.allowed_tools/denied_tools`) and differ from the main agent — e.g. the read-only roles explorer/architect explicitly deny `git_*` (9 read-only tools, no Git tools); only coder/general and similar hold Git reads. A subagent calling a tool that was not injected gets a fail-closed "tool not available" error.
+>
+> **MCP tools**: tools from MCP servers enabled for the assistant are injected into the agent loop (the `general` subagent profile also gets them); name collisions are auto-renamed to `mcp__<server>__<tool>`. Tools from untrusted servers still prompt for each call in full-permission mode (the "Trusted" toggle in MCP settings, or "Always allow" in the approval bubble, which writes the tool into the project permission config and stops the prompts).
 
 | Tool Name         | Category      | Normal Default | Auto Default | Plan Default |
 | ----------------- | ------------- | -------------- | ------------ | ------------ |
@@ -18,7 +20,7 @@ Agent mode provides 20+ built-in tools across 6 categories. The following table 
 | `search_files`    | File          | Allow          | Allow        | Allow        |
 | `search_content`  | File          | Allow          | Allow        | Allow        |
 | `replace_in_file` | File          | Ask            | Allow        | Deny         |
-| `delete_file`     | File          | Ask            | Ask          | Deny         |
+| `delete_file`     | File          | Ask            | Allow        | Deny         |
 | `make_directory`  | File          | Ask            | Allow        | Deny         |
 | `git_status`      | Git           | Allow          | Allow        | Allow        |
 | `git_diff`        | Git           | Allow          | Allow        | Allow        |
@@ -37,7 +39,10 @@ Agent mode provides 20+ built-in tools across 6 categories. The following table 
 | `project_map`     | Orchestration | Allow          | Allow        | Allow        |
 | `delegate_task`   | Orchestration | Ask            | Allow        | Ask          |
 | `delegate_tasks`  | Orchestration | Ask            | Allow        | Ask          |
-| `create_workflow` | Orchestration | Ask            | Allow        | Ask          |
+| `create_tasks`    | Orchestration | Allow          | Allow        | Allow        |
+| `update_task`     | Orchestration | Allow          | Allow        | Allow        |
+| `list_tasks`      | Orchestration | Allow          | Allow        | Allow        |
+| `ask_user`        | Orchestration | Allow          | Allow        | Allow        |
 | `read_skill`      | Orchestration | Allow          | Allow        | Allow        |
 | `read_artifact`   | Orchestration | Allow          | Allow        | Allow        |
 | `remember`        | Knowledge     | Ask            | Allow        | Ask          |
@@ -135,7 +140,7 @@ Delete a file.
 | **Parameters**  | `path` (string, required) -- file path                                      |
 | **Return**      | Deletion confirmation                                                       |
 | **Limits**      | --                                                                          |
-| **Permission**  | Normal/Ask, Auto/Ask, Plan/Deny                                             |
+| **Permission**  | Normal/Ask, Auto/Allow, Plan/Deny                                           |
 
 ### `make_directory`
 
@@ -218,7 +223,7 @@ Create a commit.
 
 Source: `src-tauri/src/utils/lsp_tools.rs`, `src-tauri/src/utils/lsp_agent_tools.rs`
 
-Requires a language server for the corresponding file type to be running in the project. LSP startup failure does not affect other tools.
+If the language server for the file type is not running, it is started on demand when an LSP tool is called (the server must be installed locally, e.g. `pyright-langserver`, `rust-analyzer`, `typescript-language-server`, `gopls`). Before a query, the target file's current content is synced into the server (didOpen/didChange) so symbols and diagnostics are available promptly; read_lints briefly waits and retries while diagnostics have not been published yet. LSP startup failure does not affect other tools.
 
 ### `read_lints`
 
@@ -301,7 +306,7 @@ Search the web.
 
 | Item            | Value                                                                                                             |
 | --------------- | ----------------------------------------------------------------------------------------------------------------- |
-| **Description** | Search the web via DuckDuckGo, returning result snippets and links.                                               |
+| **Description** | Search the web (Bing first, DuckDuckGo fallback), returning result snippets and links.                            |
 | **Parameters**  | `query` (string, required) -- search query; `count` (integer, optional) -- number of results to return, default 5 |
 | **Return**      | Result snippets + link list                                                                                       |
 | **Limits**      | 3-second rate limit interval (same process); HTTPS only                                                           |
@@ -317,14 +322,14 @@ Source: `src-tauri/src/utils/shell_tools.rs`
 
 Execute a system command in the project directory.
 
-| Item            | Value                                                                                                                                                                                                                                     |
-| --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Description** | Execute a system command, returning stdout, stderr, and exit code.                                                                                                                                                                        |
-| **Parameters**  | `command` (string, required) -- command string, e.g. `"cargo build"`; `description` (string, optional) -- command description (audit log only); `timeout` (integer, optional) -- timeout in milliseconds, default 60,000ms, max 300,000ms |
-| **Return**      | stdout + stderr output (50KB each maximum)                                                                                                                                                                                                |
-| **Limits**      | Command length max 4096 characters; backtick/`$()` command substitution prohibited; dangerous commands blocked (`sudo`, `rm -rf /`, `format`, etc.); Windows Job Object sandbox                                                           |
-| **Security**    | Dangerous command detection (lexical token analysis), rejecting destructive/install/network exfiltration/env injection/fork bomb patterns                                                                                                 |
-| **Permission**  | Normal/Ask, Auto/Allow, Plan/Deny; in sub-agents: general/debugger/tester roles allow, others deny                                                                                                                                        |
+| Item            | Value                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Description** | Execute a system command, returning stdout, stderr, and exit code.                                                                                                                                                                                                                                                                                                                                                                                                        |
+| **Parameters**  | `command` (string, required) -- command string, e.g. `"cargo build"`; `description` (string, optional) -- command description (audit log only); `timeout` (integer, optional) -- timeout in milliseconds, default 60,000ms, max 300,000ms                                                                                                                                                                                                                                 |
+| **Return**      | stdout + stderr output (50KB each maximum)                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| **Limits**      | Command length max 4096 characters; backtick/`$()` command substitution prohibited; dangerous commands blocked (`sudo`, `rm -rf /`, `format`, etc.); Windows Job Object sandbox; bare script interpreters as the first token (`python`/`py`/`node`/`npm`, etc.) are forwarded to the host-PATH-resolved absolute path (these names are otherwise invisible inside the sandbox shell), with a best-effort R+X grant on the interpreter directory under the Windows sandbox |
+| **Security**    | Dangerous command detection (lexical token analysis), rejecting destructive/install/network exfiltration/env injection/fork bomb patterns                                                                                                                                                                                                                                                                                                                                 |
+| **Permission**  | Normal/Ask, Auto/Allow, Plan/Deny; in sub-agents: general/debugger/tester roles allow, others deny                                                                                                                                                                                                                                                                                                                                                                        |
 
 ---
 
@@ -336,34 +341,77 @@ Source: `src-tauri/src/core/subagent.rs`, `src-tauri/src/utils/think.rs`, `src-t
 
 Create a single sub-agent to execute a subtask.
 
-| Item            | Value                                                                                                                                                                                                                                                                                                                                                                                   |
-| --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Description** | Create a sub-agent to execute an independent subtask. The sub-agent has its own LLM context window.                                                                                                                                                                                                                                                                                     |
-| **Parameters**  | `profile` (string, required) -- sub-agent type: `explorer` / `coder` / `general` / `architect` / `debugger` / `reviewer` / `writer` / `tester` / `requirements` or a custom role ID; `task` (string, required) -- complete task description; `context_files` (string[], optional) -- initial file path list; `wait` (boolean, optional) -- whether to wait for completion, default true |
-| **Return**      | Sub-agent work summary                                                                                                                                                                                                                                                                                                                                                                  |
-| **Permission**  | Normal/Ask, Auto/Allow, Plan/Ask                                                                                                                                                                                                                                                                                                                                                        |
+| Item            | Value                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Description** | Create a sub-agent to execute an independent subtask. The sub-agent has its own LLM context window.                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| **Parameters**  | `profile` (string, required) -- sub-agent type: `explorer` / `coder` / `general` / `architect` / `debugger` / `reviewer` / `writer` / `tester` / `requirements` or a custom role ID; `task` (string, required) -- complete task description; `context_files` (string[], optional) -- initial file path list; `wait` (boolean, optional) -- whether to wait for completion, default true; `isolation` (string, optional) -- file isolation mode `worktree` / `shared`, see [Multi-agent parallel write coordination](#multi-agent-parallel-write-coordination) |
+| **Return**      | Sub-agent work summary (with a merge outcome note when worktree-isolated)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| **Permission**  | Normal/Ask, Auto/Allow, Plan/Ask                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 
 ### `delegate_tasks`
 
 Batch create multiple sub-agents to execute in parallel.
 
-| Item            | Value                                                                                                                                                                    |
-| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **Description** | Create multiple sub-agents (1-10) in parallel in a single call. Total time is approximately the slowest subtask.                                                         |
-| **Parameters**  | `context` (string, optional) -- shared context for all subtasks; `tasks` (array, required, 1-10 items) -- list of subtasks, each with `profile`, `task`, `context_files` |
-| **Return**      | Work summary for each sub-agent                                                                                                                                          |
-| **Permission**  | Normal/Ask, Auto/Allow, Plan/Ask                                                                                                                                         |
+| Item            | Value                                                                                                                                                                                                                                                                                |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Description** | Create multiple sub-agents (1-10) in parallel in a single call. Total time is approximately the slowest subtask. On git projects write-capable tasks are isolated in worktrees by default (see [Multi-agent parallel write coordination](#multi-agent-parallel-write-coordination)). |
+| **Parameters**  | `context` (string, optional) -- shared context for all subtasks; `tasks` (array, required, 1-10 items) -- list of subtasks, each with `profile`, `task`, `context_files`, `isolation` (optional, `worktree` / `shared`)                                                              |
+| **Return**      | Work summary for each sub-agent (with per-task merge outcome notes when worktree-isolated)                                                                                                                                                                                           |
+| **Permission**  | Normal/Ask, Auto/Allow, Plan/Ask                                                                                                                                                                                                                                                     |
 
-### `create_workflow`
+### `create_tasks`
 
-Create a sequentially-executing sub-agent workflow.
+Create the agent task list (main-agent task tracking).
 
-| Item            | Value                                                                                                                                    |
-| --------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| **Description** | Create a sequentially-executing sub-agent workflow. Each step's output is automatically passed to the next. Requires at least 2 steps.   |
-| **Parameters**  | `title` (string, required) -- workflow title; `steps` (array, required, >=2 items) -- list of steps, each with `profile`, `name`, `task` |
-| **Return**      | Work summary for each step                                                                                                               |
-| **Permission**  | Normal/Ask, Auto/Allow, Plan/Ask                                                                                                         |
+| Item            | Value                                                                                                                                                                                 |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Description** | Decompose multi-step work into a tracked task list; the user sees a live task panel above the chat area. Keep statuses current with `update_task` as work proceeds.                   |
+| **Parameters**  | `tasks` (array, required, 1-10 items) -- each with `title` (one-line task title); `clear_existing` (boolean, optional) -- clear the existing list (replanning), default false appends |
+| **Return**      | Numbered list with task IDs and statuses                                                                                                                                              |
+| **Permission**  | Allow in all modes (pure metadata; never touches files)                                                                                                                               |
+
+### `update_task`
+
+Update a task's status or rewrite its title.
+
+| Item            | Value                                                                                                                                                           |
+| --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Description** | Update as each task starts/completes so the user sees real progress.                                                                                            |
+| **Parameters**  | `task_id` (string, required) -- target task ID; `status` (string, optional) -- `pending` / `in_progress` / `completed`; `title` (string, optional) -- new title |
+| **Return**      | The updated full list (errors list the valid IDs when the task is not found)                                                                                    |
+| **Permission**  | Allow in all modes                                                                                                                                              |
+
+### `list_tasks`
+
+View the current topic's task list.
+
+| Item            | Value                                                                        |
+| --------------- | ---------------------------------------------------------------------------- |
+| **Description** | Check it when resuming work in a new turn, to avoid duplicate task creation. |
+| **Parameters**  | None                                                                         |
+| **Return**      | Current list (IDs + statuses)                                                |
+| **Permission**  | Allow in all modes                                                           |
+
+### `ask_user`
+
+Ask the user about decision points (recommended options + custom input).
+
+| Item            | Value                                                                                                                                                                                                                                                                                                                             |
+| --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Description** | Call for genuine decision points (ambiguous requirements, multiple viable approaches, risky trade-offs); the loop pauses, the user answers in a question bubble in the chat flow (pick an option, type a custom answer, or skip and let the agent decide), and the answers return as the tool result. Ask at most once per point. |
+| **Parameters**  | `questions` (array, required, 1-4 items) -- each with `question`; `options` (0-4 items, each with `label`, optional `description`, optional `recommended` flag); `allow_custom` (custom answers allowed, default true)                                                                                                            |
+| **Return**      | `[User answers]` with the choice per question; when skipped, "decide on your own and continue"                                                                                                                                                                                                                                    |
+| **Permission**  | Allow in all modes (the user's answer IS the confirmation)                                                                                                                                                                                                                                                                        |
+
+### Multi-agent parallel write coordination
+
+When multiple agents modify files concurrently, AIO combines two layers of protection: physical worktree isolation plus per-file locks for the shared mode.
+
+- **Isolation mode** (fixed auto policy, no setting): on git projects, awaited write-capable subtasks (`delegate_task` with `wait=true` and `delegate_tasks` tasks) automatically get an isolated git worktree (sibling directory `<project>.aio-wt/`, branch `aio/sub-<id>`, based on the current HEAD). On completion the changes are committed to the task branch and merged back into the current branch; non-git projects, network paths, or creation failures fall back to the shared mode (protected by file locks). Pass `isolation: "shared"` per task for a single-task override.
+- **Merging**: Auto mode merges automatically; Normal mode asks one batch approval (listing branches, changed files and diff summaries). On a **conflict** the merge aborts safely, the worktree is kept, and the result reports the conflicted files — redo that task serially on the latest code or resolve manually.
+- **Shared-mode protection**: `write_file` / `replace_in_file` / `delete_file` / `make_directory` take a per-file exclusive lock (120-second wait timeout reporting the holder); after another agent modified a file, `replace_in_file` must carry `anchor_hash` and an overwriting `write_file` must carry `expect_hash` — a mismatch errors out and requires a re-read, turning lost updates into recoverable re-read errors.
+- **Scope**: `wait=false` background subagents always run shared (file locks still apply). Worktrees are based on the main checkout's HEAD and do NOT include its uncommitted changes — pass `isolation: "shared"` when a task must build on uncommitted work.
+- **Recommendations**: partition parallel write tasks by file set; files written by shell commands and git write operations (`git_add` / `git_commit` / `checkout_branch`) bypass the file locks (consistent with the industry) — prefer file tools for critical files; avoid switching branches in the main checkout while worktree tasks run — the task merges land on whatever branch is current at merge time.
 
 ### `read_skill`
 
@@ -421,13 +469,13 @@ When project memory is enabled (`memoryEnabled` + per-project toggle), the Agent
 
 Save a project-level fact (vector dedup before write; near-duplicates are arbitrated by the LLM into merge / update / supersede).
 
-| Item            | Value                                                                                                                                                                                                                                                 |
-| --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Description** | Remember a project-level fact (architecture decisions, code conventions, common patterns, key findings), persisted across sessions with semantic retrieval.                                                                                           |
-| **Parameters**  | `key` (string, optional) -- short identifier (used for deduplication); `content` (string, required) -- fact content; `category` (enum, required) -- `"decision"` / `"pattern"` / `"convention"` / `"note"` / `"entity"` / `"architecture"` / `"task"` |
-| **Return**      | Save confirmation                                                                                                                                                                                                                                     |
-| **Limits**      | Default cap of 2000 active facts per project; excess facts are archived by importance x access decay, lowest first (pinned facts are kept)                                                                                                            |
-| **Permission**  | Normal/Allow, Auto/Allow, Plan/Deny                                                                                                                                                                                                                   |
+| Item            | Value                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Description** | Remember a project-level fact (architecture decisions, code conventions, common patterns, key findings), persisted across sessions with semantic retrieval.                                                                                                                                                                                                                                                                                                                                   |
+| **Parameters**  | `key` (string, optional) -- deduplication key. **A second write with the same key OVERWRITES** (in-place update, stable id; the old content is archived to the version history, viewable in the memory panel, and `recall` returns only the latest) -- do not reuse a key when version evolution must be kept; `content` (string, required) -- fact content; `category` (enum, required) -- `"decision"` / `"pattern"` / `"convention"` / `"note"` / `"entity"` / `"architecture"` / `"task"` |
+| **Return**      | Save confirmation                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| **Limits**      | Default cap of 2000 active facts per project; excess facts are archived by importance x access decay, lowest first (pinned facts are kept)                                                                                                                                                                                                                                                                                                                                                    |
+| **Permission**  | Normal/Allow, Auto/Allow, Plan/Deny                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 
 ### `recall`
 

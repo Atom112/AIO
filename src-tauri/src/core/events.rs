@@ -16,6 +16,12 @@ pub const REINDEX_PROGRESS: &str = "reindex-progress";
 pub const CODE_INDEX_PROGRESS: &str = "code-index-progress";
 /// App update download progress
 pub const APP_UPDATE_PROGRESS: &str = "app-update-progress";
+/// Memory auto fact extraction lifecycle (running / done / error; payload carries the project root)
+pub const MEMORY_EXTRACT_PROGRESS: &str = "memory-extract-progress";
+/// Memory consolidation lifecycle (running / done / error; payload carries the project root)
+pub const MEMORY_CONSOLIDATE_PROGRESS: &str = "memory-consolidate-progress";
+/// Long-running agent shell command lifecycle (running heartbeat / done / error / cancelled; payload carries the run id + command)
+pub const COMMAND_PROGRESS: &str = "command-progress";
 
 /// One LLM round starts (the frontend pushes an empty assistant placeholder)
 pub const LLM_ROUND_START: &str = "llm-round-start";
@@ -38,16 +44,14 @@ pub const LLM_HANDOFF: &str = "llm-handoff";
 pub const SUBAGENT_START: &str = "subagent-start";
 /// Subagent step progress
 pub const SUBAGENT_STEP: &str = "subagent-step";
+/// Subagent streaming delta (text) — DSH-parity live view (harness round 11)
+pub const SUBAGENT_CHUNK: &str = "subagent-chunk";
+/// Subagent streaming delta (reasoning/thinking content)
+pub const SUBAGENT_REASONING: &str = "subagent-reasoning";
 /// Subagent finished
 pub const SUBAGENT_DONE: &str = "subagent-done";
 /// Subagent error
 pub const SUBAGENT_ERROR: &str = "subagent-error";
-
-/// Workflow started / step started / step completed / finished
-pub const WORKFLOW_START: &str = "workflow-start";
-pub const WORKFLOW_STEP_START: &str = "workflow-step-start";
-pub const WORKFLOW_STEP_COMPLETE: &str = "workflow-step-complete";
-pub const WORKFLOW_COMPLETE: &str = "workflow-complete";
 
 /// MCP server status change
 pub const MCP_SERVER_STATUS: &str = "mcp-server-status";
@@ -59,8 +63,28 @@ pub const MCP_TOOLS_CHANGED: &str = "mcp-tools-changed";
 /// Tool approval request (waiting for user confirmation)
 pub const TOOL_APPROVAL_REQUESTED: &str = "tool-approval-requested";
 
+/// Tool approval expired (backend wait timed out / channel closed; the bubble
+/// must disappear instead of lingering until a button press errors out)
+pub const TOOL_APPROVAL_EXPIRED: &str = "tool-approval-expired";
+
+/// Agent task board changed (create_tasks / update_task)
+pub const AGENT_TASKS_CHANGED: &str = "agent-tasks-changed";
+
+/// Agent asks the user to answer clarification questions (recommended options + custom input)
+pub const AGENT_QUESTION_REQUESTED: &str = "agent-question-requested";
+
 /// Streaming delta for BTW side-question answers (frontend overlay)
 pub const BTW_CHUNK: &str = "btw-chunk";
+
+/// LSP diagnostics updated (payload: languageId / project root)
+pub const LSP_DIAGNOSTICS_UPDATED: &str = "lsp-diagnostics-updated";
+/// LSP server stderr output
+pub const LSP_SERVER_STDERR: &str = "lsp-server-stderr";
+/// LSP server status change
+pub const LSP_SERVER_STATUS: &str = "lsp-server-status";
+
+/// Models catalog updated (fresh fetch persisted to AppData)
+pub const MODELS_CATALOG_UPDATED: &str = "models-catalog-updated";
 
 #[cfg(test)]
 mod tests {
@@ -77,6 +101,9 @@ mod tests {
             REINDEX_PROGRESS,
             CODE_INDEX_PROGRESS,
             APP_UPDATE_PROGRESS,
+            MEMORY_EXTRACT_PROGRESS,
+            MEMORY_CONSOLIDATE_PROGRESS,
+            COMMAND_PROGRESS,
             LLM_ROUND_START,
             LLM_CHUNK,
             LLM_REASONING,
@@ -87,17 +114,22 @@ mod tests {
             LLM_HANDOFF,
             SUBAGENT_START,
             SUBAGENT_STEP,
+            SUBAGENT_CHUNK,
+            SUBAGENT_REASONING,
             SUBAGENT_DONE,
             SUBAGENT_ERROR,
-            WORKFLOW_START,
-            WORKFLOW_STEP_START,
-            WORKFLOW_STEP_COMPLETE,
-            WORKFLOW_COMPLETE,
             MCP_SERVER_STATUS,
             MCP_SERVER_STDERR,
             MCP_TOOLS_CHANGED,
             TOOL_APPROVAL_REQUESTED,
+            TOOL_APPROVAL_EXPIRED,
+            AGENT_TASKS_CHANGED,
+            AGENT_QUESTION_REQUESTED,
             BTW_CHUNK,
+            LSP_DIAGNOSTICS_UPDATED,
+            LSP_SERVER_STDERR,
+            LSP_SERVER_STATUS,
+            MODELS_CATALOG_UPDATED,
         ] {
             assert!(
                 name.chars()

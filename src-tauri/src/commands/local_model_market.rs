@@ -175,7 +175,9 @@ async fn hf_market_list(query: &str, limit: u32, token: Option<&str>) -> Option<
     for base in HF_ENDPOINTS {
         let url = url.replacen(HF_ENDPOINTS[0], base, 1);
         let mut req = client.get(&url);
-        if let Some(t) = token {
+        // ENG-02: 用户 HF Token 只发给 huggingface.co 官方域——hf-mirror.com 是
+        // 第三方镜像（公开仓库匿名即可用），令牌外送无收益纯增风险。
+        if let Some(t) = token.filter(|_| base.contains("huggingface.co")) {
             req = req.bearer_auth(t);
         }
         match req.send().await {
@@ -192,7 +194,9 @@ async fn hf_market_list(query: &str, limit: u32, token: Option<&str>) -> Option<
 }
 
 /// One ModelScope dolphin row (subset of the very wide response we consume).
-#[derive(Deserialize, Debug)]
+/// The dolphin API returns PascalCase keys (Path/Name/Downloads/Libraries/...).
+#[derive(Deserialize, Debug, Clone)]
+#[serde(rename_all = "PascalCase")]
 struct MsListRow {
     #[serde(default)]
     path: String,
@@ -212,20 +216,30 @@ struct MsListRow {
     tags: Vec<String>,
 }
 
+/// Whether a dolphin row is a GGUF repo (gguf library or tag) with a usable name.
+/// Must read real deserialized fields: with wrong field renames every row silently
+/// deserializes to defaults and this predicate rejects everything.
+fn ms_row_is_gguf(r: &MsListRow) -> bool {
+    (r.libraries.iter().any(|l| l.eq_ignore_ascii_case("gguf"))
+        || r.tags.iter().any(|t| t.eq_ignore_ascii_case("gguf")))
+        && !r.name.is_empty()
+}
+
 /// Queries the ModelScope model list with a `Name` substring filter (empty query falls
 /// back to "gguf" so the default page shows GGUF repos). Only entries tagged gguf are
 /// kept, sorted by download count descending. Returns None when the request fails.
+/// With a search term the top results are dominated by official non-GGUF repos, so the
+/// fetch size is doubled (capped at 100) to survive the gguf filtering.
 async fn ms_market_list(query: &str, limit: u32) -> Option<Vec<MsListRow>> {
-    let search = {
-        let q = query.trim();
-        if q.is_empty() {
-            "gguf"
-        } else {
-            q
-        }
+    let trimmed = query.trim();
+    let search = if trimmed.is_empty() { "gguf" } else { trimmed };
+    let fetch = if trimmed.is_empty() {
+        limit.min(100)
+    } else {
+        (limit.saturating_mul(2)).min(100)
     };
     let body = serde_json::json!({
-        "PageSize": limit.min(100),
+        "PageSize": fetch,
         "PageNumber": 1,
         "SortBy": "Default",
         "Name": search,
@@ -242,14 +256,7 @@ async fn ms_market_list(query: &str, limit: u32) -> Option<Vec<MsListRow>> {
         .pointer("/Data/Model/Models")
         .and_then(|v| serde_json::from_value(v.clone()).ok())
         .unwrap_or_default();
-    let mut gguf: Vec<MsListRow> = rows
-        .into_iter()
-        .filter(|r| {
-            (r.libraries.iter().any(|l| l.eq_ignore_ascii_case("gguf"))
-                || r.tags.iter().any(|t| t.eq_ignore_ascii_case("gguf")))
-                && !r.name.is_empty()
-        })
-        .collect();
+    let mut gguf: Vec<MsListRow> = rows.into_iter().filter(ms_row_is_gguf).collect();
     gguf.sort_by_key(|r| std::cmp::Reverse(r.downloads));
     Some(gguf)
 }
@@ -441,77 +448,92 @@ pub async fn local_model_market_files(
     let client = market_client()?;
     match source.as_str() {
         "modelscope" => {
-            let url = format!(
-                "https://modelscope.cn/api/v1/models/{}/repo/files?Revision=master&Root=%2F",
-                encode_repo_path(&repo)
-            );
-            let resp = client.get(&url).send().await.map_err(|e| {
-                ierr!(
-                    "访问 ModelScope 失败: {}",
-                    "Failed to reach ModelScope: {}",
-                    e
-                )
-            })?;
-            if !resp.status().is_success() {
-                return Err(ierr!(
-                    "获取文件列表失败（ModelScope {}）",
-                    "Failed to list files (ModelScope {})",
-                    resp.status()
-                ));
+            // ENG-18: revision fallback mirrors the downloader (["master","main"]):
+            // repos whose default branch is `main` used to 404 on the hardcoded master.
+            let mut last_err = String::new();
+            for rev in ["master", "main"] {
+                let url = format!(
+                    "https://modelscope.cn/api/v1/models/{}/repo/files?Revision={rev}&Root=%2F",
+                    encode_repo_path(&repo)
+                );
+                let resp = match client.get(&url).send().await {
+                    Ok(r) => r,
+                    Err(e) => {
+                        last_err = e.to_string();
+                        continue;
+                    }
+                };
+                if !resp.status().is_success() {
+                    last_err = format!("HTTP {}", resp.status());
+                    continue;
+                }
+                let value: serde_json::Value = match resp.json().await {
+                    Ok(v) => v,
+                    Err(e) => {
+                        last_err = e.to_string();
+                        continue;
+                    }
+                };
+                let files: Vec<MarketFile> = value
+                    .pointer("/Data/Files")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|f| {
+                                let path = f.get("Path")?.as_str()?.to_string();
+                                if !path.to_lowercase().ends_with(".gguf") {
+                                    return None;
+                                }
+                                let size = f.get("Size").and_then(|s| s.as_u64()).unwrap_or(0);
+                                Some(MarketFile { name: path, size })
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                return Ok(files);
             }
-            let value: serde_json::Value = resp
-                .json()
-                .await
-                .map_err(|e| ierr!("解析响应失败: {}", "Failed to parse response: {}", e))?;
-            let files: Vec<MarketFile> = value
-                .pointer("/Data/Files")
-                .and_then(|v| v.as_array())
-                .map(|arr| {
-                    arr.iter()
-                        .filter_map(|f| {
-                            let path = f.get("Path")?.as_str()?.to_string();
-                            if !path.to_lowercase().ends_with(".gguf") {
-                                return None;
-                            }
-                            let size = f.get("Size").and_then(|s| s.as_u64()).unwrap_or(0);
-                            Some(MarketFile { name: path, size })
-                        })
-                        .collect()
-                })
-                .unwrap_or_default();
-            Ok(files)
+            Err(ierr!(
+                "获取文件列表失败（ModelScope）: {}",
+                "Failed to list files (ModelScope): {}",
+                last_err
+            ))
         }
         "huggingface" => {
-            let path = format!("/api/models/{}/tree/main", encode_repo_path(&repo));
             let mut last_err = String::new();
             for base in HF_ENDPOINTS {
-                let mut req = client.get(format!("{base}{path}"));
-                if let Some(t) = token.as_deref() {
-                    req = req.bearer_auth(t);
-                }
-                match req.send().await {
-                    Ok(resp) if resp.status().is_success() => {
-                        match resp.json::<Vec<serde_json::Value>>().await {
-                            Ok(rows) => {
-                                let files: Vec<MarketFile> = rows
-                                    .iter()
-                                    .filter_map(|r| {
-                                        let path = r.get("path")?.as_str()?.to_string();
-                                        if !path.to_lowercase().ends_with(".gguf") {
-                                            return None;
-                                        }
-                                        let size =
-                                            r.get("size").and_then(|s| s.as_u64()).unwrap_or(0);
-                                        Some(MarketFile { name: path, size })
-                                    })
-                                    .collect();
-                                return Ok(files);
-                            }
-                            Err(e) => last_err = e.to_string(),
-                        }
+                // ENG-18: try the repo's default branch candidates (main first, then
+                // master) — the hardcoded tree/main 404'd on master-only repos.
+                for rev in ["main", "master"] {
+                    let path = format!("/api/models/{}/tree/{rev}", encode_repo_path(&repo));
+                    let mut req = client.get(format!("{base}{path}"));
+                    // ENG-02: 用户 HF Token 只发给 huggingface.co 官方域
+                    if let Some(t) = token.as_deref().filter(|_| base.contains("huggingface.co")) {
+                        req = req.bearer_auth(t);
                     }
-                    Ok(resp) => last_err = format!("HTTP {}", resp.status()),
-                    Err(e) => last_err = e.to_string(),
+                    match req.send().await {
+                        Ok(resp) if resp.status().is_success() => {
+                            match resp.json::<Vec<serde_json::Value>>().await {
+                                Ok(rows) => {
+                                    let files: Vec<MarketFile> = rows
+                                        .iter()
+                                        .filter_map(|r| {
+                                            let path = r.get("path")?.as_str()?.to_string();
+                                            if !path.to_lowercase().ends_with(".gguf") {
+                                                return None;
+                                            }
+                                            let size =
+                                                r.get("size").and_then(|s| s.as_u64()).unwrap_or(0);
+                                            Some(MarketFile { name: path, size })
+                                        })
+                                        .collect();
+                                    return Ok(files);
+                                }
+                                Err(e) => last_err = e.to_string(),
+                            }
+                        }
+                        Ok(resp) => last_err = format!("HTTP {}", resp.status()),
+                        Err(e) => last_err = e.to_string(),
+                    }
                 }
             }
             Err(ierr!(
@@ -526,7 +548,9 @@ pub async fn local_model_market_files(
 
 /// Probes an NVIDIA GPU via nvidia-smi (name + VRAM); None when absent or non-NVIDIA.
 fn probe_nvidia_gpu() -> Option<(String, u64)> {
-    let out = std::process::Command::new("nvidia-smi")
+    // SEC-06: PATH-only resolution — a missing nvidia-smi means "no NVIDIA GPU".
+    let nvidia_smi = crate::utils::exec_resolve::resolve_executable("nvidia-smi")?;
+    let out = std::process::Command::new(nvidia_smi)
         .args([
             "--query-gpu=name,memory.total",
             "--format=csv,noheader,nounits",
@@ -553,8 +577,16 @@ fn probe_nvidia_gpu() -> Option<(String, u64)> {
 /// 85% of VRAM when an NVIDIA GPU with >= 4GB is present (GPU offload), otherwise 45% of
 /// system RAM (CPU inference also caps the recommendation at 9B for usable speed).
 /// Apple Silicon (no discrete VRAM) follows the RAM path with unified memory.
+/// HOR-4: probes an nvidia-smi subprocess + a full system scan — off the main thread.
 #[tauri::command]
-pub fn local_model_hardware_profile() -> Result<HardwareProfile, String> {
+pub async fn local_model_hardware_profile() -> Result<HardwareProfile, String> {
+    tokio::task::spawn_blocking(hardware_profile_inner)
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Synchronous body of [`local_model_hardware_profile`] (runs on the blocking pool).
+fn hardware_profile_inner() -> Result<HardwareProfile, String> {
     let sys = sysinfo::System::new_all();
     let cpu_brand = sys
         .cpus()
@@ -607,7 +639,14 @@ pub fn local_model_hf_token_set(app: AppHandle, token: String) -> Result<(), Str
         secure_store::delete(&app, &account)
             .map_err(|e| ierr!("清除 Token 失败: {}", "Failed to clear token: {}", e))
     } else {
-        secure_store::set_reported(&app, &account, token);
+        // ENG-13: set_reported 失败必须上抛——此前返回值被丢弃，keyring 双双
+        // 失败时用户以为已保存（secure_store 文档明确警告过这个反模式）
+        if !secure_store::set_reported(&app, &account, token) {
+            return Err(ierr!(
+                "保存 Token 失败（密钥存储不可用）",
+                "Failed to save the token (secure storage unavailable)"
+            ));
+        }
         Ok(())
     }
 }
@@ -683,6 +722,38 @@ mod tests {
         assert_eq!(merged.len(), 1);
         assert_eq!(merged[0].hf_repo.as_deref(), Some("unsloth/Qwen3-14B-GGUF"));
         assert_eq!(merged[0].ms_repo.as_deref(), Some("Qwen/Qwen3-14B-GGUF"));
+    }
+
+    /// Regression: the dolphin API returns PascalCase keys. Without the PascalCase
+    /// rename every field silently deserialized to its default (empty name), the gguf
+    /// predicate then dropped every row, and the ModelScope list was always empty.
+    #[test]
+    fn ms_rows_deserialize_realistic_dolphin_payload() {
+        let payload = r#"[
+            {"Path":"unsloth","Name":"Qwen3-8B-GGUF","Downloads":394940,"Stars":7,
+             "License":"apache-2.0","ChineseName":"\u5343\u95ee3-8B","Libraries":["gguf","pytorch"],"Tags":[]},
+            {"Path":"Qwen","Name":"Qwen3-8B","Downloads":5000000,"Stars":99,
+             "License":"apache-2.0","Libraries":["pytorch"],"Tags":[]},
+            {"Path":"broken","Name":"","Downloads":1,"Libraries":["gguf"],"Tags":[]}
+        ]"#;
+        let rows: Vec<MsListRow> = serde_json::from_str(payload).unwrap();
+        assert_eq!(rows.len(), 3);
+        // Real PascalCase fields populate (this is what the bug zeroed out)
+        assert_eq!(rows[0].path, "unsloth");
+        assert_eq!(rows[0].name, "Qwen3-8B-GGUF");
+        assert_eq!(rows[0].downloads, 394940);
+        assert_eq!(rows[0].chinese_name.as_deref(), Some("千问3-8B"));
+        assert_eq!(rows[0].license.as_deref(), Some("apache-2.0"));
+        // The gguf predicate keeps the GGUF row, drops the non-GGUF and the nameless rows
+        let kept: Vec<&MsListRow> = rows.iter().filter(|r| ms_row_is_gguf(r)).collect();
+        assert_eq!(kept.len(), 1);
+        assert_eq!(kept[0].name, "Qwen3-8B-GGUF");
+        // Field mapping flows through to the market model
+        let models = ms_to_models(rows.into_iter().filter(ms_row_is_gguf).collect());
+        assert_eq!(models.len(), 1);
+        assert_eq!(models[0].ms_repo.as_deref(), Some("unsloth/Qwen3-8B-GGUF"));
+        assert_eq!(models[0].downloads, 394940);
+        assert_eq!(models[0].chinese_name.as_deref(), Some("千问3-8B"));
     }
 
     #[test]

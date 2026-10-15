@@ -2,11 +2,16 @@
 // reviews from creeping back; each failing gate lists the exact offending locations.
 // Gate list:
 //   1. Raw Chinese JSX leaks (user-facing copy must go through i18n)
+//   1b. Raw English JSX text leaks (same rule, English heuristic — 阶段5)
 //   2. Hardcoded color ban (new colors must use CSS variables; allowlist covers built-in defaults and the standalone export template)
+//   2b. Literal rgba/rgb ratchet (same rule as 2 for the rgb() form; legacy stock capped, may only go down — 阶段5)
 //   3. `any` ratchet (only the existing baseline is allowed; new `any` raises the count and fails)
-//   4. Frontend/backend layering (features/ must not call raw invoke; services/plugins/core/utils must not depend on commands)
+//   4. Frontend/backend layering (features/ AND core/utils must not call raw invoke; services/plugins/core/utils must not depend on commands)
 //   5. File-size caps (component/module line counts)
 //   6. Backend command registration consistency (every #[tauri::command] must be registered in lib.rs)
+//   7. Native <select> ban (all dropdowns must use shared/components/Dropdown.tsx)
+//   8. Native <input type="checkbox"> ban (all checkboxes must use shared/components/Checkbox.tsx)
+//   9. Character-glyph ban in JSX text (× ✕ ✓ ✗ → ← ▲ ▼ as an element's sole content — use Icon)
 import { readFile, readdir } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
@@ -78,11 +83,60 @@ for await (const p of walk(path.join(root, 'src'), ['.tsx', '.ts'])) {
   }
 }
 
+// ---------- Gate 2b: literal rgba/rgb ratchet (阶段5) ----------
+// Numeric rgba()/rgb() literals are the same class of violation as #hex (theme
+// colors must come from CSS variables), but the codebase carries a large legacy
+// stock — a ratchet (like the `any` gate) instead of an instant red. var()-driven
+// forms — rgba(var(--primary-rgb),0.5) — are compliant and excluded by the regex.
+// 2026-10 阶段4第5项批次后存量 173，棘轮随实际存量收紧 179 → 173。
+const RGBA_BASELINE = 173;
+{
+  let rgbaCount = 0;
+  const rgbaFiles = [];
+  for await (const p of walk(path.join(root, 'src'), ['.tsx', '.ts'])) {
+    const r = rel(p);
+    if (COLOR_ALLOWLIST.has(r)) continue;
+    const c = await read(p);
+    const n = (c.match(/rgba?\(\s*\d/g) || []).length;
+    if (n > 0) {
+      rgbaCount += n;
+      if (n >= 10) rgbaFiles.push(`${r}(${n})`);
+    }
+  }
+  if (rgbaCount > RGBA_BASELINE) {
+    push(
+      'color-rgba-ratchet',
+      '(global)',
+      `字面 rgba/rgb 计数 ${rgbaCount} 超过基准 ${RGBA_BASELINE}（新颜色必须走 CSS 变量）；最大来源: ${rgbaFiles.slice(0, 5).join(', ')}`,
+    );
+  }
+}
+
+// ---------- Gate 1b: raw English JSX text (阶段5 heuristic) ----------
+// Same class as the Chinese gate above: user-facing copy must go through t().
+// The pattern is deliberately narrow — a JSX text NODE (>English prose<), at least
+// two words — so imports/comments/tailwind classes cannot false-positive.
+{
+  const EN_NODE_RE = />\s*[A-Z][A-Za-z0-9 ,.!?%:()'"-]{8,}?\s*</g;
+  for await (const p of walk(path.join(root, 'src'), ['.tsx'])) {
+    const c = await read(p);
+    EN_NODE_RE.lastIndex = 0;
+    let m;
+    while ((m = EN_NODE_RE.exec(c)) !== null) {
+      const line = c.slice(0, m.index).split('\n').length;
+      const text = m[0].slice(1, -1).trim();
+      push('i18n-en-jsx', rel(p), `L${line} 裸英文 JSX 文案（应走 t()）: ${text.slice(0, 50)}`);
+    }
+  }
+}
+
 // ---------- Gate 3: `any` ratchet (baseline cap, may only go down) ----------
 // Baseline: the `any` count recorded when this gate first went green after the split.
 // New code must not add `any`; lower the baseline as the backlog is cleaned up.
-// Known hotspots: chatEventListeners.ts / ChatPage.tsx (listen<any> payloads pending typing).
-const ANY_BASELINE = 163;
+// 2026-10 阶段5（FE-21）：流事件载荷类型化（streamPayloads.ts）+ chatEventListeners
+// 全量收编后 163 → 100；主发送路径迁移 + CHAT-10 清理抽出（阶段4 第2项切片6，
+// PR #73）净降 → 97；MessageBubble 拆分 5 处 as-any 删除 → 93；sendMessagePrep 抽出 → 90；slashHandlers 抽出（prompt 型复用 buildOutgoingMessages，两 handler 的 any 注解经 setDatas 泛型推断消除）→ 78；branchFromMessage 的 (a: any) 注解经泛型推断消除 → 77。
+const ANY_BASELINE = 77;
 let anyCount = 0;
 const anyFiles = [];
 for await (const p of walk(path.join(root, 'src'), ['.tsx', '.ts'])) {
@@ -109,6 +163,15 @@ for await (const p of walk(path.join(root, 'src/features'), ['.tsx', '.ts'])) {
     push('layering-fe', rel(p), '组件层裸 invoke—— 必须经 core/api/ 域封装');
   }
 }
+// FE-25: the utils layer is also barred from direct invoke — Tauri wrappers belong
+// to core/api; utils keeps pure logic only (cache/lookup/formatting). core/api itself
+// and core/store (stateful domains managing their own IPC lifecycle) are exempt.
+for await (const p of walk(path.join(root, 'src/core/utils'), ['.tsx', '.ts'])) {
+  const c = await read(p);
+  if (/\binvoke[<(]/.test(c)) {
+    push('layering-utils', rel(p), 'utils 层裸 invoke —— Tauri 封装必须下沉到 core/api/');
+  }
+}
 // Backend: lower layers must not depend back on the commands layer
 for await (const p of walk(path.join(root, 'src-tauri/src'), ['.rs'])) {
   const r = rel(p);
@@ -122,13 +185,17 @@ for await (const p of walk(path.join(root, 'src-tauri/src'), ['.rs'])) {
 
 // ---------- Gate 5: file-size caps ----------
 // Size caps are growth gates (they pin the current state and ratchet down as components get split):
-//   .tsx current max ChatPage 2016 -> cap 2050 (split target <900)
-//   .rs  current max llm/mod.rs 2518 -> cap 2550 (target <1100)
+//   .tsx current max ChatInterface 2058 -> cap 2060 (split target <900; 2026-10 审查修复批次
+//   为 ChatInterface 增加了 CHAT-11 重发停止等待辅助 +13 行，棘轮随本次调整，拆分目标不变)
+//   .rs  current max llm/mod.rs 2763 -> cap 2770 (target <1100; 2026-10 审查修复批次
+//   为 mod.rs 增加了 panic 兜底 epilogue / SSE 字节缓冲 / SEC-19 fail-closed / SEC-09
+//   命令触碰标记接线 / LOOP-5 Phase-2 取消响应 / LOOP-7 锁外序列化 / LOOP-8 计数
+//   下沉 ~270 行安全与修复代码，棘轮随批次调整，拆分目标不变)
 const SIZE_LIMITS = [
-  { dir: 'src/features', ext: ['.tsx'], max: 2050 },
+  { dir: 'src/features', ext: ['.tsx'], max: 2060 },
   { dir: 'src/core', ext: ['.ts'], max: 900 },
   { dir: 'src/shared', ext: ['.tsx'], max: 900 },
-  { dir: 'src-tauri/src', ext: ['.rs'], max: 2550 },
+  { dir: 'src-tauri/src', ext: ['.rs'], max: 2770 },
 ];
 for (const { dir, ext, max } of SIZE_LIMITS) {
   for await (const p of walk(path.join(root, dir), ext)) {
@@ -160,16 +227,73 @@ for (const { dir, ext, max } of SIZE_LIMITS) {
     push('cmd-dispatch', 'src-tauri/src/lib.rs', '未注册的命令: ' + missing.join(', '));
 }
 
+// ---------- Gate 7: native <select> ban ----------
+// Dropdowns are unified on shared/components/Dropdown.tsx (settings rows use
+// variant="ghost", matching the language selector). Native <select> elements style
+// inconsistently across platforms/themes and bypass that component's keyboard and
+// acrylic behavior — zero tolerance, no baseline.
+for await (const p of walk(path.join(root, 'src'), ['.tsx'])) {
+  const c = await read(p);
+  if (/<select[\s>]/.test(c)) {
+    push(
+      'dropdown-native-select',
+      rel(p),
+      '原生 <select> —— 统一使用 shared/components/Dropdown.tsx',
+    );
+  }
+}
+
+// ---------- Gate 8: native checkbox ban ----------
+// Checkboxes are unified on shared/components/Checkbox.tsx (the ShareModal style is
+// the codified standard). Zero tolerance, no baseline.
+for await (const p of walk(path.join(root, 'src'), ['.tsx'])) {
+  const c = await read(p);
+  if (/<input[^>]*type=["']checkbox["']/.test(c)) {
+    push(
+      'checkbox-native',
+      rel(p),
+      '原生 <input type="checkbox"> —— 统一使用 shared/components/Checkbox.tsx',
+    );
+  }
+}
+
+// ---------- Gate 9: character-glyph ban in JSX text ----------
+// A symbol character as an element's SOLE text content is an icon substitute — those
+// must be <Icon> SVGs (e.g. ×/✕ as a close cross, → as an arrow). String contexts
+// (confirm/alert/template literals) are exempt and not matched by this pattern.
+const GLYPH_RE = />\s*[×✕✓✗→←▲▼]\s*</g;
+for await (const p of walk(path.join(root, 'src'), ['.tsx'])) {
+  const c = await read(p);
+  GLYPH_RE.lastIndex = 0;
+  let m;
+  while ((m = GLYPH_RE.exec(c)) !== null) {
+    const line = c.slice(0, m.index).split('\n').length;
+    push('icon-glyph', rel(p), `L${line} 字符代替图标: ${m[0].trim()} —— 使用 <Icon> SVG`);
+  }
+}
+
 // ---------- Output ----------
 if (errors.length) {
   console.error('架构门禁失败（' + errors.length + ' 项）:');
   for (const e of errors) console.error('  ' + e);
   process.exit(1);
 }
-console.log(
-  'gates passed: i18n-jsx=0, color=0, any=' +
-    anyCount +
-    ' (≤' +
-    ANY_BASELINE +
-    '), layering=0, file-size=0, cmd-dispatch=0',
-);
+{
+  // Recount for the summary line (rgba count lives in a scoped block above)
+  let rgbaTotal = 0;
+  for await (const p of walk(path.join(root, 'src'), ['.tsx', '.ts'])) {
+    if (COLOR_ALLOWLIST.has(rel(p))) continue;
+    rgbaTotal += ((await read(p)).match(/rgba?\(\s*\d/g) || []).length;
+  }
+  console.log(
+    'gates passed: i18n-jsx=0, i18n-en-jsx=0, color=0, rgba=' +
+      rgbaTotal +
+      ' (≤' +
+      RGBA_BASELINE +
+      '), any=' +
+      anyCount +
+      ' (≤' +
+      ANY_BASELINE +
+      '), layering=0, file-size=0, cmd-dispatch=0',
+  );
+}

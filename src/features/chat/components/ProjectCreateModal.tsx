@@ -6,7 +6,7 @@ import { createSignal, onMount } from 'solid-js';
 import { createProject, validateProjectPath } from '../../../core/api/project';
 import { open } from '@tauri-apps/plugin-dialog';
 import { reportError, t } from '../../../core/i18n';
-import { btnGhost, btnPrimary, btnSecondary } from '../../../shared/components/buttonStyles';
+import { btnGhost, btnPrimaryOutline, btnSecondary } from '../../../shared/components/buttonStyles';
 
 interface Props {
   onClose: () => void;
@@ -58,7 +58,7 @@ export default function ProjectCreateModal(props: Props) {
         }
       }
     } catch (e) {
-      console.warn('选择目录失败:', e);
+      console.warn('Failed to pick directory:', e);
     }
   };
 
@@ -89,7 +89,7 @@ export default function ProjectCreateModal(props: Props) {
         'opacity-0 pointer-events-none': isExiting() || isEntering(),
         'opacity-100': !isExiting() && !isEntering(),
       }}
-      class="fixed inset-0 z-[2000] flex items-center justify-center bg-black/60 transition-all duration-200 ease-out"
+      class="fixed inset-0 z-[2000] flex items-center justify-center bg-black/25 transition-all duration-200 ease-out"
       onClick={handleClose}
     >
       <div
@@ -97,7 +97,10 @@ export default function ProjectCreateModal(props: Props) {
           'scale-95 opacity-0': isExiting() || isEntering(),
           'scale-100 opacity-100': !isExiting() && !isEntering(),
         }}
-        class="bg-[var(--color-dark-700)] border border-white/15 rounded-xl shadow-2xl w-full max-w-md p-6 transition-all duration-500 ease-out transform"
+        class="backdrop-blur-[24px] border border-white/15 rounded-xl shadow-2xl w-full max-w-md p-6 transition-all duration-500 ease-out transform"
+        style={{
+          background: 'var(--dialog-bg)',
+        }}
         onClick={(e) => e.stopPropagation()}
       >
         <h2 class="text-lg font-semibold text-white mb-4">{t('project.new')}</h2>
@@ -140,7 +143,7 @@ export default function ProjectCreateModal(props: Props) {
           <button class={'px-4 py-2 text-sm ' + btnGhost} onClick={handleClose}>
             {t('common.cancel')}
           </button>
-          <button class={btnPrimary} onClick={handleCreate} disabled={loading()}>
+          <button class={btnPrimaryOutline} onClick={handleCreate} disabled={loading()}>
             {loading() ? t('project.creating') : t('project.create')}
           </button>
         </div>

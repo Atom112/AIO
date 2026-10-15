@@ -53,14 +53,8 @@ fn load_cache(app: &AppHandle) -> CacheFile {
 
 fn save_cache(app: &AppHandle, cache: &CacheFile) -> Result<(), String> {
     let path = cache_path(app)?;
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-    }
-    std::fs::write(
-        path,
-        serde_json::to_string(cache).map_err(|error| error.to_string())?,
-    )
-    .map_err(|error| error.to_string())
+    let body = serde_json::to_string(cache).map_err(|error| error.to_string())?;
+    crate::core::fs_util::atomic_write(&path, body.as_bytes()).map_err(|error| error.to_string())
 }
 
 fn text(value: &Value, keys: &[&str]) -> String {
@@ -86,6 +80,18 @@ fn parse_inputs(value: &Value, target: &str) -> Vec<McpCatalogInput> {
             if name.is_empty() {
                 return None;
             }
+            // MCP-14: registry-controlled names must be strictly shaped. A catalog
+            // entry declaring env names like NODE_OPTIONS / npm_config_* would let its
+            // own defaultValue inject loader/config settings into the npx/uvx process;
+            // header names outside the HTTP token grammar are dropped likewise.
+            if target == "env" && !is_safe_env_name(&name) {
+                tracing::warn!("[mcp-catalog] 丢弃非法 env 名称: {name}");
+                return None;
+            }
+            if target == "header" && !is_safe_header_name(&name) {
+                tracing::warn!("[mcp-catalog] 丢弃非法 header 名称: {name}");
+                return None;
+            }
             Some(McpCatalogInput {
                 name,
                 description: text(item, &["description"]),
@@ -98,18 +104,142 @@ fn parse_inputs(value: &Value, target: &str) -> Vec<McpCatalogInput> {
         .collect()
 }
 
+/// Env names that turn a registry default value into code execution or package-manager
+/// config injection when passed to the npx/uvx child (MCP-14).
+const DANGEROUS_ENV_NAMES: &[&str] = &[
+    "NODE_OPTIONS",
+    "LD_PRELOAD",
+    "LD_LIBRARY_PATH",
+    "DYLD_INSERT_LIBRARIES",
+    "DYLD_LIBRARY_PATH",
+    "PYTHONHOME",
+    "PYTHONSTARTUP",
+    "BASH_ENV",
+    "ENV",
+];
+/// Env-name prefixes that reconfigure the package manager itself (MCP-14).
+const DANGEROUS_ENV_PREFIXES: &[&str] = &["npm_config_", "pip_", "uv_"];
+
+/// MCP-14: POSIX env-name grammar plus the loader/config denylist.
+fn is_safe_env_name(name: &str) -> bool {
+    if name.is_empty() || name.len() > 64 {
+        return false;
+    }
+    let mut chars = name.chars();
+    match chars.next() {
+        Some(c) if c.is_ascii_alphabetic() || c == '_' => {}
+        _ => return false,
+    }
+    if !chars.all(|c| c.is_ascii_alphanumeric() || c == '_') {
+        return false;
+    }
+    !DANGEROUS_ENV_NAMES
+        .iter()
+        .any(|d| d.eq_ignore_ascii_case(name))
+        && !DANGEROUS_ENV_PREFIXES
+            .iter()
+            .any(|p| name.to_ascii_lowercase().starts_with(p))
+}
+
+/// MCP-14: HTTP header token grammar (RFC 7230 tchar minus separators of concern).
+fn is_safe_header_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 128
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_'))
+}
+
+/// MCP-14: npm (@scope/name) / PyPI name grammar — anything that could read as a
+/// flag (leading '-') or carry shell/flag separators is rejected outright, so a
+/// hostile registry entry cannot smuggle options into the npx/uvx argv.
+fn is_safe_package_identifier(s: &str) -> bool {
+    !s.is_empty()
+        && !s.starts_with('-')
+        && s.len() <= 214
+        && s.bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-' | b'/' | b'@'))
+}
+
+/// MCP-14: version grammar for `pkg@ver` / `pkg==ver` — no leading '-', no spaces or
+/// metacharacters (a version field of `1.0 --flag` must never reach the argv).
+fn is_safe_package_version(s: &str) -> bool {
+    !s.is_empty()
+        && !s.starts_with('-')
+        && s.len() <= 64
+        && s.bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-' | b'+'))
+}
+
+/// MCP-14: conservative shape for registry-provided runtime/package arguments —
+/// bare values or long flags only. Short flags (`-e`, `-p`, …) are the classic
+/// npx/uvx injection vector; whitespace/quotes/metachars/backslashes are all rejected.
+fn is_safe_catalog_arg(s: &str) -> bool {
+    if s.is_empty() || s.len() > 128 {
+        return false;
+    }
+    if s.starts_with('-') && !s.starts_with("--") {
+        return false;
+    }
+    if s.contains("..") {
+        return false;
+    }
+    s.bytes().all(|b| {
+        b.is_ascii_alphanumeric()
+            || matches!(
+                b,
+                b'.' | b'_' | b'-' | b'=' | b':' | b'/' | b'+' | b'@' | b','
+            )
+    })
+}
+
+/// Filters registry-provided argument values down to the safe shape (MCP-14),
+/// dropping and logging everything else.
+pub(crate) fn filter_catalog_args(args: Vec<String>) -> Vec<String> {
+    let mut out = Vec::with_capacity(args.len());
+    for arg in args {
+        if is_safe_catalog_arg(&arg) {
+            out.push(arg);
+        } else {
+            tracing::warn!("[mcp-catalog] 丢弃非法 runtime 参数: {arg}");
+        }
+    }
+    out
+}
+
+/// MCP-14: plaintext-HTTP remotes only for loopback hosts — an `http://` public
+/// remote would carry auth headers and all tool traffic in cleartext.
+fn is_catalog_remote_url_allowed(url: &str) -> bool {
+    if url.starts_with("https://") {
+        return true;
+    }
+    if let Some(rest) = url.strip_prefix("http://") {
+        let host = rest
+            .split(['/', ':'])
+            .next()
+            .unwrap_or("")
+            .trim_start_matches('[')
+            .trim_end_matches(']')
+            .to_ascii_lowercase();
+        return matches!(host.as_str(), "localhost" | "127.0.0.1" | "::1");
+    }
+    false
+}
+
 fn parse_argument_values(value: Option<&Value>) -> Vec<String> {
-    value
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(|item| {
-            item.as_str().map(str::to_string).or_else(|| {
-                let value = text(item, &["value", "default"]);
-                (!value.is_empty()).then_some(value)
+    filter_catalog_args(
+        value
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|item| {
+                item.as_str().map(str::to_string).or_else(|| {
+                    let value = text(item, &["value", "default"]);
+                    (!value.is_empty()).then_some(value)
+                })
             })
-        })
-        .collect()
+            .collect(),
+    )
 }
 
 fn parse_server(raw: &Value) -> Option<McpCatalogServer> {
@@ -141,7 +271,9 @@ fn parse_server(raw: &Value) -> Option<McpCatalogServer> {
         .flatten()
     {
         let url = text(remote, &["url"]);
-        if url.starts_with("http://") || url.starts_with("https://") {
+        // MCP-14: plaintext HTTP only for loopback remotes — auth headers and tool
+        // traffic to a public host over http:// would be readable by anyone in path.
+        if is_catalog_remote_url_allowed(&url) {
             let kind = text(remote, &["type"]);
             let mut inputs = parse_inputs(remote.get("headers").unwrap_or(&Value::Null), "header");
             inputs.extend(parse_inputs(
@@ -171,15 +303,24 @@ fn parse_server(raw: &Value) -> Option<McpCatalogServer> {
             continue;
         }
         let identifier = text(package, &["identifier", "name"]);
-        if identifier.is_empty() {
+        if !is_safe_package_identifier(&identifier) {
+            // MCP-14: a hostile entry could otherwise smuggle flags into npx/uvx argv
+            tracing::warn!("[mcp-catalog] 丢弃非法包标识: {identifier}");
             continue;
         }
         let package_version = {
             let value = text(package, &["version"]);
-            if value.is_empty() {
+            let candidate = if value.is_empty() {
                 version.clone()
             } else {
                 value
+            };
+            // MCP-14: a version field of "1.0 --flag" must never reach the argv;
+            // unsafe versions fall back to "latest" semantics instead.
+            if is_safe_package_version(&candidate) {
+                candidate
+            } else {
+                String::new()
             }
         };
         let mut args = if registry_type == "npm" {
@@ -338,6 +479,114 @@ pub async fn list_mcp_catalog(
     parse_page(&body)
 }
 
+// ====== Full-registry local table (real-time client-side search) ======
+
+/// Cache key for the full parsed catalog snapshot (the body is the serialized
+/// Vec<McpCatalogServer> — parsed once at fetch time, not raw page JSON).
+const FULL_CACHE_KEY: &str = "__full_catalog_v1__";
+/// Pages are fetched at the API's max page size.
+const FULL_PAGE_SIZE: usize = 100;
+/// Safety cap on the pagination loop (100 pages x 100 = 10k servers).
+const FULL_MAX_PAGES: usize = 100;
+
+/// Fetch EVERY registry page and return the parsed catalog as one table. The
+/// snapshot is disk-cached with the same 6h TTL as paged fetches; the refresh
+/// button is the only path that force-refetches. A mid-loop page failure falls
+/// back to the stale snapshot when one exists (an older complete table beats a
+/// fresh partial one for search completeness).
+async fn fetch_full_catalog(
+    app: &AppHandle,
+    force_refresh: bool,
+) -> Result<Vec<McpCatalogServer>, String> {
+    let stale = |cache: &CacheFile| {
+        cache
+            .entries
+            .get(FULL_CACHE_KEY)
+            .and_then(|entry| serde_json::from_str::<Vec<McpCatalogServer>>(&entry.body).ok())
+    };
+    let mut cache = load_cache(app);
+    if !force_refresh {
+        if let Some(entry) = cache.entries.get(FULL_CACHE_KEY) {
+            if now().saturating_sub(entry.fetched_at) < CACHE_TTL_SECS {
+                if let Ok(list) = serde_json::from_str::<Vec<McpCatalogServer>>(&entry.body) {
+                    return Ok(list);
+                }
+            }
+        }
+    }
+
+    let client = reqwest::Client::builder()
+        .user_agent("AIO MCP Registry/0.4")
+        .connect_timeout(Duration::from_secs(5))
+        .timeout(Duration::from_secs(25))
+        .build()
+        .map_err(|error| error.to_string())?;
+
+    let mut all: Vec<McpCatalogServer> = Vec::new();
+    let mut cursor: Option<String> = None;
+    for page_idx in 0..FULL_MAX_PAGES {
+        let mut url = url::Url::parse(REGISTRY_URL).map_err(|error| error.to_string())?;
+        {
+            let mut query = url.query_pairs_mut();
+            query.append_pair("limit", &FULL_PAGE_SIZE.to_string());
+            query.append_pair("version", "latest");
+            if let Some(c) = cursor.as_deref().filter(|c| !c.is_empty()) {
+                query.append_pair("cursor", c);
+            }
+        }
+        let page = match client.get(url).send().await {
+            Ok(resp) if resp.status().is_success() => {
+                let body = resp.text().await.map_err(|error| error.to_string())?;
+                parse_page(&body)?
+            }
+            outcome => {
+                tracing::warn!(
+                    "[mcp-catalog] 全量拉取第 {} 页失败: {:?}",
+                    page_idx + 1,
+                    outcome
+                );
+                if let Some(list) = stale(&cache) {
+                    return Ok(list);
+                }
+                if all.is_empty() {
+                    return Err(ierr!(
+                        "请求 MCP Registry 失败（第 {} 页）",
+                        "Failed to request the MCP Registry (page {})",
+                        page_idx + 1
+                    ));
+                }
+                break;
+            }
+        };
+        all.extend(page.servers);
+        match page.next_cursor.filter(|c| !c.is_empty()) {
+            Some(next) => cursor = Some(next),
+            None => break,
+        }
+    }
+
+    tracing::info!("[mcp-catalog] 全量目录拉取完成: {} 个 server", all.len());
+    cache.entries.insert(
+        FULL_CACHE_KEY.to_string(),
+        CacheEntry {
+            fetched_at: now(),
+            body: serde_json::to_string(&all).map_err(|error| error.to_string())?,
+        },
+    );
+    let _ = save_cache(app, &cache);
+    Ok(all)
+}
+
+/// Return the full registry table (disk-cached 6h; `force_refresh` re-downloads).
+/// The market page filters this locally for real-time search.
+#[tauri::command]
+pub async fn list_mcp_catalog_all(
+    app: AppHandle,
+    force_refresh: bool,
+) -> Result<Vec<McpCatalogServer>, String> {
+    fetch_full_catalog(&app, force_refresh).await
+}
+
 /// Check whether the runtime required by a catalog package is available on PATH.
 #[tauri::command]
 pub async fn check_mcp_catalog_runtime(package_type: String) -> Result<bool, String> {
@@ -347,18 +596,30 @@ pub async fn check_mcp_catalog_runtime(package_type: String) -> Result<bool, Str
         "http" => return Ok(true),
         _ => return Ok(false),
     };
-    #[cfg(windows)]
-    let status = tokio::process::Command::new("cmd")
-        .args(["/C", command, "--version"])
-        .kill_on_drop(true)
-        .status()
-        .await;
-    #[cfg(not(windows))]
-    let status = tokio::process::Command::new(command)
-        .arg("--version")
-        .kill_on_drop(true)
-        .status()
-        .await;
+    // SEC-06: PATH-only resolution — an unresolvable runtime simply counts as absent.
+    let Some(runtime) = crate::utils::exec_resolve::resolve_executable(command) else {
+        return Ok(false);
+    };
+    let Some(shell) =
+        crate::utils::exec_resolve::resolve_executable(if cfg!(windows) { "cmd" } else { "sh" })
+    else {
+        return Ok(false);
+    };
+    // Windows batch wrappers (npx.cmd) must run through cmd /C; POSIX shebangs run via sh -c.
+    let status = if cfg!(windows) {
+        tokio::process::Command::new(shell)
+            .args(["/C", &runtime.to_string_lossy(), "--version"])
+            .kill_on_drop(true)
+            .status()
+            .await
+    } else {
+        tokio::process::Command::new(shell)
+            .arg("-c")
+            .arg(format!("{} --version", runtime.to_string_lossy()))
+            .kill_on_drop(true)
+            .status()
+            .await
+    };
     Ok(status.map(|value| value.success()).unwrap_or(false))
 }
 
@@ -413,6 +674,24 @@ pub async fn install_mcp_catalog_server(
     let mut env = BTreeMap::new();
     let mut headers = BTreeMap::new();
     for input in &delivery.inputs {
+        // MCP-14 defense-in-depth: the frontend normally forwards catalog-parsed
+        // inputs, but a crafted install request must not be able to smuggle
+        // loader/config env names (NODE_OPTIONS / npm_config_* …) into the child.
+        if input.target == "header" {
+            if !is_safe_header_name(&input.name) {
+                tracing::warn!(
+                    "[mcp-catalog] 安装请求中的非法 header 名称被拒绝: {}",
+                    input.name
+                );
+                continue;
+            }
+        } else if !is_safe_env_name(&input.name) {
+            tracing::warn!(
+                "[mcp-catalog] 安装请求中的非法 env 名称被拒绝: {}",
+                input.name
+            );
+            continue;
+        }
         let secret_value = request
             .secrets
             .get(&input.name)
@@ -460,7 +739,9 @@ pub async fn install_mcp_catalog_server(
             } else {
                 "uvx".into()
             },
-            args: delivery.args.clone(),
+            // MCP-14 defense-in-depth: re-filter the argv even though the parse path
+            // already validated it (crafted install requests bypass the parse path).
+            args: filter_catalog_args(delivery.args.clone()),
             env,
             cwd: None,
         },
@@ -478,7 +759,7 @@ pub async fn install_mcp_catalog_server(
         enabled_tools: Vec::new(),
         auto_start: true,
         has_stored_secret: !request.secrets.is_empty(),
-        // Catalog-installed servers are untrusted by default: tools require per-call approval in Auto/Workflow mode, marked trusted only after user confirmation
+        // Catalog-installed servers are untrusted by default: tools require per-call approval in Auto (完全权限) mode, marked trusted only after user confirmation
         trusted: false,
         from_catalog: Some(CatalogRef {
             catalog_id: "official-mcp-registry".into(),
@@ -487,7 +768,20 @@ pub async fn install_mcp_catalog_server(
             delivery: Some(delivery.kind.clone()),
         }),
     };
-    mcp::upsert_config(&app, config.clone()).map_err(|error| error.to_string())?;
+    // Install scope: project-level writes ship with the repo (`.aio/mcp-servers.json`)
+    // and — like add_mcp_server's project path — record trust immediately (the install
+    // click through the UI is the user's authorization; the P0-1 gate targets
+    // repo-shipped configs, not UI installs). Global installs stay in the app-data file.
+    match &request.project_id {
+        Some(pid) => {
+            let project_path = mcp::resolve_project_path(&app, pid).map_err(|e| e.to_string())?;
+            mcp::upsert_project_config(&project_path, config.clone()).map_err(|e| e.to_string())?;
+            mcp::mark_project_server_trusted(&app, &project_path, &config);
+        }
+        None => {
+            mcp::upsert_config(&app, config.clone()).map_err(|error| error.to_string())?;
+        }
+    }
     Ok(config)
 }
 
@@ -505,5 +799,88 @@ mod tests {
         assert_eq!(page.servers[0].deliveries.len(), 2);
         assert_eq!(page.next_cursor.as_deref(), Some("next"));
         assert_eq!(page.servers[0].deliveries[1].args[1], "@example/demo@1.2.3");
+    }
+
+    /// MCP-14: registry-controlled strings feeding the npx/uvx argv are strictly
+    /// shaped — hostile identifiers/versions/args/remote URLs are dropped or degraded.
+    #[test]
+    fn registry_injection_vectors_are_neutralized() {
+        // Package identifiers: scoped/plain ok; flag-look-alikes and metachar strings rejected.
+        assert!(is_safe_package_identifier("@example/demo"));
+        assert!(is_safe_package_identifier("demo-server"));
+        assert!(!is_safe_package_identifier("--cache=/tmp/x"));
+        assert!(!is_safe_package_identifier("demo;rm"));
+        assert!(!is_safe_package_identifier(""));
+        // Versions: semver-ish ok; option smuggling rejected (falls back to empty).
+        assert!(is_safe_package_version("1.2.3"));
+        assert!(is_safe_package_version("2.0.0-beta.1+build"));
+        assert!(!is_safe_package_version("1.0 --flag"));
+        assert!(!is_safe_package_version("-e"));
+        // Runtime args: long flags and bare values pass; short flags, shell
+        // metachars, whitespace, backslashes, traversal are all dropped.
+        assert!(is_safe_catalog_arg("--env"));
+        assert!(is_safe_catalog_arg("--endpoint=https://api.example.com/v1"));
+        assert!(is_safe_catalog_arg("stdio"));
+        assert!(!is_safe_catalog_arg("-e"));
+        assert!(!is_safe_catalog_arg("a b"));
+        assert!(!is_safe_catalog_arg("--x;y"));
+        assert!(!is_safe_catalog_arg("--x|y"));
+        assert!(!is_safe_catalog_arg("$(x)"));
+        assert!(!is_safe_catalog_arg("C:\\evil"));
+        assert!(!is_safe_catalog_arg("a`b`"));
+        assert!(!is_safe_catalog_arg("../etc/passwd"));
+        // Env names: POSIX shape, loader/config vectors denied.
+        assert!(is_safe_env_name("API_TOKEN"));
+        assert!(!is_safe_env_name("NODE_OPTIONS"));
+        assert!(!is_safe_env_name("npm_config_cache"));
+        assert!(!is_safe_env_name("PIP_CONFIG_FILE"));
+        assert!(!is_safe_env_name("2FA_KEY"));
+        assert!(is_safe_env_name("node_env_file"));
+        // Header names: token grammar only.
+        assert!(is_safe_header_name("X-Api-Key"));
+        assert!(!is_safe_header_name("X Api: Key"));
+        // Remote URLs: https always; http only on loopback.
+        assert!(is_catalog_remote_url_allowed("https://example.com/mcp"));
+        assert!(is_catalog_remote_url_allowed("http://localhost:3333/mcp"));
+        assert!(is_catalog_remote_url_allowed("http://127.0.0.1/mcp"));
+        assert!(!is_catalog_remote_url_allowed("http://api.example.com/mcp"));
+        assert!(!is_catalog_remote_url_allowed("ftp://example.com"));
+    }
+
+    /// End-to-end parse: a hostile registry entry loses its flag-smuggling
+    /// identifier/args/version entirely instead of reaching the delivery.
+    #[test]
+    fn hostile_registry_entry_is_sanitized() {
+        let page = parse_page(
+            r#"{"servers":[{"server":{"name":"io.evil/x","title":"Evil","version":"1.0 --cache=/tmp/x","packages":[
+                {"registryType":"npm","identifier":"--inspect-brk","runtimeArguments":["--userconfig=C:/evil/.npmrc"],"packageArguments":["-e","ok-flag"]},
+                {"registryType":"npm","identifier":"good-pkg","runtimeArguments":["-p","evil"],"packageArguments":["--stdio"]},
+                {"registryType":"pypi","identifier":"another-pkg"}
+            ]}}]}"#,
+        )
+        .unwrap();
+        let deliveries = &page.servers[0].deliveries;
+        let all_args: Vec<&str> = deliveries
+            .iter()
+            .flat_map(|d| d.args.iter().map(String::as_str))
+            .collect();
+        // The option-smuggling identifier never reaches the argv
+        assert!(all_args.iter().all(|a| !a.contains("inspect")));
+        // npm config injection is dropped
+        assert!(all_args.iter().all(|a| !a.contains("userconfig")));
+        // Short-flag injection is dropped (the "-y" AIO adds itself is fine)
+        assert!(all_args.iter().all(|a| *a != "-p" && *a != "-e"));
+        // The smuggling version falls back to bare identifiers, not "pkg@1.0 --cache"
+        assert!(all_args.iter().all(|a| !a.contains("--cache")));
+        // The legitimate package keeps its legitimate flag
+        let good = deliveries
+            .iter()
+            .find(|d| d.args.contains(&"good-pkg".to_string()))
+            .expect("合法包应保留");
+        assert!(good.args.contains(&"--stdio".to_string()));
+        // pypi delivery intact (bare identifier, no version)
+        assert!(deliveries
+            .iter()
+            .any(|d| d.command == "uvx" && d.args.contains(&"another-pkg".to_string())));
     }
 }

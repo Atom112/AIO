@@ -47,6 +47,23 @@ impl MemoryStore {
         Ok(())
     }
 
+    /// Whether any fact carries a stored vector (harness round 6: the dead-config
+    /// self-heal only fires when NOTHING has vectors — a library with live vectors
+    /// is never auto-reset). On query errors assume vectors exist (conservative:
+    /// never reset on an unreadable library).
+    pub fn has_any_vectors(&self) -> bool {
+        let Ok(conn) = self.conn.lock() else {
+            return true; // unreadable = conservative
+        };
+        conn.query_row(
+            "SELECT COUNT(*) FROM facts WHERE embedding IS NOT NULL",
+            [],
+            |r| r.get::<_, i64>(0),
+        )
+        .map(|n| n > 0)
+        .unwrap_or(true)
+    }
+
     /// Read a meta key's value.
     /// Read the project-level embedding config (returns (local default, false) when unset).
     pub fn embedding_cfg(&self) -> (MemoryEmbeddingConfig, bool) {
@@ -132,6 +149,28 @@ impl MemoryStore {
     pub fn meta_put(&self, key: &str, value: &str) -> Result<(), String> {
         let conn = self.conn.lock().map_err(|e| e.to_string())?;
         self.meta_put_inner(&conn, key, value)
+    }
+
+    /// MEM-9 atomic expiring-lock claim: one statement does the whole check-and-set
+    /// (INSERT … ON CONFLICT DO UPDATE … WHERE old value <= cutoff), so two
+    /// concurrent claimants cannot both pass a separate read-then-write sequence.
+    /// ISO 8601 timestamps in one format sort lexicographically, making the
+    /// comparison valid directly in SQL. Returns true when this caller holds the lock.
+    pub fn meta_try_lock(
+        &self,
+        key: &str,
+        cutoff_iso: &str,
+        now_value: &str,
+    ) -> Result<bool, String> {
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        let claimed = conn
+            .execute(
+                "INSERT INTO meta (k, v) VALUES (?1, ?2)
+                 ON CONFLICT(k) DO UPDATE SET v = ?2 WHERE meta.v <= ?3",
+                params![key, now_value, cutoff_iso],
+            )
+            .map_err(|e| e.to_string())?;
+        Ok(claimed > 0)
     }
 
     pub(crate) fn meta_put_inner(

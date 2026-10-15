@@ -26,6 +26,28 @@ const ThinkBlock: Component<ThinkBlockProps> = (props) => {
     return userExpanded() ?? false;
   };
 
+  // Round-11 feedback: the reasoning body is a capped scroll box (max-h-360px) but had
+  // no follow logic — while streaming, new text grew below the fold and had to be
+  // scrolled to manually. Follow the bottom while streaming; a wheel-up pauses the
+  // follow, scrolling back to the bottom (50px threshold) resumes it.
+  let bodyRef: HTMLDivElement | undefined;
+  let bodyFollowPaused = false;
+  const handleBodyWheel = (e: WheelEvent) => {
+    if (e.deltaY < 0) bodyFollowPaused = true;
+  };
+  const handleBodyScroll = () => {
+    const el = bodyRef;
+    if (!el) return;
+    if (el.scrollHeight - el.scrollTop - el.clientHeight < 50) bodyFollowPaused = false;
+  };
+  createEffect(() => {
+    const content = props.content; // track content growth
+    void content;
+    if (props.isStreaming && bodyRef && !bodyFollowPaused) {
+      bodyRef.scrollTop = bodyRef.scrollHeight;
+    }
+  });
+
   const [elapsedMs, setElapsedMs] = createSignal(0);
   let startTs = 0;
 
@@ -83,7 +105,12 @@ const ThinkBlock: Component<ThinkBlockProps> = (props) => {
         </span>
       </button>
       <div class="px-3 overflow-hidden">
-        <div class="text-[12.5px] leading-relaxed italic whitespace-pre-wrap break-words text-white/55 px-2.5 py-2 rounded-md bg-black/15 border-l-2 border-l-white/[0.08] max-h-[360px] overflow-y-auto">
+        <div
+          ref={bodyRef}
+          onWheel={handleBodyWheel}
+          onScroll={handleBodyScroll}
+          class="text-[12.5px] leading-relaxed italic whitespace-pre-wrap break-words text-white/55 px-2.5 py-2 rounded-md bg-black/15 border-l-2 border-l-white/[0.08] max-h-[360px] overflow-y-auto"
+        >
           {props.content}
         </div>
       </div>

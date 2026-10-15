@@ -16,6 +16,8 @@ import {
   initEngineScan,
 } from './core/store/store';
 import { t } from './core/i18n';
+import { reconcileActiveStreamKeys } from './core/api/chat';
+import { setIsThinking } from './core/store/stream';
 
 // Initialize the project list on app startup
 initProjects();
@@ -28,6 +30,16 @@ initProfileModelOverrides();
 initCustomSubagentProfiles();
 // Scan for installed inference engines on app startup
 initEngineScan();
+// Reconcile stream ownership after a webview reload: backend turn tasks survive a
+// reload while the module-level stop keys do not — re-import them so the stop button
+// and the thinking state keep working for in-flight turns.
+void reconcileActiveStreamKeys()
+  .then((n) => {
+    if (n > 0) setIsThinking(true);
+  })
+  .catch(() => {
+    // Backend not ready yet (cold start): no streams to reconcile.
+  });
 
 /**
  * Detect the weak Linux/WebKitGTK rendering engine and enable performance-degradation styles

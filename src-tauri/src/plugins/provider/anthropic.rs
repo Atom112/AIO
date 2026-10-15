@@ -61,6 +61,12 @@ impl ProviderPlugin for AnthropicProvider {
         }
     }
 
+    /// 阶段4 第5项（聊天路径统一出口）: the chat endpoint /v1/messages uses the
+    /// same native auth as the models endpoint.
+    fn apply_chat_auth(&self, req: RequestBuilder, api_key: &str) -> RequestBuilder {
+        self.apply_auth(req, api_key)
+    }
+
     fn parse_models(&self, body: &serde_json::Value) -> Vec<LiveModel> {
         let arr = body
             .get("data")
@@ -91,10 +97,11 @@ impl ProviderPlugin for AnthropicProvider {
 
 // ===== Anthropic Messages API conversion layer =====
 
-/// Returns whether the URL is a real Anthropic API endpoint (not a compatible proxy).
+/// Returns whether the URL points at the real Anthropic API host (not a compatible proxy).
+/// PROV-5: host-suffix match — the historic whole-string `contains` check let
+/// `api.anthropic.com.evil.io` claim the native plugin and receive x-api-key.
 pub fn is_anthropic_url(api_url: &str) -> bool {
-    let u = api_url.to_lowercase();
-    u.contains("api.anthropic.com")
+    super::url_host_matches(api_url, "api.anthropic.com")
 }
 
 /// Converts an OpenAI-compatible request body into an Anthropic Messages API request body.
@@ -271,6 +278,40 @@ pub fn to_anthropic_body(openai: &serde_json::Value) -> Result<serde_json::Value
         .unwrap_or(false)
     {
         body.insert("stream".into(), json!(true));
+    }
+    // PROV-14: forward sampling params — the historic conversion silently dropped
+    // temperature/top_p, so Anthropic turns always ran at the API default regardless
+    // of the configured value.
+    if let Some(t) = openai.get("temperature").and_then(|v| v.as_f64()) {
+        body.insert("temperature".into(), json!(t));
+    }
+    if let Some(p) = openai.get("top_p").and_then(|v| v.as_f64()) {
+        body.insert("top_p".into(), json!(p));
+    }
+    // Reasoning effort -> extended thinking budget (low 2048 / medium 8192 / high 16384
+    // tokens; the API floor is 1024). Anthropic requires max_tokens > budget_tokens, so
+    // the cap is raised when needed, and temperature is dropped (thinking pins it to 1).
+    if let Some(effort) = openai.get("reasoning_effort").and_then(|v| v.as_str()) {
+        let budget: u64 = match effort {
+            "low" => 2048,
+            "medium" => 8192,
+            "high" => 16384,
+            _ => 0,
+        };
+        if budget > 0 {
+            body.insert(
+                "thinking".into(),
+                json!({"type": "enabled", "budget_tokens": budget}),
+            );
+            let max_tokens = body
+                .get("max_tokens")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(8192);
+            if max_tokens <= budget {
+                body.insert("max_tokens".into(), json!(budget + 8192));
+            }
+            body.remove("temperature");
+        }
     }
     // tool_choice: auto (default) omitted; none -> {type:"none"}; a specific function -> {type:"tool", name}
     if let Some(tc) = openai.get("tool_choice") {
@@ -450,6 +491,8 @@ pub fn anthropic_sse_message_usage(val: &serde_json::Value) -> Option<(u32, Opti
 }
 
 /// Handles one Anthropic stream event: accumulates content/thinking/tool calls/usage and emits delta events to the frontend.
+/// Returns `Some(err)` on a fatal `error` event (PROV-2: previously swallowed by
+/// the `_ => {}` arm — the truncated reply was then persisted as a success).
 #[allow(clippy::too_many_arguments)]
 pub fn handle_anthropic_stream_event(
     val: &serde_json::Value,
@@ -463,12 +506,18 @@ pub fn handle_anthropic_stream_event(
     input_tokens: &mut u32,
     output_tokens: &mut u32,
     cached_input_tokens: &mut u32,
-) {
+    suppress_events: bool,
+) -> Option<String> {
     let etype = val.get("type").and_then(|v| v.as_str()).unwrap_or("");
     match etype {
         "message_start" => {
             if let Some((inp, cached)) = anthropic_sse_message_usage(val) {
-                *input_tokens = inp;
+                // PROV-15: normalize to OpenAI prompt_tokens semantics, where cached
+                // tokens are a SUBSET of the prompt total. Anthropic reports
+                // input_tokens WITHOUT cache_read_input_tokens, so the unified
+                // input_tokens / context-window display and the cache-hit ratio
+                // used provider-inconsistent denominators before.
+                *input_tokens = inp.saturating_add(cached.unwrap_or(0));
                 // Keep the previous value when the event carries no cache-hit count (do not overwrite with 0)
                 if let Some(c) = cached {
                     *cached_input_tokens = c;
@@ -494,7 +543,7 @@ pub fn handle_anthropic_stream_event(
                     .unwrap_or("")
                     .to_string();
                 tc_accum.insert(index, (id.clone(), name.clone(), String::new()));
-                if !id.is_empty() && !name.is_empty() {
+                if !id.is_empty() && !name.is_empty() && !suppress_events {
                     let _ = window.emit(
                         ev::LLM_TOOL_CALL,
                         crate::core::models::ToolCallPayload {
@@ -519,21 +568,23 @@ pub fn handle_anthropic_stream_event(
                 "text_delta" => {
                     if let Some(s) = anthropic_sse_text_delta(val) {
                         content_buf.push_str(s);
-                        let _ = window.emit(
-                            ev::LLM_CHUNK,
-                            crate::core::models::StreamPayload {
-                                assistant_id: assistant_id.to_string(),
-                                topic_id: topic_id.to_string(),
-                                content: s.to_string(),
-                                done: false,
-                                error: None,
-                                input_tokens: None,
-                                output_tokens: None,
-                                context_tokens: None,
-                                cached_input_tokens: None,
-                                images: None,
-                            },
-                        );
+                        if !suppress_events {
+                            let _ = window.emit(
+                                ev::LLM_CHUNK,
+                                crate::core::models::StreamPayload {
+                                    assistant_id: assistant_id.to_string(),
+                                    topic_id: topic_id.to_string(),
+                                    content: s.to_string(),
+                                    done: false,
+                                    error: None,
+                                    input_tokens: None,
+                                    output_tokens: None,
+                                    context_tokens: None,
+                                    cached_input_tokens: None,
+                                    images: None,
+                                },
+                            );
+                        }
                     }
                 }
                 "thinking_delta" => {
@@ -542,21 +593,23 @@ pub fn handle_anthropic_stream_event(
                         .and_then(|v| v.as_str())
                     {
                         reasoning_buf.push_str(s);
-                        let _ = window.emit(
-                            ev::LLM_REASONING,
-                            crate::core::models::StreamPayload {
-                                assistant_id: assistant_id.to_string(),
-                                topic_id: topic_id.to_string(),
-                                content: s.to_string(),
-                                done: false,
-                                error: None,
-                                input_tokens: None,
-                                output_tokens: None,
-                                context_tokens: None,
-                                cached_input_tokens: None,
-                                images: None,
-                            },
-                        );
+                        if !suppress_events {
+                            let _ = window.emit(
+                                ev::LLM_REASONING,
+                                crate::core::models::StreamPayload {
+                                    assistant_id: assistant_id.to_string(),
+                                    topic_id: topic_id.to_string(),
+                                    content: s.to_string(),
+                                    done: false,
+                                    error: None,
+                                    input_tokens: None,
+                                    output_tokens: None,
+                                    context_tokens: None,
+                                    cached_input_tokens: None,
+                                    images: None,
+                                },
+                            );
+                        }
                     }
                 }
                 "input_json_delta" => {
@@ -596,13 +649,48 @@ pub fn handle_anthropic_stream_event(
                 });
             }
         }
+        // PROV-2: mid-stream error events surface instead of being swallowed
+        "error" => {
+            return Some(
+                anthropic_sse_error_message(val)
+                    .unwrap_or_else(|| "Anthropic stream error".to_string()),
+            );
+        }
         _ => {}
     }
+    None
+}
+
+/// PROV-2: 提取 Anthropic `error` 流事件的消息（None = 非 error 事件或无消息）。
+pub fn anthropic_sse_error_message(val: &serde_json::Value) -> Option<String> {
+    if val.get("type").and_then(|v| v.as_str()) != Some("error") {
+        return None;
+    }
+    val.get("error")
+        .and_then(|e| e.get("message"))
+        .and_then(|m| m.as_str())
+        .map(String::from)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// PROV-2 回归：error 事件的消息必须被提取出来（此前被 `_ => {}` 吞掉，
+    /// 截断回复被当成功持久化）。
+    #[test]
+    fn anthropic_stream_error_event_surfaces() {
+        let val = json!({
+            "type": "error",
+            "error": {"type": "overloaded_error", "message": "Overloaded"}
+        });
+        assert_eq!(
+            anthropic_sse_error_message(&val),
+            Some("Overloaded".to_string())
+        );
+        let not_error = json!({"type": "message_delta", "usage": {"output_tokens": 3}});
+        assert_eq!(anthropic_sse_error_message(&not_error), None);
+    }
 
     #[test]
     fn converts_openai_body_to_anthropic() {
@@ -704,5 +792,99 @@ mod tests {
     fn detects_anthropic_url() {
         assert!(is_anthropic_url("https://api.anthropic.com"));
         assert!(!is_anthropic_url("https://api.openai.com"));
+        // PROV-5: host-suffix dispatch — the historic whole-string contains check
+        // let these look-alikes claim the native plugin (x-api-key sent to a foreign host).
+        assert!(!is_anthropic_url("https://api.anthropic.com.evil.io"));
+        assert!(!is_anthropic_url("https://evil.io/proxy/api.anthropic.com"));
+        assert!(!is_anthropic_url("https://notanthropic.com"));
+        // Real subdomains of the official host still match.
+        assert!(is_anthropic_url("https://proxy.api.anthropic.com"));
+        assert!(is_anthropic_url("https://api.anthropic.com/v1/messages"));
+        // Schemeless input is parsed against https://.
+        assert!(is_anthropic_url("api.anthropic.com/v1"));
+    }
+
+    /// PROV-14: temperature/top_p must carry over — the historic conversion
+    /// silently dropped them, so Anthropic turns always ran at the API default.
+    #[test]
+    fn sampling_params_are_forwarded() {
+        let body = to_anthropic_body(&json!({
+            "model": "m",
+            "messages": [{"role": "user", "content": "hi"}],
+            "temperature": 0.2,
+            "top_p": 0.9
+        }))
+        .unwrap();
+        assert_eq!(body["temperature"], 0.2);
+        assert_eq!(body["top_p"], 0.9);
+        // Absent params stay absent (Anthropic default applies)
+        let body2 = to_anthropic_body(&json!({
+            "model": "m",
+            "messages": [{"role": "user", "content": "hi"}]
+        }))
+        .unwrap();
+        assert!(body2.get("temperature").is_none());
+        assert!(body2.get("top_p").is_none());
+    }
+
+    /// Reasoning effort maps to an extended-thinking budget; the max_tokens cap is
+    /// raised above the budget (API requirement) and temperature is dropped.
+    #[test]
+    fn reasoning_effort_maps_to_thinking_budget() {
+        // low: budget 2048, default max_tokens 8192 already above it -> untouched
+        let low = to_anthropic_body(&json!({
+            "model": "m",
+            "messages": [{"role": "user", "content": "hi"}],
+            "reasoning_effort": "low",
+            "temperature": 0.2
+        }))
+        .unwrap();
+        assert_eq!(low["thinking"]["type"], "enabled");
+        assert_eq!(low["thinking"]["budget_tokens"], 2048);
+        assert_eq!(low["max_tokens"], 8192);
+        assert!(low.get("temperature").is_none());
+
+        // high: budget 16384 > default max_tokens 8192 -> cap raised above the budget
+        let high = to_anthropic_body(&json!({
+            "model": "m",
+            "messages": [{"role": "user", "content": "hi"}],
+            "reasoning_effort": "high"
+        }))
+        .unwrap();
+        assert_eq!(high["thinking"]["budget_tokens"], 16384);
+        assert!(high["max_tokens"].as_u64().unwrap() > 16384);
+
+        // unknown effort value: no thinking block
+        let none = to_anthropic_body(&json!({
+            "model": "m",
+            "messages": [{"role": "user", "content": "hi"}],
+            "reasoning_effort": "minimal"
+        }))
+        .unwrap();
+        assert!(none.get("thinking").is_none());
+    }
+
+    /// PROV-15: the unified input_tokens must follow OpenAI prompt_tokens
+    /// semantics (cached ⊂ total). Anthropic's input_tokens EXCLUDES
+    /// cache_read_input_tokens — the message_start handler adds them back so
+    /// the context-window display and cache-hit ratio use one denominator.
+    #[test]
+    fn message_start_input_tokens_include_cached() {
+        let ev = json!({
+            "type": "message_start",
+            "message": {"usage": {"input_tokens": 30, "cache_read_input_tokens": 70}}
+        });
+        let (inp, cached) = anthropic_sse_message_usage(&ev).expect("usage 应解析");
+        assert_eq!((inp, cached), (30, Some(70)));
+        // Normalized total = 100 (matches OpenAI prompt_tokens semantics)
+        assert_eq!(inp + cached.unwrap_or(0), 100);
+        // No cache-hit count: total stays the reported input
+        let ev2 = json!({
+            "type": "message_start",
+            "message": {"usage": {"input_tokens": 42}}
+        });
+        let (inp2, cached2) = anthropic_sse_message_usage(&ev2).expect("usage 应解析");
+        assert_eq!((inp2, cached2), (42, None));
+        assert_eq!(inp2 + cached2.unwrap_or(0), 42);
     }
 }

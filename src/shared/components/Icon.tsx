@@ -67,7 +67,8 @@ export type IconName =
   | 'bug'
   | 'pen-line'
   | 'flask-check'
-  | 'compass';
+  | 'compass'
+  | 'rotate-ccw';
 
 /**
  * Icon path factory table.
@@ -226,6 +227,14 @@ const PATHS: Record<IconName, () => JSX.Element> = {
     <>
       <rect x="9" y="9" width="11" height="11" rx="2" />
       <path d="M5 15V5a2 2 0 0 1 2-2h10" />
+    </>
+  ),
+  // Restore/resume glyph (Lucide rotate-ccw): counter-clockwise arrow — used by the
+  // checkpoint-resume button ("从断点继续").
+  'rotate-ccw': () => (
+    <>
+      <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+      <path d="M3 3v5h5" />
     </>
   ),
   model: () => (

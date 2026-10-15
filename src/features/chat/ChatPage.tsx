@@ -87,7 +87,6 @@ import {
 } from '../../core/store/layout';
 import { unregisterCommand, resolveSlashCommand } from '../../core/shortcuts';
 import { t } from '../../core/i18n';
-import Icon from '../../shared/components/Icon';
 import { isImageGenModel, modelSupportsReasoningEffort } from '../../core/utils/models';
 import ProjectSidebar from './components/ProjectSidebar';
 import ProjectSettingsModal from './components/ProjectSettingsModal';
@@ -775,19 +774,6 @@ const ChatPage: Component = () => {
           when={!activeSubagentView()}
           fallback={<SubagentConversationView topic={activeTopic()} />}
         >
-          {/* Checkpoint resume entry: banner for crash-orphaned turns */}
-          <Show when={activeCheckpoint() && !isThinking()}>
-            <button
-              type="button"
-              class="flex items-center gap-2 px-4 py-1.5 text-xs border-b cursor-pointer bg-transparent hover:bg-white/[0.03] transition-colors"
-              style={{ color: 'rgb(var(--primary-rgb))', 'border-color': 'var(--border-dim)' }}
-              onClick={() => void handleResumeTurn()}
-            >
-              <Icon name="refresh" size={12} />
-              <span>{t('agent.checkpoint.resume')}</span>
-            </button>
-          </Show>
-
           <ChatInterface
             activeTopic={activeTopic()}
             isThinking={isThinking()}
@@ -802,6 +788,8 @@ const ChatPage: Component = () => {
             handleStopGeneration={handleStopGeneration}
             handleFileUpload={handleFileUpload}
             pendingApprovals={pendingApprovals()}
+            checkpointAvailable={!!activeCheckpoint()}
+            onResumeCheckpoint={() => void handleResumeTurn()}
             onResolveApproval={(id) =>
               setPendingApprovals((prev) => prev.filter((a) => a.approvalId !== id))
             }

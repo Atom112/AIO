@@ -29,6 +29,7 @@ import {
 } from './utils/topicActions';
 import { useMessageSelection } from './hooks/useMessageSelection';
 import { useCheckpointResume } from './hooks/useCheckpointResume';
+import { sanitizeLoadedAssistants } from './utils/interruptedCleanup';
 import { buildOutgoingMessages, resolveOutgoingContent } from './utils/sendMessagePrep';
 import { handleSlashActionMessage, handleSlashPromptMessage } from './utils/slashHandlers';
 import { cleanupFailedPlaceholder } from './utils/failedTurnCleanup';
@@ -577,7 +578,10 @@ const ChatPage: Component = () => {
     if (isFirstAppLaunch) {
       loadAssistants()
         .then(async (loaded) => {
-          let finalAssistants = [...loaded];
+          // Close crash-leftover interrupted states (calling toolCalls / running steps
+          // can never resolve after a restart) and drop dead round-start placeholders.
+          const sanitized = sanitizeLoadedAssistants(loaded);
+          let finalAssistants = [...sanitized.assistants];
 
           // 1. ensure the default assistant exists
           let defaultAsst = finalAssistants.find((a) => a.id === DEFAULT_ASST_ID);
@@ -589,6 +593,10 @@ const ChatPage: Component = () => {
             await saveSingleAssistantToBackend(DEFAULT_ASST_ID);
           } else {
             setDatas('assistants', finalAssistants);
+          }
+          // Persist the sanitization so the cleanup is one-time (not every cold start).
+          for (const id of sanitized.changedAssistantIds) {
+            await saveSingleAssistantToBackend(id);
           }
 
           // 2. apply the default selection on app startup (cold start only)

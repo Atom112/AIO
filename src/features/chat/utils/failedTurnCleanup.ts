@@ -22,6 +22,50 @@ type FailedAssistantMessage = Message & {
   images?: unknown;
 };
 
+/** True when an assistant message is a placeholder nothing ever landed in. */
+export function isUntouchedAssistantPlaceholder(msg: Message): boolean {
+  const m = msg as FailedAssistantMessage;
+  return (
+    !m.content &&
+    !m.reasoning &&
+    (m.agentSteps ?? []).length === 0 &&
+    (m.toolCalls ?? []).length === 0 &&
+    !m.images
+  );
+}
+
+/**
+ * Closes running steps / orphaned calling tools on ONE assistant message as
+ * interrupted (shared by the failed-turn cleanup and the cold-load crash sanitize).
+ * `now` sets the closed-step duration when given (mid-session cleanup); the cold-load
+ * path omits it — a crashed turn's true runtime is unknowable, so no duration is set.
+ */
+export function closeInterruptedMessage(msg: Message, now?: number): Message {
+  const m = msg as FailedAssistantMessage;
+  const steps: AgentStep[] = m.agentSteps || [];
+  const toolCalls: ToolCallDisplay[] = m.toolCalls || [];
+  return {
+    ...m,
+    agentSteps: steps.map((s) => {
+      if (s.status !== 'running') return s;
+      const isCallingTool = s.type === 'tool_call' && s.toolCall?.state === 'calling';
+      return {
+        ...s,
+        status: isCallingTool ? ('error' as const) : ('complete' as const),
+        ...(now !== undefined ? { duration: now - s.timestamp } : {}),
+        ...(isCallingTool && s.toolCall
+          ? { toolCall: { ...s.toolCall, state: 'error' as const, error: TOOL_INTERRUPTED } }
+          : {}),
+      };
+    }),
+    toolCalls: toolCalls.some((tc) => tc.state === 'calling')
+      ? toolCalls.map((tc) =>
+          tc.state === 'calling' ? { ...tc, state: 'error' as const, error: TOOL_INTERRUPTED } : tc,
+        )
+      : toolCalls,
+  };
+}
+
 /**
  * Closes the last assistant message after a failed turn:
  * drops it when untouched, or marks running steps / calling tools as interrupted.
@@ -32,28 +76,7 @@ export function cleanupFailedPlaceholder(history: Message[], now: number = Date.
   const lastIdx = history.length - 1;
   if (lastIdx < 0 || history[lastIdx]?.role !== 'assistant') return history;
   const msg = history[lastIdx] as FailedAssistantMessage;
-  const steps: AgentStep[] = msg.agentSteps || [];
-  const toolCalls: ToolCallDisplay[] = msg.toolCalls || [];
-  const empty =
-    !msg.content && !msg.reasoning && steps.length === 0 && toolCalls.length === 0 && !msg.images;
-  if (empty) return history.slice(0, lastIdx); // drop the untouched placeholder
+  if (isUntouchedAssistantPlaceholder(msg)) return history.slice(0, lastIdx);
   // Partial stream preserved: close running steps / orphaned calling tools as interrupted
-  const closedMsg = {
-    ...msg,
-    agentSteps: steps.map((s) => {
-      if (s.status !== 'running') return s;
-      const isCallingTool = s.type === 'tool_call' && s.toolCall?.state === 'calling';
-      return {
-        ...s,
-        status: isCallingTool ? ('error' as const) : ('complete' as const),
-        duration: now - s.timestamp,
-      };
-    }),
-    toolCalls: toolCalls.some((tc) => tc.state === 'calling')
-      ? toolCalls.map((tc) =>
-          tc.state === 'calling' ? { ...tc, state: 'error' as const, error: TOOL_INTERRUPTED } : tc,
-        )
-      : toolCalls,
-  };
-  return [...history.slice(0, lastIdx), closedMsg];
+  return [...history.slice(0, lastIdx), closeInterruptedMessage(msg, now)];
 }

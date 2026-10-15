@@ -479,6 +479,114 @@ pub async fn list_mcp_catalog(
     parse_page(&body)
 }
 
+// ====== Full-registry local table (real-time client-side search) ======
+
+/// Cache key for the full parsed catalog snapshot (the body is the serialized
+/// Vec<McpCatalogServer> — parsed once at fetch time, not raw page JSON).
+const FULL_CACHE_KEY: &str = "__full_catalog_v1__";
+/// Pages are fetched at the API's max page size.
+const FULL_PAGE_SIZE: usize = 100;
+/// Safety cap on the pagination loop (100 pages x 100 = 10k servers).
+const FULL_MAX_PAGES: usize = 100;
+
+/// Fetch EVERY registry page and return the parsed catalog as one table. The
+/// snapshot is disk-cached with the same 6h TTL as paged fetches; the refresh
+/// button is the only path that force-refetches. A mid-loop page failure falls
+/// back to the stale snapshot when one exists (an older complete table beats a
+/// fresh partial one for search completeness).
+async fn fetch_full_catalog(
+    app: &AppHandle,
+    force_refresh: bool,
+) -> Result<Vec<McpCatalogServer>, String> {
+    let stale = |cache: &CacheFile| {
+        cache
+            .entries
+            .get(FULL_CACHE_KEY)
+            .and_then(|entry| serde_json::from_str::<Vec<McpCatalogServer>>(&entry.body).ok())
+    };
+    let mut cache = load_cache(app);
+    if !force_refresh {
+        if let Some(entry) = cache.entries.get(FULL_CACHE_KEY) {
+            if now().saturating_sub(entry.fetched_at) < CACHE_TTL_SECS {
+                if let Ok(list) = serde_json::from_str::<Vec<McpCatalogServer>>(&entry.body) {
+                    return Ok(list);
+                }
+            }
+        }
+    }
+
+    let client = reqwest::Client::builder()
+        .user_agent("AIO MCP Registry/0.4")
+        .connect_timeout(Duration::from_secs(5))
+        .timeout(Duration::from_secs(25))
+        .build()
+        .map_err(|error| error.to_string())?;
+
+    let mut all: Vec<McpCatalogServer> = Vec::new();
+    let mut cursor: Option<String> = None;
+    for page_idx in 0..FULL_MAX_PAGES {
+        let mut url = url::Url::parse(REGISTRY_URL).map_err(|error| error.to_string())?;
+        {
+            let mut query = url.query_pairs_mut();
+            query.append_pair("limit", &FULL_PAGE_SIZE.to_string());
+            query.append_pair("version", "latest");
+            if let Some(c) = cursor.as_deref().filter(|c| !c.is_empty()) {
+                query.append_pair("cursor", c);
+            }
+        }
+        let page = match client.get(url).send().await {
+            Ok(resp) if resp.status().is_success() => {
+                let body = resp.text().await.map_err(|error| error.to_string())?;
+                parse_page(&body)?
+            }
+            outcome => {
+                tracing::warn!(
+                    "[mcp-catalog] 全量拉取第 {} 页失败: {:?}",
+                    page_idx + 1,
+                    outcome
+                );
+                if let Some(list) = stale(&cache) {
+                    return Ok(list);
+                }
+                if all.is_empty() {
+                    return Err(ierr!(
+                        "请求 MCP Registry 失败（第 {} 页）",
+                        "Failed to request the MCP Registry (page {})",
+                        page_idx + 1
+                    ));
+                }
+                break;
+            }
+        };
+        all.extend(page.servers);
+        match page.next_cursor.filter(|c| !c.is_empty()) {
+            Some(next) => cursor = Some(next),
+            None => break,
+        }
+    }
+
+    tracing::info!("[mcp-catalog] 全量目录拉取完成: {} 个 server", all.len());
+    cache.entries.insert(
+        FULL_CACHE_KEY.to_string(),
+        CacheEntry {
+            fetched_at: now(),
+            body: serde_json::to_string(&all).map_err(|error| error.to_string())?,
+        },
+    );
+    let _ = save_cache(app, &cache);
+    Ok(all)
+}
+
+/// Return the full registry table (disk-cached 6h; `force_refresh` re-downloads).
+/// The market page filters this locally for real-time search.
+#[tauri::command]
+pub async fn list_mcp_catalog_all(
+    app: AppHandle,
+    force_refresh: bool,
+) -> Result<Vec<McpCatalogServer>, String> {
+    fetch_full_catalog(&app, force_refresh).await
+}
+
 /// Check whether the runtime required by a catalog package is available on PATH.
 #[tauri::command]
 pub async fn check_mcp_catalog_runtime(package_type: String) -> Result<bool, String> {

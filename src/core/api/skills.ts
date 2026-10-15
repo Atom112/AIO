@@ -44,6 +44,10 @@ export const refreshNpxSkill = (id: string, projectId?: string | null) =>
 export const listSkillMarket = (query: SkillMarketQuery) =>
   invoke<MarketSkill[]>('list_skill_market', query as unknown as Record<string, unknown>);
 
+/** Search the full skills.sh catalog via its JSON search API (the market pages only ship top slices). */
+export const searchSkillMarket = (query: string) =>
+  invoke<MarketSkill[]>('search_skill_market', { query });
+
 /** Download a skill from the market into a project (or global). */
 export const downloadMarketSkill = (skill: MarketSkill, projectId?: string | null) =>
   invoke<SkillConfig>('download_market_skill', {

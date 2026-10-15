@@ -33,10 +33,10 @@ import Icon from '../../../shared/components/Icon';
 import {
   btnBadge,
   btnBadgeBar,
-  btnDanger,
-  btnPrimarySm,
+  btnDangerOutline,
+  btnPrimaryOutlineSm,
   btnSecondarySm,
-  btnSuccess,
+  btnSuccessOutline,
   btnTabXs,
   tabActive,
 } from '../../../shared/components/buttonStyles';
@@ -636,7 +636,7 @@ const SkillList: Component = () => {
                           : t('skill.communityContent')}
                       </span>
                       <button
-                        class={downloaded() ? btnSuccess : btnSecondarySm}
+                        class={downloaded() ? btnSuccessOutline : btnSecondarySm}
                         disabled={downloaded() || downloadingId() === skill.id}
                         onClick={() => void download(skill)}
                       >
@@ -701,7 +701,7 @@ const SkillList: Component = () => {
                     <button class={btnBadge} onClick={() => setEditing({ ...skill })}>
                       {t('skill.edit')}
                     </button>
-                    <button class={btnDanger} onClick={() => void remove(skill.id)}>
+                    <button class={btnDangerOutline} onClick={() => void remove(skill.id)}>
                       {t('skill.remove')}
                     </button>
                   </div>
@@ -859,7 +859,7 @@ const SkillList: Component = () => {
               <button class={btnSecondarySm} onClick={() => setEditing(null)}>
                 {t('skill.cancel')}
               </button>
-              <button class={btnPrimarySm} onClick={() => void save()}>
+              <button class={btnPrimaryOutlineSm} onClick={() => void save()}>
                 {t('skill.save')}
               </button>
             </div>

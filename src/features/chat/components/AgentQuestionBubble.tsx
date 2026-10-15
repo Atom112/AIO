@@ -13,7 +13,11 @@ import { Component, createSignal, For, Show } from 'solid-js';
 import { respondAgentQuestion, type QuestionAnswerPayload } from '../../../core/api/chat';
 import Icon from '../../../shared/components/Icon';
 import { t } from '../../../core/i18n';
-import { btnPrimary, btnSecondary, btnGhost } from '../../../shared/components/buttonStyles';
+import {
+  btnPrimaryOutlineSm,
+  btnSecondary,
+  btnGhost,
+} from '../../../shared/components/buttonStyles';
 import type {
   PendingQuestion,
   QuestionOptionPayload,
@@ -176,7 +180,7 @@ const AgentQuestionBubble: Component<AgentQuestionBubbleProps> = (props) => {
           fallback={
             <button
               type="button"
-              class={btnPrimary + ' px-3 py-1.5 text-xs rounded-md'}
+              class={btnPrimaryOutlineSm}
               disabled={!allAnswered() || submitting()}
               onClick={() => void handleSubmit()}
             >
@@ -186,7 +190,7 @@ const AgentQuestionBubble: Component<AgentQuestionBubbleProps> = (props) => {
         >
           <button
             type="button"
-            class={btnPrimary + ' px-3 py-1.5 text-xs rounded-md'}
+            class={btnPrimaryOutlineSm}
             disabled={!curAnswered() || submitting()}
             onClick={() => setStepIdx(Math.min(total() - 1, curIdx() + 1))}
           >

@@ -6,7 +6,11 @@ import {
 } from '../../../core/store/store';
 import type { McpHttpTransport, McpStdioTransport, McpTransport } from '../../../core/types/mcp';
 import Icon from '../../../shared/components/Icon';
-import { btnClose, btnPrimarySm, btnSecondarySm } from '../../../shared/components/buttonStyles';
+import {
+  btnClose,
+  btnPrimaryOutlineSm,
+  btnSecondarySm,
+} from '../../../shared/components/buttonStyles';
 import { t } from '../../../core/i18n';
 
 /** One label + value row; values are security-relevant and shown in full with wrapping. */
@@ -108,7 +112,10 @@ const ProjectMcpTrustModal: Component = () => {
                     <button class={btnSecondarySm} onClick={() => dismissProjectMcpServer(cfg.id)}>
                       {t('mcp.trust.skip')}
                     </button>
-                    <button class={btnPrimarySm} onClick={() => void confirmProjectMcpServer(cfg)}>
+                    <button
+                      class={btnPrimaryOutlineSm}
+                      onClick={() => void confirmProjectMcpServer(cfg)}
+                    >
                       {t('mcp.trust.trustAndStart')}
                     </button>
                   </div>

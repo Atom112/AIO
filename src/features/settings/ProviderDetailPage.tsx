@@ -40,10 +40,10 @@ import Dropdown from '../../shared/components/Dropdown';
 import Switch from '../../shared/components/Switch';
 import { ToastBubble, useToast } from '../../shared/components/Toast';
 import {
-  btnDanger,
+  btnDangerOutline,
   btnIcon,
   btnSecondarySm,
-  btnSuccess,
+  btnSuccessOutline,
 } from '../../shared/components/buttonStyles';
 import { formatNumber, reportError, t } from '../../core/i18n';
 
@@ -814,7 +814,7 @@ const ProviderDetail: Component = () => {
               <Show when={isServerAlive() !== 'alive'}>
                 <button
                   type="button"
-                  class={btnSuccess}
+                  class={btnSuccessOutline}
                   disabled={engineActionLoading()}
                   onClick={handleStartEngine}
                 >
@@ -830,7 +830,7 @@ const ProviderDetail: Component = () => {
               <Show when={isServerAlive() === 'alive'}>
                 <button
                   type="button"
-                  class={btnDanger}
+                  class={btnDangerOutline}
                   disabled={engineActionLoading()}
                   onClick={handleStopEngine}
                 >

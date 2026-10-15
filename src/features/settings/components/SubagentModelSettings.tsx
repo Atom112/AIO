@@ -27,7 +27,7 @@ import { findModel, formatContextWindow } from '../../../core/utils/models';
 import Icon from '../../../shared/components/Icon';
 import {
   btnIcon,
-  btnPrimarySm,
+  btnPrimaryOutlineSm,
   btnSecondarySm,
   tabActive,
 } from '../../../shared/components/buttonStyles';
@@ -735,7 +735,7 @@ const SubagentModelSettings: Component = () => {
               >
                 {t('common.cancel')}
               </button>
-              <button class={btnPrimarySm} onClick={() => void handleCreate()}>
+              <button class={btnPrimaryOutlineSm} onClick={() => void handleCreate()}>
                 {t('subagent.create')}
               </button>
             </div>

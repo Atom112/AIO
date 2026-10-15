@@ -21,8 +21,8 @@ import Switch from '../../../shared/components/Switch';
 import { ToastBubble, useToast } from '../../../shared/components/Toast';
 import {
   btnBadge,
-  btnDanger,
-  btnPrimary,
+  btnDangerOutline,
+  btnPrimaryOutline,
   btnSecondary,
   btnSecondarySm,
 } from '../../../shared/components/buttonStyles';
@@ -335,7 +335,7 @@ const ProviderList: Component = () => {
               >
                 {t('common.cancel')}
               </button>
-              <button type="button" class={btnPrimary} onClick={addCustomProvider}>
+              <button type="button" class={btnPrimaryOutline} onClick={addCustomProvider}>
                 {t('common.add')}
               </button>
             </div>
@@ -516,7 +516,7 @@ const CustomProviderRow: Component<{
     />
     <button
       type="button"
-      class={btnDanger}
+      class={btnDangerOutline}
       onClick={(e) => {
         e.stopPropagation();
         props.onDelete(props.cfg.id);

@@ -6,7 +6,7 @@ import { createSignal, onMount } from 'solid-js';
 import { createProject, validateProjectPath } from '../../../core/api/project';
 import { open } from '@tauri-apps/plugin-dialog';
 import { reportError, t } from '../../../core/i18n';
-import { btnGhost, btnPrimary, btnSecondary } from '../../../shared/components/buttonStyles';
+import { btnGhost, btnPrimaryOutline, btnSecondary } from '../../../shared/components/buttonStyles';
 
 interface Props {
   onClose: () => void;
@@ -143,7 +143,7 @@ export default function ProjectCreateModal(props: Props) {
           <button class={'px-4 py-2 text-sm ' + btnGhost} onClick={handleClose}>
             {t('common.cancel')}
           </button>
-          <button class={btnPrimary} onClick={handleCreate} disabled={loading()}>
+          <button class={btnPrimaryOutline} onClick={handleCreate} disabled={loading()}>
             {loading() ? t('project.creating') : t('project.create')}
           </button>
         </div>

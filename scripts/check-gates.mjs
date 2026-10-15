@@ -10,6 +10,8 @@
 //   5. File-size caps (component/module line counts)
 //   6. Backend command registration consistency (every #[tauri::command] must be registered in lib.rs)
 //   7. Native <select> ban (all dropdowns must use shared/components/Dropdown.tsx)
+//   8. Native <input type="checkbox"> ban (all checkboxes must use shared/components/Checkbox.tsx)
+//   9. Character-glyph ban in JSX text (× ✕ ✓ ✗ → ← ▲ ▼ as an element's sole content — use Icon)
 import { readFile, readdir } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
@@ -238,6 +240,35 @@ for await (const p of walk(path.join(root, 'src'), ['.tsx'])) {
       rel(p),
       '原生 <select> —— 统一使用 shared/components/Dropdown.tsx',
     );
+  }
+}
+
+// ---------- Gate 8: native checkbox ban ----------
+// Checkboxes are unified on shared/components/Checkbox.tsx (the ShareModal style is
+// the codified standard). Zero tolerance, no baseline.
+for await (const p of walk(path.join(root, 'src'), ['.tsx'])) {
+  const c = await read(p);
+  if (/<input[^>]*type=["']checkbox["']/.test(c)) {
+    push(
+      'checkbox-native',
+      rel(p),
+      '原生 <input type="checkbox"> —— 统一使用 shared/components/Checkbox.tsx',
+    );
+  }
+}
+
+// ---------- Gate 9: character-glyph ban in JSX text ----------
+// A symbol character as an element's SOLE text content is an icon substitute — those
+// must be <Icon> SVGs (e.g. ×/✕ as a close cross, → as an arrow). String contexts
+// (confirm/alert/template literals) are exempt and not matched by this pattern.
+const GLYPH_RE = />\s*[×✕✓✗→←▲▼]\s*</g;
+for await (const p of walk(path.join(root, 'src'), ['.tsx'])) {
+  const c = await read(p);
+  GLYPH_RE.lastIndex = 0;
+  let m;
+  while ((m = GLYPH_RE.exec(c)) !== null) {
+    const line = c.slice(0, m.index).split('\n').length;
+    push('icon-glyph', rel(p), `L${line} 字符代替图标: ${m[0].trim()} —— 使用 <Icon> SVG`);
   }
 }
 

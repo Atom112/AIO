@@ -27,6 +27,7 @@ import {
   type ExportOptions,
 } from '../../../core/utils/exportConversation';
 import Icon from '../../../shared/components/Icon';
+import Checkbox from '../../../shared/components/Checkbox';
 import {
   btnClose,
   btnPrimarySm,
@@ -420,31 +421,8 @@ const ShareModal: Component<ShareModalProps> = (props) => {
   const tab = () => activeTab();
 
   // ---- filter options row (shared by markdown / screenshot / pdf) ----
-
-  /** Custom checkbox (inline component to avoid an extra file dependency) */
-  const Checkbox = (p: { checked: boolean; onChange: (v: boolean) => void; label: string }) => (
-    <label
-      class="flex items-center gap-1.5 cursor-pointer select-none hover:text-white/70 transition-colors"
-      onClick={() => p.onChange(!p.checked)}
-    >
-      <div
-        class="w-4 h-4 rounded border flex items-center justify-center shrink-0 transition-all duration-150"
-        classList={{
-          'bg-[rgba(var(--primary-rgb),0.25)] border-[rgba(var(--primary-rgb),0.4)]': p.checked,
-          'bg-transparent border-white/[0.15] hover:border-white/[0.3]': !p.checked,
-        }}
-      >
-        <Show when={p.checked}>
-          <Icon
-            name="check"
-            class="w-2.5 h-2.5"
-            style={{ color: 'rgba(var(--primary-rgb),0.9)' }}
-          />
-        </Show>
-      </div>
-      <span>{p.label}</span>
-    </label>
-  );
+  // Checkbox: the shared component (src/shared/components/Checkbox.tsx) — the style
+  // codified here historically is now the app-wide standard.
 
   const FilterOptions = () => (
     <>

@@ -3,6 +3,8 @@ import { listMcpTransports, saveMcpServerSecret } from '../../../core/api/mcp';
 import type { McpServerConfig, McpTransport, ToolSpec } from '../../../core/types/mcp';
 import { t } from '../../../core/i18n';
 import Dropdown from '../../../shared/components/Dropdown';
+import Checkbox from '../../../shared/components/Checkbox';
+import Icon from '../../../shared/components/Icon';
 import {
   btnBadge,
   btnDangerOutline,
@@ -243,27 +245,23 @@ const McpServerDetail: Component<Props> = (props) => {
           />
         </div>
         <div class="flex items-center gap-3">
-          <label class="flex items-center gap-2 text-sm cursor-pointer">
-            <input
-              type="checkbox"
-              checked={config().autoStart}
-              onChange={(e) => updateField('autoStart', e.currentTarget.checked)}
-            />
-            {t('mcp.detail.autoStart')}
-          </label>
+          <Checkbox
+            class="text-sm"
+            checked={config().autoStart}
+            onChange={(v) => updateField('autoStart', v)}
+            label={t('mcp.detail.autoStart')}
+          />
           <span class="text-xs" style={{ color: 'rgba(var(--text-base-rgb),0.4)' }}>
             {t('mcp.detail.autoStartHint')}
           </span>
         </div>
         <div class="flex items-center gap-3">
-          <label class="flex items-center gap-2 text-sm cursor-pointer">
-            <input
-              type="checkbox"
-              checked={config().trusted ?? false}
-              onChange={(e) => updateField('trusted', e.currentTarget.checked)}
-            />
-            {t('mcp.detail.trusted')}
-          </label>
+          <Checkbox
+            class="text-sm"
+            checked={config().trusted ?? false}
+            onChange={(v) => updateField('trusted', v)}
+            label={t('mcp.detail.trusted')}
+          />
           <span class="text-xs" style={{ color: 'rgba(var(--text-base-rgb),0.4)' }}>
             {t('mcp.detail.trustedHint')}
           </span>
@@ -337,7 +335,7 @@ const McpServerDetail: Component<Props> = (props) => {
                           onInput={(e) => updateStdioArg(idx(), e.currentTarget.value)}
                         />
                         <button class={btnDangerOutline} onClick={() => removeStdioArg(idx())}>
-                          ×
+                          <Icon name="x" size={12} />
                         </button>
                       </div>
                     )}
@@ -403,7 +401,7 @@ const McpServerDetail: Component<Props> = (props) => {
                           {t('mcp.detail.saveToKeychain')}
                         </button>
                         <button class={btnDangerOutline} onClick={() => removeEnvEntry(k)}>
-                          ×
+                          <Icon name="x" size={12} />
                         </button>
                       </div>
                     )}
@@ -533,7 +531,7 @@ const McpServerDetail: Component<Props> = (props) => {
                         {t('mcp.detail.saveToKeychain')}
                       </button>
                       <button class={btnDangerOutline} onClick={() => removeHeaderEntry(k)}>
-                        ×
+                        <Icon name="x" size={12} />
                       </button>
                     </div>
                   )}
@@ -595,19 +593,15 @@ const McpServerDetail: Component<Props> = (props) => {
             <div class="flex flex-col gap-1 max-h-40 overflow-y-auto">
               <For each={availableTools()}>
                 {(tool) => (
-                  <label
-                    class="flex items-start gap-2 text-xs px-2 py-1 rounded cursor-pointer"
+                  <Checkbox
+                    class="items-start gap-2 text-xs px-2 py-1 rounded"
                     style={{ background: 'rgba(var(--text-base-rgb),0.03)' }}
+                    checked={
+                      config().enabledTools.length === 0 ||
+                      config().enabledTools.includes(tool.function.name)
+                    }
+                    onChange={() => toggleTool(tool.function.name)}
                   >
-                    <input
-                      type="checkbox"
-                      checked={
-                        config().enabledTools.length === 0 ||
-                        config().enabledTools.includes(tool.function.name)
-                      }
-                      onChange={() => toggleTool(tool.function.name)}
-                      class="mt-0.5"
-                    />
                     <div class="flex-1 min-w-0">
                       <div class="font-mono" style={{ color: 'rgba(var(--text-base-rgb),0.85)' }}>
                         {tool.function.name}
@@ -616,7 +610,7 @@ const McpServerDetail: Component<Props> = (props) => {
                         {tool.function.description}
                       </div>
                     </div>
-                  </label>
+                  </Checkbox>
                 )}
               </For>
             </div>

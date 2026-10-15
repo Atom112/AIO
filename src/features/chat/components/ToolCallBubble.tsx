@@ -54,7 +54,11 @@ const ToolCallBubble: Component<Props> = (props) => {
               <Show
                 when={props.state === 'error'}
                 fallback={
-                  <span style={{ color: 'var(--color-success)', 'font-size': '10px' }}>✓</span>
+                  <Icon
+                    name="check"
+                    class="w-2.5 h-2.5"
+                    style={{ color: 'var(--color-success)' }}
+                  />
                 }
               >
                 <Icon

@@ -226,7 +226,7 @@ const UsageSettings: Component = () => {
                         }}
                         title={t('usage.clearDate')}
                       >
-                        ✕
+                        <Icon name="x" size={10} />
                       </button>
                     </div>
                   </Show>

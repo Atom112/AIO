@@ -97,7 +97,7 @@ const ProblemsPanel: Component = () => {
               onClick={() => setProblemsPanelVisible(false)}
               title={t('chat.closePanel')}
             >
-              ✕
+              <Icon name="x" size={12} />
             </button>
           </div>
         </div>

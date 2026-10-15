@@ -21,6 +21,8 @@ import {
   startMcpServerAndRefresh,
   currentProjectId,
   currentProject,
+  dismissProjectMcpServer,
+  refreshMcpToolsCache,
 } from '../../../core/store/store';
 import type {
   McpCatalogDelivery,
@@ -221,6 +223,10 @@ const McpServerList: Component = () => {
       const next = { ...mcpServers() };
       delete next[id];
       setMcpServers(next);
+      // A pending trust confirmation must not outlive the deleted server
+      dismissProjectMcpServer(id);
+      // Drop the deleted server's tools from the display cache immediately
+      void refreshMcpToolsCache();
       const affected = datas.assistants
         .filter((a) => a.mcpServerIds?.includes(id))
         .map((a) => a.id);

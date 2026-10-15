@@ -9,6 +9,7 @@
  * Project-level RAG memory settings (model selection) stay in the project memory panel; this page only manages global models.
  */
 import { Component, createMemo, createSignal, For, Show, onMount } from 'solid-js';
+import { createStore, reconcile } from 'solid-js/store';
 import { listen } from '@tauri-apps/api/event';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import Icon, { type IconName } from '../../../shared/components/Icon';
@@ -34,7 +35,12 @@ import { formatSize } from '../../../core/utils/format';
 import { EVENTS } from '../../../core/api/events';
 
 const EmbeddingModelSettings: Component = () => {
-  const [models, setModels] = createSignal<EmbeddingModelInfo[]>([]);
+  // Model list is a Solid store (not a signal): <For> is keyed by item REFERENCE, so
+  // replacing an item object (as the old `setModels(prev => prev.map(...))` did) tore
+  // the row down and remounted it — replaying the row-in animation on every enable
+  // toggle. The store + reconcile patches properties in place: the item proxy keeps
+  // its identity (row DOM survives) and property reads stay reactive.
+  const [models, setModels] = createStore<EmbeddingModelInfo[]>([]);
   const [installDir, setInstallDir] = createSignal('');
   const [dirInput, setDirInput] = createSignal('');
   const [savingDir, setSavingDir] = createSignal(false);
@@ -47,8 +53,8 @@ const EmbeddingModelSettings: Component = () => {
   // Paused models (keep the .part resume data; show a "resume download" button)
   const [pausedIds, setPausedIds] = createSignal<Record<string, boolean>>({});
 
-  const embedModels = createMemo(() => models().filter((m) => m.kind === 'embed'));
-  const rerankModels = createMemo(() => models().filter((m) => m.kind === 'rerank'));
+  const embedModels = createMemo(() => models.filter((m) => m.kind === 'embed'));
+  const rerankModels = createMemo(() => models.filter((m) => m.kind === 'rerank'));
 
   /** Transient feedback line (auto-clears; sits on its own row under the page title) */
   let noticeTimer = 0;
@@ -61,7 +67,8 @@ const EmbeddingModelSettings: Component = () => {
   const load = async () => {
     try {
       const [list, dir] = await Promise.all([embeddingModelList(), embeddingModelsGetDir()]);
-      setModels(list);
+      // reconcile by id: unchanged models keep their row DOM (no re-animation on reload)
+      setModels(reconcile(list, { key: 'id' }));
       setInstallDir(dir);
       setDirInput(dir);
     } catch {
@@ -103,7 +110,8 @@ const EmbeddingModelSettings: Component = () => {
   const toggleEnabled = async (m: EmbeddingModelInfo) => {
     try {
       const next = await embeddingModelSetEnabled(m.id, !m.enabled);
-      setModels((prev) => prev.map((x) => (x.id === next.id ? next : x)));
+      // reconcile at the matched item: patches fields in place, keeps the row alive
+      setModels((x) => x.id === next.id, reconcile(next));
     } catch {
       showNotice(t('settings.embeddingModels.toggleFail'));
     }

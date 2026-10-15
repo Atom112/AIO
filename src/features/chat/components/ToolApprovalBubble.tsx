@@ -31,13 +31,19 @@ const ToolApprovalBubble: Component<ToolApprovalBubbleProps> = (props) => {
     }
   };
 
-  // Always allow for this session — the rule is auto-derived from the approval context
-  // (execute_command → first command token; file writes → same directory; MCP → same server and tool)
+  // Always allow — project-bound calls persist the derived rule into .aio/permissions.json
+  // (never asks again, survives restarts); project-less calls fall back to session scope.
+  // Derived rule: execute_command → first command token; file writes → same file; MCP → same server + tool.
+  const persistable = () => props.approval.projectBound === true;
   const handleAlwaysAllow = async () => {
     try {
-      await respondToolApproval(props.approval.approvalId, true, 'session');
+      await respondToolApproval(
+        props.approval.approvalId,
+        true,
+        persistable() ? 'always' : 'session',
+      );
     } catch (e) {
-      console.error('Failed to send session-allow result:', e);
+      console.error('Failed to send always-allow result:', e);
     } finally {
       props.onResolved(props.approval.approvalId);
     }
@@ -139,9 +145,18 @@ const ToolApprovalBubble: Component<ToolApprovalBubbleProps> = (props) => {
           <Icon name="x" size={13} />
           <span>{t('agent.approval.deny')}</span>
         </button>
-        <button type="button" class={btnSuccess} onClick={handleAlwaysAllow}>
+        <button
+          type="button"
+          class={btnSuccess}
+          onClick={handleAlwaysAllow}
+          title={persistable() ? t('agent.approval.allowAlwaysPersistHint') : undefined}
+        >
           <Icon name="check" size={13} />
-          <span>{t('agent.approval.allowAlways')}</span>
+          <span>
+            {persistable()
+              ? t('agent.approval.allowAlwaysPersist')
+              : t('agent.approval.allowAlways')}
+          </span>
         </button>
         <button type="button" class={btnSuccess} onClick={handleApprove}>
           <Icon name="check" size={13} />

@@ -1,5 +1,7 @@
 {
   "agent.approval.allowAlways": "Always allow this session",
+  "agent.approval.allowAlwaysPersist": "Always allow",
+  "agent.approval.allowAlwaysPersistHint": "Saved to the project .aio/permissions.json; you won't be asked again",
   "agent.approval.allowOnce": "Allow once",
   "agent.approval.approve": "Approve",
   "agent.approval.dangerous": "Dangerous action",

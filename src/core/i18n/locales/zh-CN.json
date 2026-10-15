@@ -1,5 +1,7 @@
 {
   "agent.approval.allowAlways": "本次会话始终允许",
+  "agent.approval.allowAlwaysPersist": "始终允许",
+  "agent.approval.allowAlwaysPersistHint": "写入项目 .aio/permissions.json，以后不再询问",
   "agent.approval.allowOnce": "允许一次",
   "agent.approval.approve": "批准",
   "agent.approval.dangerous": "危险操作",

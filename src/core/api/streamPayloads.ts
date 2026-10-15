@@ -89,6 +89,8 @@ export interface ToolApprovalRequestedPayload {
   reason: string;
   preview_diff?: string;
   file_path?: string;
+  /** True when the call is project-bound: "always allow" then persists to .aio/permissions.json. */
+  project_bound: boolean;
 }
 
 /** `subagent-start`: a delegated subagent began. */

@@ -691,6 +691,7 @@ export function registerChatStreamListeners(): Promise<UnlistenFn>[] {
         reason,
         preview_diff,
         file_path,
+        project_bound,
       } = e.payload;
       setPendingApprovals((prev) => [
         ...prev,
@@ -702,6 +703,7 @@ export function registerChatStreamListeners(): Promise<UnlistenFn>[] {
           reason,
           previewDiff: preview_diff,
           filePath: file_path,
+          projectBound: project_bound,
         },
       ]);
     }),

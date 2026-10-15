@@ -490,10 +490,20 @@ pub(crate) async fn execute_builtin_tool(
     // exfiltration trade-off stated there), the gate no longer applies in Auto:
     // zero interruptions is the mode's contract. Other tiers keep the gate via their
     // own Ask actions. Deny rules still win above.
+    // A user allow rule covering this exact command (persisted via the approval
+    // dialog's "始终允许" or session-scoped) also satisfies the gate — otherwise
+    // "always allow" could never stick for network-declaring commands.
     let network_auto = tool_name == tool_names::EXECUTE_COMMAND
         && !agent_mode.is_full_autonomy()
         && arguments["network"].as_bool().unwrap_or(false)
-        && action == PermissionAction::Allow;
+        && action == PermissionAction::Allow
+        && !permission::user_allow_rule_matches(
+            tool_name,
+            crate::core::ids::BUILTIN_FS_SERVER_ID,
+            arguments,
+            agent_mode,
+            &custom_rules,
+        );
     let action = if network_auto {
         PermissionAction::Ask
     } else {
@@ -577,6 +587,7 @@ pub(crate) async fn execute_builtin_tool(
                 &reason,
                 preview_diff,
                 file_path,
+                Some(project_root.as_str()),
             );
             tokio::select! {
                 _ = token.cancelled() => return Err("cancelled".into()),

@@ -10,7 +10,7 @@ Agent 模式下提供 20+ 个内置工具，跨 6 个类别。以下总表列出
 >
 > **主体口径**：上表与权限矩阵描述的是**主代理**。子智能体的工具集按角色白名单装配（`SubagentProfile.allowed_tools/denied_tools`），与主代理不同——例如 explorer/architect 等只读角色明确拒绝 `git_*`（9 个只读工具，无 Git 工具），只有 coder/general 等持有 Git 读取。子智能体对未注入工具的调用会得到「工具不存在/不允许」的 fail-closed 错误。
 >
-> **MCP 工具**：助手勾选的 MCP server 工具会注入 Agent 循环（general 子代理角色亦可用）；与其他工具重名时自动重命名为 `mcp__<server>__<tool>`。未信任 server 的工具在完全权限模式下仍逐次审批（MCP 设置中的「受信任」开关）。
+> **MCP 工具**：助手勾选的 MCP server 工具会注入 Agent 循环（general 子代理角色亦可用）；与其他工具重名时自动重命名为 `mcp__<server>__<tool>`。未信任 server 的工具在完全权限模式下仍逐次审批（MCP 设置中的「受信任」开关，或审批弹窗「始终允许」把该工具写入项目权限配置后不再询问）。
 
 | 工具名            | 类别 | Normal 默认 | Auto 默认 | Plan 默认 |
 | ----------------- | ---- | ----------- | --------- | --------- |

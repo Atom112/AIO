@@ -26,10 +26,11 @@ use std::time::{Duration, Instant};
 use tauri::AppHandle;
 use tokio_util::sync::CancellationToken;
 
-/// Expansion wait budget. Deliberately much shorter than ask_user's 600s: the
-/// dialog pops on a FAILED command, so an unattended run must not stall for
-/// minutes per denial (timeout degrades to Ignore = pre-expansion behavior).
-const EXPANSION_TIMEOUT: Duration = Duration::from_secs(60);
+/// Expansion wait budget, aligned with the tool-approval and ask_user waits
+/// (600s): the user may be away from the screen, and a denial that degrades to
+/// Ignore after 60s loses the whole remediation path. The 30-min re-ask window
+/// (REASK_AFTER) still throttles repeat prompts for the same denial signature.
+const EXPANSION_TIMEOUT: Duration = Duration::from_secs(600);
 
 /// A denial signature re-asks at most once per this window (per first token).
 const REASK_AFTER: Duration = Duration::from_secs(30 * 60);

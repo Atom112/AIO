@@ -301,6 +301,7 @@ pub(crate) async fn handle_delegate_task(
                     &reason,
                     None,
                     None,
+                    Some(project_root.as_str()),
                 );
                 tokio::select! {
                     _ = token.cancelled() => return Err("cancelled".into()),
@@ -529,6 +530,7 @@ async fn merge_pending_workspaces(
             &reason,
             None,
             None,
+            Some(main_root),
         );
         match tokio::select! {
             _ = token.cancelled() => Err("cancelled".to_string()),
@@ -930,6 +932,7 @@ pub(crate) async fn handle_delegate_tasks(
                     &reason,
                     None,
                     None,
+                    Some(project_root.as_str()),
                 );
                 tokio::select! {
                     _ = token.cancelled() => return Err("cancelled".into()),

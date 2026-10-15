@@ -10,7 +10,7 @@ Agent mode provides 20+ built-in tools across 6 categories. The following table 
 >
 > **Subject scope**: the table and permission matrix above describe the **main agent**. Subagent tool sets are assembled per role (`SubagentProfile.allowed_tools/denied_tools`) and differ from the main agent — e.g. the read-only roles explorer/architect explicitly deny `git_*` (9 read-only tools, no Git tools); only coder/general and similar hold Git reads. A subagent calling a tool that was not injected gets a fail-closed "tool not available" error.
 >
-> **MCP tools**: tools from MCP servers enabled for the assistant are injected into the agent loop (the `general` subagent profile also gets them); name collisions are auto-renamed to `mcp__<server>__<tool>`. Tools from untrusted servers still prompt for each call in full-permission mode (the "Trusted" toggle in MCP settings).
+> **MCP tools**: tools from MCP servers enabled for the assistant are injected into the agent loop (the `general` subagent profile also gets them); name collisions are auto-renamed to `mcp__<server>__<tool>`. Tools from untrusted servers still prompt for each call in full-permission mode (the "Trusted" toggle in MCP settings, or "Always allow" in the approval bubble, which writes the tool into the project permission config and stops the prompts).
 
 | Tool Name         | Category      | Normal Default | Auto Default | Plan Default |
 | ----------------- | ------------- | -------------- | ------------ | ------------ |

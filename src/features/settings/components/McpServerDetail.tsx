@@ -82,6 +82,27 @@ const McpServerDetail: Component<Props> = (props) => {
     updateTransport({ ...t, env: newEnv });
   };
 
+  // Key names carry meaning (BRAVE_API_KEY / Authorization), so keys are editable:
+  // renaming rebuilds the map entry; collisions keep the old name (the controlled
+  // input snaps back).
+  const renameMapKey = (
+    obj: Record<string, string>,
+    oldKey: string,
+    newKey: string,
+  ): Record<string, string> => {
+    if (!newKey || newKey === oldKey || Object.prototype.hasOwnProperty.call(obj, newKey))
+      return obj;
+    return Object.fromEntries(
+      Object.entries(obj).map(([k, v]) => (k === oldKey ? [newKey, v] : [k, v])),
+    );
+  };
+
+  const renameEnvEntry = (oldKey: string, newKey: string) => {
+    const t = config().transport;
+    if (t.transport !== 'stdio') return;
+    updateTransport({ ...t, env: renameMapKey(t.env, oldKey, newKey) });
+  };
+
   const storeEnvSecret = async (key: string, value: string) => {
     if (!value || value.includes('${KEYRING:')) return;
     const placeholder = await saveMcpServerSecret(config().id, 'env', key, value);
@@ -89,6 +110,48 @@ const McpServerDetail: Component<Props> = (props) => {
     if (t.transport !== 'stdio') return;
     updateTransport({ ...t, env: { ...t.env, [key]: placeholder } });
     updateField('hasStoredSecret', true);
+  };
+
+  type HttpTransport = Extract<McpTransport, { transport: 'http' | 'streamable_http' }>;
+  const httpTransport = (): HttpTransport | null => {
+    const t = config().transport;
+    return t.transport === 'http' || t.transport === 'streamable_http' ? t : null;
+  };
+
+  const addHeaderEntry = () => {
+    const t = httpTransport();
+    if (!t) return;
+    const key = `X-Header-${Object.keys(t.headers).length + 1}`;
+    updateTransport({ ...t, headers: { ...t.headers, [key]: '' } });
+  };
+
+  const updateHeaderEntry = (key: string, value: string) => {
+    const t = httpTransport();
+    if (!t) return;
+    updateTransport({ ...t, headers: { ...t.headers, [key]: value } });
+  };
+
+  const renameHeaderEntry = (oldKey: string, newKey: string) => {
+    const t = httpTransport();
+    if (!t) return;
+    updateTransport({ ...t, headers: renameMapKey(t.headers, oldKey, newKey) });
+  };
+
+  const storeHeaderSecret = async (key: string, value: string) => {
+    if (!value || value.includes('${KEYRING:')) return;
+    const placeholder = await saveMcpServerSecret(config().id, 'header', key, value);
+    const t = httpTransport();
+    if (!t) return;
+    updateTransport({ ...t, headers: { ...t.headers, [key]: placeholder } });
+    updateField('hasStoredSecret', true);
+  };
+
+  const removeHeaderEntry = (key: string) => {
+    const t = httpTransport();
+    if (!t) return;
+    const headers = { ...t.headers };
+    delete headers[key];
+    updateTransport({ ...t, headers });
   };
 
   const removeEnvEntry = (key: string) => {
@@ -295,7 +358,7 @@ const McpServerDetail: Component<Props> = (props) => {
                             color: 'white',
                           }}
                           value={k}
-                          readonly
+                          onInput={(e) => renameEnvEntry(k, e.currentTarget.value)}
                         />
                         <Show
                           when={v.includes('${KEYRING:')}
@@ -389,6 +452,94 @@ const McpServerDetail: Component<Props> = (props) => {
                     {t('mcp.detail.urlValidate')}
                   </span>
                 </Show>
+              </div>
+            );
+          })()}
+        </Show>
+
+        {/* http headers (credentials live here — secrets go to the keyring) */}
+        <Show
+          when={
+            config().transport.transport === 'http' ||
+            config().transport.transport === 'streamable_http'
+          }
+        >
+          {(() => {
+            const trans = () =>
+              config().transport as Extract<
+                McpTransport,
+                { transport: 'http' | 'streamable_http' }
+              >;
+            return (
+              <div class="flex flex-col gap-1">
+                <label
+                  class="text-xs flex items-center justify-between"
+                  style={{ color: 'rgba(var(--text-base-rgb),0.6)' }}
+                >
+                  {t('mcp.detail.headers')}
+                  <button class={btnBadge} onClick={addHeaderEntry}>
+                    {t('mcp.detail.add')}
+                  </button>
+                </label>
+                <For each={Object.entries(trans().headers)}>
+                  {([k, v]) => (
+                    <div class="flex items-center gap-1">
+                      <input
+                        class="w-1/3 px-2 py-1.5 rounded text-sm outline-none"
+                        style={{
+                          background: 'rgba(0,0,0,0.3)',
+                          border: '1px solid var(--border-dim)',
+                          color: 'white',
+                        }}
+                        value={k}
+                        placeholder={t('mcp.detail.headerNamePlaceholder')}
+                        onInput={(e) => renameHeaderEntry(k, e.currentTarget.value)}
+                      />
+                      <Show
+                        when={v.includes('${KEYRING:')}
+                        fallback={
+                          <input
+                            class="flex-1 px-2 py-1.5 rounded text-sm outline-none"
+                            style={{
+                              background: 'rgba(0,0,0,0.3)',
+                              border: '1px solid var(--border-dim)',
+                              color: 'white',
+                            }}
+                            value={v}
+                            onInput={(e) => updateHeaderEntry(k, e.currentTarget.value)}
+                            placeholder={t('mcp.detail.envValuePlaceholder')}
+                          />
+                        }
+                      >
+                        <input
+                          class="flex-1 px-2 py-1.5 rounded text-sm outline-none"
+                          style={{
+                            background: 'rgba(0,0,0,0.3)',
+                            border: '1px solid var(--border-dim)',
+                            color: 'rgba(var(--text-base-rgb),0.55)',
+                          }}
+                          value={t('mcp.detail.savedToKeychain')}
+                          readonly
+                          title={t('mcp.detail.keyringReadOnlyTitle')}
+                        />
+                      </Show>
+                      <button
+                        class="px-2 py-1 rounded text-xs whitespace-nowrap"
+                        style={{
+                          background: 'rgba(255,180,77,0.15)',
+                          color: 'rgba(255,200,120,0.95)',
+                        }}
+                        title={t('mcp.detail.saveToKeychainTitle')}
+                        onClick={() => void storeHeaderSecret(k, v)}
+                      >
+                        {t('mcp.detail.saveToKeychain')}
+                      </button>
+                      <button class={btnDanger} onClick={() => removeHeaderEntry(k)}>
+                        ×
+                      </button>
+                    </div>
+                  )}
+                </For>
               </div>
             );
           })()}

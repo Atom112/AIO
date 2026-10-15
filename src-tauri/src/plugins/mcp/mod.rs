@@ -569,7 +569,7 @@ fn is_self_generated_fs_server(cfg: &McpServerConfig, project_path: &str) -> boo
 }
 
 /// 项目级服务器信任存储的落点（$APPDATA/mcp-trust.json，仓库之外）。
-fn trust_store(app: &AppHandle) -> crate::core::mcp_trust::McpTrustStore {
+pub(crate) fn trust_store(app: &AppHandle) -> crate::core::mcp_trust::McpTrustStore {
     let dir = app
         .path()
         .app_data_dir()

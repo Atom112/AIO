@@ -125,7 +125,11 @@ pub async fn trust_project_mcp_server(
 ///
 /// # Parameters
 /// - `config` — server config; env secrets go to the keyring first, only placeholders are persisted
-/// - `project_id` — when provided, writes to the project-level config, otherwise the global one
+/// - `project_id` — project context for the save (the settings page always passes the
+///   current project); the write layer is pinned to where the id already lives:
+///   a project-file entry updates the project file, a global-only entry stays global
+///   (an edit must never silently clone a global server into the repo's `.aio/`).
+///   Only a genuinely new id is created at project level.
 ///
 /// Project-level saves record a trust marker at the same time (user intent IS the
 /// authorization; repo-shipped files never pass through here — P0-1).
@@ -138,12 +142,19 @@ pub async fn add_mcp_server(
     match project_id {
         Some(ref pid) => {
             let project_path = resolve_project_path_mcp(&app, pid)?;
+            let project_file = mcp::load_project_mcp_servers(&project_path);
+            let in_project = project_file.servers.contains_key(&config.id);
+            let in_global = mcp::load_mcp_servers(&app).servers.contains_key(&config.id);
+            if !in_project && in_global {
+                // Layer pinning: editing a global-only server while a project is open
+                // updates the global entry in place instead of re-homing it.
+                let old = mcp::load_mcp_servers(&app).servers.get(&config.id).cloned();
+                clean_orphaned_secrets_on_save(&app, old.as_ref(), &config);
+                return mcp::upsert_config(&app, config).map_err(|e| e.to_string());
+            }
             // MCP-23: the same-layer old entry is fully replaced by this save —
             // clean its keyring accounts that the new entry no longer references.
-            let old = mcp::load_project_mcp_servers(&project_path)
-                .servers
-                .get(&config.id)
-                .cloned();
+            let old = project_file.servers.get(&config.id).cloned();
             clean_orphaned_secrets_on_save(&app, old.as_ref(), &config);
             mcp::upsert_project_config(&project_path, config.clone()).map_err(|e| e.to_string())?;
             mcp::mark_project_server_trusted(&app, &project_path, &config);
@@ -238,7 +249,12 @@ pub async fn save_mcp_server_secret(
 /// delete its env secrets from the keyring.
 ///
 /// # Parameters
-/// - `id` — server ID; `project_id` — when provided, deletes the project-level config, otherwise the global one
+/// - `id` — server ID; `project_id` — current project context
+///
+/// Deletion targets BOTH layers: the management list is the merged view, so removing
+/// only the layer `project_id` names left a global entry alive that resurfaced on the
+/// next reload ("delete didn't really delete"). Absent-layer removals are no-ops.
+/// The project trust-store entry is dropped with the project config.
 #[tauri::command]
 pub async fn remove_mcp_server(
     app: AppHandle,
@@ -279,13 +295,16 @@ pub async fn remove_mcp_server(
             }
         }
     }
-    match project_id {
-        Some(ref pid) => {
-            let project_path = resolve_project_path_mcp(&app, pid)?;
-            mcp::remove_project_config(&project_path, &id).map_err(|e| e.to_string())?
+    if let Some(ref pid) = project_id {
+        let project_path = resolve_project_path_mcp(&app, pid)?;
+        mcp::remove_project_config(&project_path, &id).map_err(|e| e.to_string())?;
+        // The project trust marker (fingerprint) belongs to the deleted entry.
+        if let Err(e) = mcp::trust_store(&app).remove_trust(&project_path, &id) {
+            tracing::warn!("[mcp-trust] 删除 server 信任标记失败: {e}");
         }
-        None => mcp::remove_config(&app, &id).map_err(|e| e.to_string())?,
-    };
+    }
+    // Global layer too — no-op when the id never lived there.
+    mcp::remove_config(&app, &id).map_err(|e| e.to_string())?;
     emit_status(&app, &id, McpStatus::Disconnected, None, 0);
     Ok(())
 }

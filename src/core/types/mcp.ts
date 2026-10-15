@@ -131,6 +131,8 @@ export interface McpCatalogInstallRequest {
   deliveryId: string;
   values: Record<string, string>;
   secrets: Record<string, string>;
+  /** Install scope: a project id installs into the project's .aio/mcp-servers.json; null/omitted installs globally. */
+  projectId?: string | null;
 }
 
 export type McpStatus = 'disconnected' | 'connecting' | 'connected' | 'error';

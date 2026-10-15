@@ -990,8 +990,18 @@ impl AgentTurnRunner {
                 estimate_context_tokens_offload(&model, &messages_for_api, context_budget).await;
             if estimated_tokens > context_budget && messages_for_api.len() > 4 {
                 // 阶段4 第1项（agent_loop 切片4）：压缩调用经共享 CompressCtx（事件仍在此发射——主循环专属）
-                match compress_ctx.compress(&mut messages_for_api).await {
-                    Ok(_) => {
+                // Token-guarded: the summarization call is a non-streaming LLM request
+                // (up to 60s) — the stop button must stay responsive through it.
+                let compressed = tokio::select! {
+                    _ = token_inner.cancelled() => None,
+                    r = compress_ctx.compress(&mut messages_for_api) => Some(r),
+                };
+                match compressed {
+                    None => {
+                        was_cancelled = true;
+                        break;
+                    }
+                    Some(Ok(_)) => {
                         compressed_this_run = true;
                         let _ = window.emit(
                             ev::LLM_COMPRESSION,
@@ -1003,7 +1013,7 @@ impl AgentTurnRunner {
                             }),
                         );
                     }
-                    Err(e) => {
+                    Some(Err(e)) => {
                         let _ = window.emit(ev::LLM_COMPRESSION_FAILED, json!({"error": e}));
                     }
                 }

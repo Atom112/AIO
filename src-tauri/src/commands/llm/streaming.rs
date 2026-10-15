@@ -138,15 +138,20 @@ pub(crate) async fn stream_one_round(
     let body = serde_json::Value::Object(body_map);
 
     // Unified request entry with pre-stream retries: adapts to the Anthropic native protocol;
-    // transport errors and 429/5xx retry with backoff only before any content is emitted; mid-stream errors are not retried
-    let (response, is_anthropic_request) = crate::plugins::llm::post_chat_completion_with_retry(
+    // transport errors and 429/5xx retry with backoff only before any content is emitted; mid-stream errors are not retried.
+    // Token-guarded: the pre-header wait is bounded by the client's 600s total timeout, but the
+    // stop button must stay responsive during it (a stalled gateway must not freeze the turn).
+    let post_fut = crate::plugins::llm::post_chat_completion_with_retry(
         client,
         &api_url,
         api_key,
         &body,
         max_retries,
-    )
-    .await?;
+    );
+    let (response, is_anthropic_request) = tokio::select! {
+        _ = token.cancelled() => return Err("cancelled".to_string()),
+        res = post_fut => res?,
+    };
 
     let mut stream = response.bytes_stream();
     // PROV-1/LOOP-9: byte-level line buffering with a hard cap — single

@@ -128,6 +128,7 @@ pub fn run() {
             commands::llm::call_llm_stream,
             commands::image_gen::generate_image,
             commands::llm::stop_llm_stream,
+            commands::llm::list_active_streams,
             commands::llm::run_agent_turn,
             commands::llm::stop_subagent,
             commands::llm::checkpoints::get_active_checkpoint,

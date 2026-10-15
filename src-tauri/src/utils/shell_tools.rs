@@ -1085,8 +1085,17 @@ fn pwsh_encoded(script: &str) -> String {
 ///   builtin git_* tools run in the host process and are unaffected
 /// - `shell` - Windows shell selection (`shellWindows` config: powershell default / cmd)
 ///
+/// - `cancel` — user-stop token (agent loop). The wait loop polls it in 500ms slices;
+///   on cancellation the process tree is torn down exactly like the timeout path and
+///   the call returns a "stopped by user" ToolResult. `None` = uncancellable (tests,
+///   non-agent callers).
+///
 /// # Returns
 /// A ToolResult carrying stdout, stderr, exit_code and timed_out.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "explicit execution context (sandbox, shell kind, cancellation token)"
+)]
 pub fn execute_command(
     command: &str,
     project_root: &str,
@@ -1095,6 +1104,7 @@ pub fn execute_command(
     ac_dirs: Option<Vec<String>>,
     protect_git_ro: bool,
     shell: WindowsShell,
+    cancel: Option<tokio_util::sync::CancellationToken>,
 ) -> ToolResult {
     if command.trim().is_empty() {
         return tool_err("命令为空");
@@ -1162,6 +1172,7 @@ pub fn execute_command(
             &interpreter_extra,
             protect_git_ro,
             shell,
+            cancel,
         );
     }
 
@@ -1279,8 +1290,16 @@ pub fn execute_command(
         });
     }
 
-    // wait with timeout via a channel, avoiding a dependency on the unstable wait_timeout
+    // wait with timeout via a channel, avoiding a dependency on the unstable wait_timeout.
+    // The wait is sliced (500ms) so user cancellation (stop button -> CancellationToken)
+    // interrupts a running command mid-flight instead of waiting out its full timeout —
+    // mainstream-parity behavior (Claude Code's Esc kills the running process tree).
+    // Cancel teardown is identical to the timeout path.
     use std::sync::{Arc, Mutex};
+    // unix-only: the process-group kill in the teardown path runs BEFORE the lock
+    // (the waiter thread holds it until exit) — captured here so the kill needs no lock.
+    #[cfg(unix)]
+    let child_pid = child.id();
     let child_arc = Arc::new(Mutex::new(child));
     let child_clone = Arc::clone(&child_arc);
 
@@ -1291,37 +1310,63 @@ pub fn execute_command(
         let _ = tx.send(status);
     });
 
-    let (exit_code, timed_out) = match rx.recv_timeout(Duration::from_millis(timeout)) {
-        Ok(Ok(status)) => (status.code(), false),
-        Ok(Err(_)) => return tool_err("等待命令进程失败"),
-        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
-            // timeout -> tear down the whole process tree immediately:
-            // - Windows: dropping the Job guard triggers KILL_ON_JOB_CLOSE (all grandchildren included)
-            // - non-Windows: kill the process group (process_group(0) put the subtree in its own group)
-            drop(job_guard.take());
-            if let Ok(mut c) = child_arc.lock() {
-                #[cfg(unix)]
-                {
-                    let pid = c.id();
-                    if pid > 0 {
-                        // PATH-only resolution (SEC-06): never spawn a bare `kill`
-                        if let Some(kill) = crate::utils::exec_resolve::resolve_executable("kill") {
-                            let _ = std::process::Command::new(kill)
-                                .arg("-KILL")
-                                .arg(format!("-{pid}"))
-                                .status();
-                        }
-                    }
-                }
-                let _ = c.kill();
-                let _ = c.wait();
+    const WAIT_SLICE: Duration = Duration::from_millis(500);
+    let budget = Duration::from_millis(timeout);
+    let wait_started = std::time::Instant::now();
+    let mut exit_status: Option<std::process::ExitStatus> = None;
+    let mut timed_out = false;
+    let mut cancelled = false;
+    loop {
+        if cancel.as_ref().is_some_and(|t| t.is_cancelled()) {
+            cancelled = true;
+            break;
+        }
+        let elapsed = wait_started.elapsed();
+        if elapsed >= budget {
+            timed_out = true;
+            break;
+        }
+        match rx.recv_timeout(WAIT_SLICE.min(budget - elapsed)) {
+            Ok(Ok(status)) => {
+                exit_status = Some(status);
+                break;
             }
-            (None, true)
+            Ok(Err(_)) => return tool_err("等待命令进程失败"),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                return tool_err("命令进程意外终止");
+            }
         }
-        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
-            return tool_err("命令进程意外终止");
+    }
+
+    if timed_out || cancelled {
+        // timeout/cancel -> tear down the whole process tree immediately:
+        // - Windows: dropping the Job guard triggers KILL_ON_JOB_CLOSE (all grandchildren included)
+        // - non-Windows: kill the process group (process_group(0) put the subtree in its own group).
+        //   The group kill must precede the lock: the waiter thread holds it until the child exits,
+        //   so acquiring it before killing would deadlock on Unix.
+        drop(job_guard.take());
+        #[cfg(unix)]
+        {
+            if child_pid > 0 {
+                // PATH-only resolution (SEC-06): never spawn a bare `kill`
+                if let Some(kill) = crate::utils::exec_resolve::resolve_executable("kill") {
+                    let _ = std::process::Command::new(kill)
+                        .arg("-KILL")
+                        .arg(format!("-{child_pid}"))
+                        .status();
+                }
+            }
         }
-    };
+        if let Ok(mut c) = child_arc.lock() {
+            let _ = c.kill();
+            let _ = c.wait();
+        }
+    }
+    if cancelled {
+        return tool_err("命令已被用户停止");
+    }
+    let exit_code = exit_status.and_then(|s| s.code());
 
     // collect reader results: the process has exited or been torn down, so the pipes
     // close and the readers finish shortly; in the extreme case (a leftover process
@@ -1368,6 +1413,7 @@ fn execute_command_in_appcontainer(
     best_effort_rx_dirs: &[String],
     protect_git_ro: bool,
     shell: WindowsShell,
+    cancel: Option<tokio_util::sync::CancellationToken>,
 ) -> ToolResult {
     // Shell resolution for the AppContainer: pwsh 7 的 Store App Execution Alias
     //（WindowsApps 下的 reparse point）在 AppContainer 内不可执行——解析结果落在
@@ -1434,17 +1480,36 @@ fn execute_command_in_appcontainer(
         });
     }
 
-    // wait (blocking; this function runs on a spawn_blocking thread). Timeout -> Job kills the whole tree + terminate as backstop
-    let (exit_code, timed_out) = {
-        let (code, to) = crate::utils::sandbox::wait_with_timeout(&child, timeout as u32);
-        if to {
+    // wait (blocking; this function runs on a spawn_blocking thread), sliced so user
+    // cancellation interrupts a running command mid-flight. Timeout/cancel -> Job kills
+    // the whole tree + terminate as backstop.
+    let (exit_code, timed_out, cancelled) = {
+        const WAIT_SLICE_MS: u64 = 500;
+        let budget = timeout;
+        let wait_started = std::time::Instant::now();
+        let outcome: (Option<i32>, bool, bool) = loop {
+            if cancel.as_ref().is_some_and(|t| t.is_cancelled()) {
+                break (None, false, true);
+            }
+            let elapsed = wait_started.elapsed().as_millis() as u64;
+            if elapsed >= budget {
+                break (None, true, false);
+            }
+            let slice = (budget - elapsed).min(WAIT_SLICE_MS) as u32;
+            let (code, to) = crate::utils::sandbox::wait_with_timeout(&child, slice);
+            if !to {
+                break (code, false, false);
+            }
+        };
+        if outcome.1 || outcome.2 {
             drop(job.take());
             crate::utils::sandbox::terminate(&child);
-            (None, true)
-        } else {
-            (code, false)
         }
+        outcome
     };
+    if cancelled {
+        return tool_err("命令已被用户停止");
+    }
 
     let (stdout, stdout_total) = stdout_rx
         .recv_timeout(Duration::from_secs(10))
@@ -1562,6 +1627,7 @@ mod tests {
                 None,
                 false,
                 WindowsShell::Cmd,
+                None,
             );
             assert!(r.is_error, "命令应被拒绝: {cmd}");
             assert!(
@@ -1649,6 +1715,7 @@ mod tests {
             None,
             false,
             WindowsShell::Cmd,
+            None,
         );
         assert!(!r.is_error, "普通命令不应被拦截: {}", text_of(&r));
         assert!(text_of(&r).contains("aio_benign_check"));
@@ -1724,6 +1791,7 @@ mod tests {
             None,
             false,
             WindowsShell::Cmd,
+            None,
         );
         let text = text_of(&r);
         assert!(!r.is_error, "大输出命令应正常完成: {text}");
@@ -1975,6 +2043,7 @@ mod tests {
             None,
             false,
             WindowsShell::Cmd,
+            None,
         );
         let text = text_of(&r);
         assert!(
@@ -2012,6 +2081,7 @@ mod tests {
             Some(vec![]), // AppContainer enabled, empty toolchain list
             false,
             WindowsShell::Cmd,
+            None,
         );
         let text = text_of(&r);
         assert!(
@@ -2037,6 +2107,7 @@ mod tests {
             None,
             false,
             WindowsShell::Cmd,
+            None,
         );
         let text = text_of(&r);
         assert!(
@@ -2062,6 +2133,7 @@ mod tests {
             None,
             false,
             WindowsShell::Cmd,
+            None,
         );
         let text = text_of(&r);
         assert!(
@@ -2085,6 +2157,7 @@ mod tests {
             None,
             false,
             WindowsShell::PowerShell,
+            None,
         );
         let ok_text = text_of(&ok);
         assert!(
@@ -2099,6 +2172,7 @@ mod tests {
             None,
             false,
             WindowsShell::PowerShell,
+            None,
         );
         assert!(
             fail.is_error,
@@ -2125,6 +2199,7 @@ mod tests {
             Some(vec![]), // AppContainer enabled
             false,
             WindowsShell::PowerShell,
+            None,
         );
         let text = text_of(&r);
         assert!(
@@ -2132,5 +2207,38 @@ mod tests {
             "AC 内 pwsh 应可用: {text}"
         );
         let _ = std::fs::remove_dir_all(&project);
+    }
+
+    /// 取消令牌（用户点停止）必须在命令执行中途打断它并拆毁进程树——主流对齐
+    /// （Claude Code 的 Esc 会杀掉正在运行的命令）；协作取消只查 select! 分支时，
+    /// 长命令期间停止按钮形同虚设。30s 睡眠命令 + 300ms 后取消 → 秒级返回。
+    #[test]
+    #[cfg(windows)]
+    fn cancel_token_interrupts_running_command_promptly() {
+        let root = std::env::temp_dir().to_string_lossy().to_string();
+        let token = tokio_util::sync::CancellationToken::new();
+        let cancel = token.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(300));
+            cancel.cancel();
+        });
+        let started = std::time::Instant::now();
+        let r = execute_command(
+            "ping 127.0.0.1 -n 30 >nul",
+            &root,
+            Some(60_000),
+            false,
+            None,
+            false,
+            WindowsShell::Cmd,
+            Some(token),
+        );
+        let elapsed = started.elapsed();
+        assert!(r.is_error, "被取消的命令应返回错误结果");
+        assert!(
+            elapsed < std::time::Duration::from_secs(10),
+            "取消应秒级生效（实际 {:?}）",
+            elapsed
+        );
     }
 }

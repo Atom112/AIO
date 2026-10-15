@@ -43,7 +43,8 @@ Components are located in `src/features/chat/components/` (`SessionStats.tsx`, `
 - **Delete**: Deleting a single message also updates the corresponding record in SQLite.
 - **Branch**: Create a new topic from a specific message; the original topic remains unchanged.
 - **Auto-title**: A title is generated after the first round of replies completes; if the request fails, a locally truncated version of the first user message is used as the fallback title.
-- **Stop**: Terminates the current stream and Agent loop. Already produced text, steps, and file changes are retained.
+- **Stop**: Terminates the current stream and Agent loop. Already produced text, steps, and file changes are retained. Stopping is two-phase: a cooperative cancel signal first (a running command is killed together with its whole process tree), then a force-terminate if the task has not responded within about 2 seconds — the stop path then performs the terminal bookkeeping itself, so stop always works, with no app restart needed.
+- **Disconnects and recovery**: a stream with no data for 120 seconds is declared broken and errors out; a checkpoint is written at the end of every tool round, so after a crash or unexpected exit the turn can resume from the latest round; after an interface refresh (e.g. a WebView reload), a startup reconciliation re-discovers turns still running in the backend, keeping the stop button and thinking state functional.
 
 ### Sidebar Collapse
 

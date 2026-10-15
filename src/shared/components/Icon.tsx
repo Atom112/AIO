@@ -68,7 +68,9 @@ export type IconName =
   | 'pen-line'
   | 'flask-check'
   | 'compass'
-  | 'rotate-ccw';
+  | 'rotate-ccw'
+  | 'embedding'
+  | 'arrow-down-up';
 
 /**
  * Icon path factory table.
@@ -235,6 +237,23 @@ const PATHS: Record<IconName, () => JSX.Element> = {
     <>
       <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
       <path d="M3 3v5h5" />
+    </>
+  ),
+  // Embedding: a dashed "vector space" boundary with points scattered inside —
+  // the semantic metaphor for embedding models (texts projected as points in space).
+  embedding: () => (
+    <>
+      <rect x="3" y="5" width="18" height="14" rx="4" stroke-dasharray="3 3" />
+      <path d="M8 10h.01" stroke-width="3.5" />
+      <path d="M13.5 15.5h.01" stroke-width="3.5" />
+      <path d="M16.5 8.5h.01" stroke-width="3.5" />
+    </>
+  ),
+  // Rerank: two opposing arrows (reordering) — cross-encoder re-sorts candidates.
+  'arrow-down-up': () => (
+    <>
+      <path d="M7 4v16M7 20l-3.5-3.5M7 20l3.5-3.5" />
+      <path d="M17 20V4M17 4l-3.5 3.5M17 4l3.5 3.5" />
     </>
   ),
   model: () => (

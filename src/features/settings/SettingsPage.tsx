@@ -53,7 +53,7 @@ const Settings: Component<{ children?: JSX.Element }> = (props) => {
         id: 'embedding-models',
         path: '/settings/embedding-models',
         label: t('settings.embeddingModels'),
-        icon: <Icon name="layers" class="w-5 h-5" />,
+        icon: <Icon name="embedding" class="w-5 h-5" />,
       },
       {
         id: 'local-models',

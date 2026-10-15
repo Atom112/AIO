@@ -15,6 +15,10 @@ export const EVENTS = {
   codeIndexProgress: 'code-index-progress',
   /** App update download progress */
   appUpdateProgress: 'app-update-progress',
+  /** Memory auto fact extraction lifecycle (running / done / error) */
+  memoryExtractProgress: 'memory-extract-progress',
+  /** Memory consolidation lifecycle (running / done / error) */
+  memoryConsolidateProgress: 'memory-consolidate-progress',
 
   /** Start of one LLM call round */
   llmRoundStart: 'llm-round-start',

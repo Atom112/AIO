@@ -207,10 +207,36 @@ fn available_space(dir: &Path) -> Option<u64> {
 
 /// Downloads all requested files. Ends in ok / paused / cancelled; network and write
 /// errors keep the `.part` checkpoint (resumed next time). Progress events:
-/// `local-model-download-progress` `{id, file, downloaded, total, source}` + `{id, done}`
-/// at the end.
+/// `local-model-download-progress` `{id, file, downloaded, total, source}`.
+///
+/// Terminal states (ok / paused / cancelled / error) are additionally announced with a
+/// `{id, done: true, status}` event so the background-task menu can close its entry;
+/// `done: true` alone remains the legacy contract the settings page clears rows on.
 #[tauri::command]
 pub async fn local_model_download(
+    window: Window,
+    app: AppHandle,
+    request: LocalModelDownloadRequest,
+) -> Result<LocalModelDownloadOutcome, String> {
+    let task_id = request.id.trim().to_string();
+    let result = local_model_download_inner(window, app.clone(), request).await;
+    let _ = app.emit(
+        ev::LOCAL_MODEL_DOWNLOAD_PROGRESS,
+        match &result {
+            Ok(outcome) => {
+                serde_json::json!({ "id": task_id, "done": true, "status": outcome.status })
+            }
+            Err(e) => {
+                serde_json::json!({ "id": task_id, "done": true, "status": "error", "error": e })
+            }
+        },
+    );
+    result
+}
+
+/// Body of [`local_model_download`] (the command layer wraps it to emit the
+/// terminal lifecycle event on every exit path).
+async fn local_model_download_inner(
     window: Window,
     app: AppHandle,
     request: LocalModelDownloadRequest,
@@ -522,10 +548,8 @@ pub async fn local_model_download(
     // Record the market marker so the installed-list scan recognizes this directory as a
     // market-managed model (recursive scan + exact entry file, even for nested layouts)
     write_model_marker(&dir, &request.files[0].name);
-    let _ = window.emit(
-        ev::LOCAL_MODEL_DOWNLOAD_PROGRESS,
-        serde_json::json!({ "id": request.id, "done": true }),
-    );
+    // Terminal event moved to the command-layer wrapper (local_model_download):
+    // it fires on every exit path with the outcome status.
     Ok(LocalModelDownloadOutcome {
         status: "ok".into(),
         id: request.id,

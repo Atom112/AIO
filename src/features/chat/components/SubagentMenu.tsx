@@ -38,7 +38,7 @@ const SubagentMenu: Component<SubagentMenuProps> = (props) => {
 
   return (
     <Show when={subagents().length > 0}>
-      <div class="subagent-menu-container relative inline-block ml-auto">
+      <div class="subagent-menu-container relative inline-block">
         <button
           type="button"
           class={

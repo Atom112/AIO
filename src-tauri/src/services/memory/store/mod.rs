@@ -285,6 +285,11 @@ impl MemoryStore {
         })
     }
 
+    /// Project root this store is bound to (event payloads use it as the project identity).
+    pub fn project_root(&self) -> &str {
+        &self.project_root
+    }
+
     /// Best-effort WAL checkpoint (TRUNCATE) after memory write sessions —
     /// reclaims the WAL file so the main DB stays the durable copy (harness
     /// round 5: 4KB main DB vs 1.4MB WAL). Failure is logged and ignored: a busy

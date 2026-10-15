@@ -3,7 +3,6 @@
 //! Coexists with the facts store in the same memory.sqlite: code_chunks + fts_code + vec_code.
 //! Indexing is on-demand (memory_code_index / memory panel button) and incremental via file mtime/size.
 
-use crate::core::events as ev;
 use crate::core::models::MemoryEmbeddingConfig;
 use crate::ierr;
 use crate::services::memory::CollectRowsWarn;
@@ -11,7 +10,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::path::PathBuf;
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Manager};
 
 /// Index result statistics.
 #[derive(Serialize, Clone, Debug)]
@@ -260,10 +259,9 @@ pub async fn index_code(
     )
     .map_err(|e| e.to_string())?;
     result.elapsed_ms = started.elapsed().as_millis() as u64;
-    let _ = app.emit(
-        ev::CODE_INDEX_PROGRESS,
-        serde_json::json!({ "status": "done", "chunks": result.chunks, "files": result.files, "elapsedMs": result.elapsed_ms }),
-    );
+    // Terminal lifecycle event moved to the command layer (memory_code_index):
+    // it owns the project identity and also reports the error path, which this
+    // core fn would miss via its `?` returns.
     Ok(result)
 }
 

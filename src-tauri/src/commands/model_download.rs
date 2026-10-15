@@ -175,8 +175,32 @@ pub fn embedding_model_set_enabled(
 /// - paused: keeps the `.part` checkpoint, resumed with Range on the next call;
 /// - cancelled: deletes the `.part` checkpoint;
 /// - network/write errors also keep the checkpoint (resumed next time).
+///
+/// Terminal states (ok / paused / cancelled / error) are additionally announced with a
+/// `{id, done: true, status}` event so the background-task menu can close its entry;
+/// `done: true` alone remains the legacy contract the settings page clears rows on.
 #[tauri::command]
 pub async fn embedding_model_download(
+    window: Window,
+    app: AppHandle,
+    id: String,
+) -> Result<DownloadOutcome, String> {
+    let result = embedding_model_download_inner(window, app.clone(), id.clone()).await;
+    let _ = app.emit(
+        ev::MODEL_DOWNLOAD_PROGRESS,
+        match &result {
+            Ok(outcome) => serde_json::json!({ "id": id, "done": true, "status": outcome.status }),
+            Err(e) => {
+                serde_json::json!({ "id": id, "done": true, "status": "error", "error": e })
+            }
+        },
+    );
+    result
+}
+
+/// Body of [`embedding_model_download`] (the command layer wraps it to emit the
+/// terminal lifecycle event on every exit path).
+async fn embedding_model_download_inner(
     window: Window,
     app: AppHandle,
     id: String,
@@ -326,10 +350,8 @@ pub async fn embedding_model_download(
             None => {}
         }
     }
-    let _ = window.emit(
-        ev::MODEL_DOWNLOAD_PROGRESS,
-        serde_json::json!({ "id": entry.id, "done": true }),
-    );
+    // Terminal event moved to the command-layer wrapper (embedding_model_download):
+    // it fires on every exit path with the outcome status.
     Ok(DownloadOutcome {
         status: "ok".into(),
         info: model_info(&app, entry),

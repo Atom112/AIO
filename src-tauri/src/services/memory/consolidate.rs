@@ -14,7 +14,7 @@ use crate::services::memory::manager::MemoryStoreManager;
 use crate::services::memory::store::MemoryStore;
 use serde::Serialize;
 use std::collections::HashMap;
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter, Manager};
 
 const CLUSTER_THRESHOLD: f32 = 0.85;
 /// Maximum number of facts participating in clustering (bounds the O(n²) cosine scan cost).
@@ -165,6 +165,12 @@ pub async fn consolidate(
     if !store.meta_try_lock(META_CONSOLIDATE_LOCK, &cutoff, &now)? {
         return Ok(report); // 另一次整理在 10 分钟窗口内，直接让位
     }
+    // A real pass starts here (the lock-skip above never touched the store): tell
+    // the frontend's background-task menu the job is running.
+    let _ = app.emit(
+        crate::core::events::MEMORY_CONSOLIDATE_PROGRESS,
+        serde_json::json!({ "status": "running", "project": store.project_root() }),
+    );
     let mut all = store.list_active_facts_with_vectors()?;
     if all.len() > MAX_CLUSTER_FACTS {
         all.sort_by(|a, b| {
@@ -252,6 +258,28 @@ pub async fn consolidate(
     Ok(report)
 }
 
+/// Emit one consolidation terminal event (background-task menu feed). Shared by the
+/// daily scheduler loop and the manual command wrapper so both report identically.
+pub(crate) fn emit_consolidate_terminal(
+    app: &AppHandle,
+    project: &str,
+    outcome: Result<&ConsolidationReport, &str>,
+) {
+    let payload = match outcome {
+        Ok(rep) => serde_json::json!({
+            "status": "done",
+            "project": project,
+            "clusters": rep.clusters,
+            "arbitrated": rep.arbitrated,
+            "merged": rep.merged,
+            "updated": rep.updated,
+            "superseded": rep.superseded,
+        }),
+        Err(e) => serde_json::json!({ "status": "error", "project": project, "error": e }),
+    };
+    let _ = app.emit(crate::core::events::MEMORY_CONSOLIDATE_PROGRESS, payload);
+}
+
 /// Daily scheduling entry point: iterate memory-enabled projects and consolidate each one (per-project budget).
 pub async fn run_daily_consolidation(app: &AppHandle) {
     let cfg = crate::core::config::load_app_config(app).unwrap_or_default();
@@ -283,17 +311,22 @@ pub async fn run_daily_consolidation(app: &AppHandle) {
         .await;
         match outcome {
             Ok(Ok(report)) => {
+                emit_consolidate_terminal(app, &project.path, Ok(&report));
                 if report.arbitrated > 0 {
                     tracing::info!("[memory] 每日合并整理 {}：{:?}", project.path, report);
                 }
             }
-            Ok(Err(e)) => tracing::warn!("[memory] 每日合并整理失败 {}: {e}", project.path),
+            Ok(Err(e)) => {
+                emit_consolidate_terminal(app, &project.path, Err(e.as_str()));
+                tracing::warn!("[memory] 每日合并整理失败 {}: {e}", project.path);
+            }
             Err(panic) => {
                 let reason = panic
                     .downcast_ref::<&str>()
                     .map(|s| s.to_string())
                     .or_else(|| panic.downcast_ref::<String>().cloned())
                     .unwrap_or_else(|| "unknown panic".to_string());
+                emit_consolidate_terminal(app, &project.path, Err(reason.as_str()));
                 tracing::error!(
                     "[memory] 每日合并整理 panic（已隔离） {}: {reason}",
                     project.path

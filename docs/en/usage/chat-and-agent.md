@@ -141,6 +141,8 @@ The main Agent has two delegation methods:
 
 Batch delegation produces only one approval in non-auto modes. The current effective concurrency limit is 5; tasks exceeding this limit queue up. The backend type reserves `maxConcurrentSubagents`, but the settings page and disk configuration do not yet support persistent modification.
 
+Passing `wait: false` to `delegate_task` runs the sub-agent in the background while the main Agent continues immediately. Two pull-up menus on the right of the Agent status bar track the two kinds of delegation: the left "Background Tasks" menu lists fire-and-forget delegates that are still running (or have finished) — running entries can be stopped individually and clicking one opens its standalone conversation view; the right "Sub-agents" menu lists delegates the main Agent waits on. Background tasks always work in the shared project directory; on completion their results are injected into the conversation as a system notice.
+
 In "Settings -> Sub-agent Model", you can:
 
 - Set cloud model overrides for built-in or custom roles;

@@ -4,10 +4,11 @@ import type { McpServerConfig, McpTransport, ToolSpec } from '../../../core/type
 import { t } from '../../../core/i18n';
 import {
   btnBadge,
-  btnDanger,
-  btnPrimarySm,
+  btnDangerOutline,
+  btnPrimaryOutlineSm,
   btnSecondarySm,
-  btnSuccess,
+  btnSuccessOutline,
+  btnWarnOutline,
 } from '../../../shared/components/buttonStyles';
 
 interface Props {
@@ -191,8 +192,7 @@ const McpServerDetail: Component<Props> = (props) => {
 
   return (
     <div
-      class="fixed inset-0 z-50 flex items-center justify-center p-6"
-      style={{ background: 'rgba(0,0,0,0.6)', 'backdrop-filter': 'blur(8px)' }}
+      class="fixed inset-0 z-50 flex items-center justify-center p-6 bg-black/25"
       onClick={(e) => {
         if (e.target === e.currentTarget) props.onCancel();
       }}
@@ -200,7 +200,8 @@ const McpServerDetail: Component<Props> = (props) => {
       <div
         class="w-[640px] max-w-full max-h-[90vh] overflow-y-auto rounded-xl p-6 flex flex-col gap-4"
         style={{
-          background: 'rgba(var(--surface-bg),0.95)',
+          background: 'var(--dialog-bg)',
+          'backdrop-filter': 'var(--popup-blur)',
           border: '1px solid var(--border-dim)',
         }}
       >
@@ -330,7 +331,7 @@ const McpServerDetail: Component<Props> = (props) => {
                           value={arg}
                           onInput={(e) => updateStdioArg(idx(), e.currentTarget.value)}
                         />
-                        <button class={btnDanger} onClick={() => removeStdioArg(idx())}>
+                        <button class={btnDangerOutline} onClick={() => removeStdioArg(idx())}>
                           ×
                         </button>
                       </div>
@@ -390,17 +391,13 @@ const McpServerDetail: Component<Props> = (props) => {
                           />
                         </Show>
                         <button
-                          class="px-2 py-1 rounded text-xs whitespace-nowrap"
-                          style={{
-                            background: 'rgba(255,180,77,0.15)',
-                            color: 'rgba(255,200,120,0.95)',
-                          }}
+                          class={btnWarnOutline}
                           title={t('mcp.detail.saveToKeychainTitle')}
                           onClick={() => void storeEnvSecret(k, v)}
                         >
                           {t('mcp.detail.saveToKeychain')}
                         </button>
-                        <button class={btnDanger} onClick={() => removeEnvEntry(k)}>
+                        <button class={btnDangerOutline} onClick={() => removeEnvEntry(k)}>
                           ×
                         </button>
                       </div>
@@ -524,17 +521,13 @@ const McpServerDetail: Component<Props> = (props) => {
                         />
                       </Show>
                       <button
-                        class="px-2 py-1 rounded text-xs whitespace-nowrap"
-                        style={{
-                          background: 'rgba(255,180,77,0.15)',
-                          color: 'rgba(255,200,120,0.95)',
-                        }}
+                        class={btnWarnOutline}
                         title={t('mcp.detail.saveToKeychainTitle')}
                         onClick={() => void storeHeaderSecret(k, v)}
                       >
                         {t('mcp.detail.saveToKeychain')}
                       </button>
-                      <button class={btnDanger} onClick={() => removeHeaderEntry(k)}>
+                      <button class={btnDangerOutline} onClick={() => removeHeaderEntry(k)}>
                         ×
                       </button>
                     </div>
@@ -547,7 +540,7 @@ const McpServerDetail: Component<Props> = (props) => {
 
         {/* Test connection */}
         <div class="flex items-center gap-2">
-          <button class={btnSuccess} disabled={testing()} onClick={handleTest}>
+          <button class={btnSuccessOutline} disabled={testing()} onClick={handleTest}>
             {testing() ? t('mcp.detail.testing') : t('mcp.detail.testConnection')}
           </button>
           <Show when={testResult()}>
@@ -630,7 +623,7 @@ const McpServerDetail: Component<Props> = (props) => {
           <button class={btnSecondarySm} onClick={() => props.onCancel()}>
             {t('common.cancel')}
           </button>
-          <button class={btnPrimarySm} onClick={() => props.onSave(config())}>
+          <button class={btnPrimaryOutlineSm} onClick={() => props.onSave(config())}>
             {t('common.save')}
           </button>
         </div>

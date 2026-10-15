@@ -36,6 +36,7 @@ import {
   btnBadge,
   btnBadgeBar,
   btnDanger,
+  btnPrimaryOutlineSm,
   btnSecondary,
   btnSecondarySm,
   btnSuccess,
@@ -602,14 +603,14 @@ const McpServerList: Component = () => {
 
       <Show when={installing()}>
         <div
-          class="fixed inset-0 z-50 flex items-center justify-center p-6"
-          style={{ background: 'rgba(0,0,0,0.6)', 'backdrop-filter': 'blur(8px)' }}
+          class="fixed inset-0 z-50 flex items-center justify-center p-6 bg-black/25"
           onClick={(event) => event.target === event.currentTarget && setInstalling(null)}
         >
           <div
             class="w-[620px] max-w-full max-h-[90vh] overflow-y-auto rounded-xl p-6 flex flex-col gap-4"
             style={{
-              background: 'rgba(var(--surface-bg),0.98)',
+              background: 'var(--dialog-bg)',
+              'backdrop-filter': 'var(--popup-blur)',
               border: '1px solid var(--border-dim)',
             }}
           >
@@ -716,7 +717,7 @@ const McpServerList: Component = () => {
                 {t('common.cancel')}
               </button>
               <button
-                class={btnSecondarySm}
+                class={btnPrimaryOutlineSm}
                 disabled={installingId() !== null || !runtimeAvailable()}
                 onClick={() => void install()}
               >

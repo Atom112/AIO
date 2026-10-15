@@ -8,7 +8,7 @@ import { Component, Show } from 'solid-js';
 import { respondToolApproval } from '../../../core/api/mcp';
 import Icon from '../../../shared/components/Icon';
 import { t } from '../../../core/i18n';
-import { btnDanger, btnSuccess } from '../../../shared/components/buttonStyles';
+import { btnDangerOutline, btnSuccessOutline } from '../../../shared/components/buttonStyles';
 import type { PendingApproval } from '../../../core/store/store';
 
 // Type moved to core/store/stream.ts (CHAT-12: global stream state); re-exported
@@ -105,7 +105,7 @@ const ToolApprovalBubble: Component<ToolApprovalBubbleProps> = (props) => {
 
   return (
     <div
-      class="rounded-[10px] px-3.5 py-3 my-1 max-w-[420px] bg-[rgba(var(--surface-alt-bg),0.95)] border border-[rgba(var(--primary-rgb),0.15)] shadow-[0_4px_20px_rgba(0,0,0,0.3)]"
+      class="rounded-[10px] px-3.5 py-3 my-1 w-full bg-[rgba(var(--surface-alt-bg),0.95)] border border-[rgba(var(--primary-rgb),0.15)] shadow-[0_4px_20px_rgba(0,0,0,0.3)]"
       classList={{ 'border-[rgba(255,77,77,0.25)]': isDangerous() }}
       style={{ animation: 'tool-approval-in 0.2s ease-out' }}
     >
@@ -161,13 +161,13 @@ const ToolApprovalBubble: Component<ToolApprovalBubbleProps> = (props) => {
         </div>
       </Show>
       <div class="flex gap-2 justify-end">
-        <button type="button" class={btnDanger} onClick={handleReject}>
+        <button type="button" class={btnDangerOutline} onClick={handleReject}>
           <Icon name="x" size={13} />
           <span>{t('agent.approval.deny')}</span>
         </button>
         <button
           type="button"
-          class={btnSuccess}
+          class={btnSuccessOutline}
           onClick={handleAlwaysAllow}
           title={persistable() ? t('agent.approval.allowAlwaysPersistHint') : undefined}
         >
@@ -178,7 +178,7 @@ const ToolApprovalBubble: Component<ToolApprovalBubbleProps> = (props) => {
               : t('agent.approval.allowAlways')}
           </span>
         </button>
-        <button type="button" class={btnSuccess} onClick={handleApprove}>
+        <button type="button" class={btnSuccessOutline} onClick={handleApprove}>
           <Icon name="check" size={13} />
           <span>{t('agent.approval.approve')}</span>
         </button>

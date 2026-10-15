@@ -45,6 +45,27 @@ export const btnDangerBadge =
 export const btnSuccess =
   'inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium border border-green-400/30 bg-green-400/10 text-green-400 hover:bg-green-400/20 active:scale-95 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer';
 
+/**
+ * Semantic outline variants (approve/deny/save on permission & config dialogs):
+ * de-colored neutral body — only the BORDER carries the semantic color; hover
+ * restores a faint semantic tint as affordance. All share px-3 py-1.5 text-xs
+ * so every action button in one dialog has the same height.
+ */
+export const btnSuccessOutline =
+  'inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium border border-success/50 bg-white/[0.06] text-white/70 hover:bg-success/10 hover:text-white/90 active:scale-95 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer';
+
+/** Destructive outline variant — neutral body, danger-colored border only */
+export const btnDangerOutline =
+  'inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium border border-danger/50 bg-white/[0.06] text-white/70 hover:bg-danger/10 hover:text-white/90 active:scale-95 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer';
+
+/** Primary outline variant (compact) — neutral body, primary-colored border only */
+export const btnPrimaryOutlineSm =
+  'inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium border border-pri-50 bg-white/[0.06] text-white/70 hover:bg-pri-10 hover:text-white/90 active:scale-95 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer';
+
+/** Security/credential outline variant — neutral body, warn-colored border only */
+export const btnWarnOutline =
+  'inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium border border-warn/50 bg-white/[0.06] text-white/70 hover:bg-warn/10 hover:text-white/90 active:scale-95 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer';
+
 /** Small pill inline action (height-matched to a p-1 container + btnTabXs segmented control bar, for inline toolbar alignment) */
 export const btnBadgeBar =
   'inline-flex items-center justify-center gap-1 px-2.5 py-[7px] rounded-md text-xs font-medium bg-white/[0.06] border border-white/10 text-white/60 hover:bg-white/[0.1] hover:text-white/85 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer';

@@ -451,6 +451,7 @@
   "mcp.detail.transport": "传输类型",
   "mcp.detail.transportHttp": "HTTP+SSE（远程）",
   "mcp.detail.transportStdio": "stdio（本地子进程）",
+  "mcp.detail.transportStreamable": "Streamable HTTP（远程）",
   "mcp.detail.urlValidate": "URL 必须以 http:// 或 https:// 开头",
   "mcp.trust.title": "项目 MCP 服务器",
   "mcp.trust.description": "该项目自带 .aio/mcp-servers.json。确认服务器可信任后才会连接；仓库配置变更后需重新确认。",

@@ -194,14 +194,18 @@ fn is_safe_catalog_arg(s: &str) -> bool {
 }
 
 /// Filters registry-provided argument values down to the safe shape (MCP-14),
-/// dropping and logging everything else.
+/// dropping everything else. The drops are EXPECTED for the official registry
+/// (plenty of legitimate entries carry npx `-y`, uvx `-p`, `pkg[extra]==ver`
+/// specs or URL template placeholders), and AIO self-supplies the essentials
+/// (npm delivery always gets its own `-y`), so a per-arg warn floods hundreds
+/// of lines per catalog fetch — debug keeps the trail without the noise.
 pub(crate) fn filter_catalog_args(args: Vec<String>) -> Vec<String> {
     let mut out = Vec::with_capacity(args.len());
     for arg in args {
         if is_safe_catalog_arg(&arg) {
             out.push(arg);
         } else {
-            tracing::warn!("[mcp-catalog] 丢弃非法 runtime 参数: {arg}");
+            tracing::debug!("[mcp-catalog] 丢弃非法 runtime 参数: {arg}");
         }
     }
     out

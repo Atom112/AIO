@@ -15,17 +15,27 @@ const busy = Array.from(
     `<div style="padding:2px 8px;font-size:15px;white-space:nowrap">背景文字 行 ${i} ABCDEFGHIJKLMNOPQRSTUVWXYZ abcdefghijklmnopqrstuvwxyz 0123456789</div>`,
 ).join('');
 
-// class lists mirrored from shared/components/buttonStyles.ts (outline variants)
+// class lists mirrored from shared/components/buttonStyles.ts (outline family:
+// semantic border + text, neutral body)
 const btnSuccessOutline =
-  'inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium border border-success/50 bg-white/[0.06] text-white/70';
+  'inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium border border-success/50 bg-white/[0.06] text-success';
 const btnDangerOutline =
-  'inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium border border-danger/50 bg-white/[0.06] text-white/70';
+  'inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium border border-danger/50 bg-white/[0.06] text-danger';
+const btnPrimaryOutline =
+  'inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium border border-pri-50 bg-white/[0.06] text-pri';
 const btnPrimaryOutlineSm =
-  'inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium border border-pri-50 bg-white/[0.06] text-white/70';
+  'inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium border border-pri-50 bg-white/[0.06] text-pri';
 const btnWarnOutline =
-  'inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium border border-warn/50 bg-white/[0.06] text-white/70';
+  'inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium border border-warn/50 bg-white/[0.06] text-warn';
+const btnSecondary =
+  'inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium bg-white/[0.06] border border-white/10 text-white/60';
 const btnSecondarySm =
   'inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium bg-white/[0.06] border border-white/10 text-white/60';
+
+const iconX =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="13" height="13"><path d="M6 6l12 12M18 6 6 18"/></svg>';
+const iconCheck =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="13" height="13"><path d="m5 12 5 5L20 7"/></svg>';
 
 const bubble = `
 <div class="rounded-[10px] px-3.5 py-3 my-1 w-full bg-[rgba(var(--surface-alt-bg),0.95)] border border-[rgba(var(--primary-rgb),0.15)]" style="box-sizing:border-box">
@@ -36,9 +46,9 @@ const bubble = `
   <div class="text-[11px] bg-black/20 rounded-md px-2 py-1.5 mb-1.5" style="color:rgba(255,255,255,0.55)"><code>无参数</code></div>
   <div class="text-[11px] mb-2.5" style="color:rgba(255,255,255,0.45);line-height:1.4">工具 'get_account' 来自未受信任的 MCP server「Getlead」，请在确认安全后执行（全局 server 可在 MCP 设置中标记为受信任以跳过确认）</div>
   <div style="display:flex;gap:8px;justify-content:flex-end">
-    <button class="${btnDangerOutline}">✕ 拒绝</button>
-    <button class="${btnSuccessOutline}">✓ 始终允许</button>
-    <button class="${btnSuccessOutline}">✓ 批准</button>
+    <button class="${btnDangerOutline}">${iconX} 拒绝</button>
+    <button class="${btnSuccessOutline}">${iconCheck} 始终允许</button>
+    <button class="${btnSuccessOutline}">${iconCheck} 批准</button>
   </div>
 </div>`;
 
@@ -56,6 +66,10 @@ const dialog = `
   <div style="display:flex;gap:8px;justify-content:flex-end">
     <button class="${btnSecondarySm}">取消</button>
     <button class="${btnPrimaryOutlineSm}">保存</button>
+  </div>
+  <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:10px">
+    <button class="${btnSecondary}">取消</button>
+    <button class="${btnPrimaryOutline}">确定</button>
   </div>
 </div>`;
 

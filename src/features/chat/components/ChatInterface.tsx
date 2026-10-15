@@ -54,7 +54,7 @@ import BtwResponseBox from './BtwResponseBox';
 import {
   btnGhost,
   btnIcon,
-  btnPrimarySm,
+  btnPrimaryOutlineSm,
   btnSecondarySm,
 } from '../../../shared/components/buttonStyles';
 
@@ -402,7 +402,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
               {t('chat.selectedMessages', { count: formatNumber(props.selectedMessageIds.size) })}
             </span>
             <button
-              class={btnPrimarySm}
+              class={btnPrimaryOutlineSm}
               disabled={props.selectedMessageIds.size === 0}
               onClick={() => props.onConfirmSelection()}
             >

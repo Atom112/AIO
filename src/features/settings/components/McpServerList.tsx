@@ -35,11 +35,11 @@ import Icon from '../../../shared/components/Icon';
 import Dropdown from '../../../shared/components/Dropdown';
 import {
   btnBadgeBar,
-  btnDanger,
+  btnDangerOutline,
   btnPrimaryOutlineSm,
   btnSecondary,
   btnSecondarySm,
-  btnSuccess,
+  btnSuccessOutline,
   btnTabXs,
   tabActive,
 } from '../../../shared/components/buttonStyles';
@@ -481,7 +481,7 @@ const McpServerList: Component = () => {
                         {t('mcp.detail.officialRegistry')}
                       </button>
                       <button
-                        class={installed() ? btnSuccess : btnSecondarySm}
+                        class={installed() ? btnSuccessOutline : btnSecondarySm}
                         disabled={installed() || installingId() === server.id}
                         onClick={() => openInstall(server)}
                       >
@@ -570,12 +570,15 @@ const McpServerList: Component = () => {
                     </div>
                     <div class="flex items-center gap-2 ml-3">
                       <Show when={status() !== 'connected' && status() !== 'connecting'}>
-                        <button class={btnSuccess} onClick={() => void handleStart(config.id)}>
+                        <button
+                          class={btnSuccessOutline}
+                          onClick={() => void handleStart(config.id)}
+                        >
                           {t('mcp.start')}
                         </button>
                       </Show>
                       <Show when={status() === 'connected'}>
-                        <button class={btnDanger} onClick={() => void handleStop(config.id)}>
+                        <button class={btnDangerOutline} onClick={() => void handleStop(config.id)}>
                           {t('mcp.stop')}
                         </button>
                       </Show>
@@ -585,7 +588,7 @@ const McpServerList: Component = () => {
                       >
                         {t('common.edit')}
                       </button>
-                      <button class={btnDanger} onClick={() => void handleRemove(config.id)}>
+                      <button class={btnDangerOutline} onClick={() => void handleRemove(config.id)}>
                         {t('common.delete')}
                       </button>
                     </div>

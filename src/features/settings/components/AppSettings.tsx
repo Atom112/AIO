@@ -47,7 +47,7 @@ import Switch from '../../../shared/components/Switch';
 import Dropdown from '../../../shared/components/Dropdown';
 import {
   btnIcon,
-  btnPrimary,
+  btnPrimaryOutline,
   btnSecondary,
   btnSecondarySm,
   btnTabXs,
@@ -868,7 +868,7 @@ const AppSettings: Component = () => {
                   {t('common.cancel')}
                 </button>
                 <button
-                  class={btnPrimary}
+                  class={btnPrimaryOutline}
                   onClick={() => {
                     resetAllShortcutBindings();
                     setResetAllConfirm(false);
@@ -909,7 +909,7 @@ const AppSettings: Component = () => {
                 <button class={btnSecondary} onClick={handleConflictCancel}>
                   {t('common.cancel')}
                 </button>
-                <button class={btnPrimary} onClick={handleConflictOverride}>
+                <button class={btnPrimaryOutline} onClick={handleConflictOverride}>
                   {t('app.shortcuts.replace')}
                 </button>
               </div>

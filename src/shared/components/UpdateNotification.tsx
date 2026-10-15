@@ -18,7 +18,7 @@ import {
   setIgnoredUpdateVersion,
 } from '../../core/store/store';
 import { formatNumber, t } from '../../core/i18n';
-import { btnPrimary, btnSecondary } from '../components/buttonStyles';
+import { btnPrimaryOutline, btnSecondary } from '../components/buttonStyles';
 
 /**
  * App update toast pinned to the bottom-left corner
@@ -195,13 +195,13 @@ const UpdateNotification: Component = () => {
               <Show
                 when={!appUpdateReady()}
                 fallback={
-                  <button class={'flex-1 ' + btnPrimary} onClick={handleRestart}>
+                  <button class={'flex-1 ' + btnPrimaryOutline} onClick={handleRestart}>
                     {t('update.restart')}
                   </button>
                 }
               >
                 <button
-                  class={'flex-1 ' + btnPrimary}
+                  class={'flex-1 ' + btnPrimaryOutline}
                   disabled={appUpdateDownloading()}
                   onClick={handleUpdate}
                 >

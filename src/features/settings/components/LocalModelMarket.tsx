@@ -25,7 +25,7 @@ import { listen } from '@tauri-apps/api/event';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import Icon from '../../../shared/components/Icon';
 import {
-  btnDanger,
+  btnDangerOutline,
   btnSecondarySm,
   btnTabXs,
   tabActive,
@@ -1178,7 +1178,11 @@ const LocalModelMarket: Component = () => {
                   >
                     {formatSize(m.sizeBytes)}
                   </span>
-                  <button type="button" class={btnDanger} onClick={() => void removeInstalled(m)}>
+                  <button
+                    type="button"
+                    class={btnDangerOutline}
+                    onClick={() => void removeInstalled(m)}
+                  >
                     {t('common.delete')}
                   </button>
                 </div>

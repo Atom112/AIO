@@ -30,9 +30,9 @@ import Icon from '../../../shared/components/Icon';
 import Checkbox from '../../../shared/components/Checkbox';
 import {
   btnClose,
-  btnPrimarySm,
+  btnPrimaryOutlineSm,
   btnSecondary,
-  btnSuccess,
+  btnSuccessOutline,
   btnTabMd,
   btnTabXs,
   tabActive,
@@ -614,7 +614,7 @@ const ShareModal: Component<ShareModalProps> = (props) => {
                     {/* buttons */}
                     <div class="flex items-center justify-end gap-3 px-6 py-4 border-t border-white/[0.06] shrink-0 mt-auto">
                       <button
-                        class={`${btnSecondary} ${copied() === 'screenshot' ? btnSuccess : ''}`}
+                        class={`${btnSecondary} ${copied() === 'screenshot' ? btnSuccessOutline : ''}`}
                         disabled={shotCapturing()}
                         onClick={() => handleScreenshotCapture('copy')}
                       >
@@ -626,7 +626,7 @@ const ShareModal: Component<ShareModalProps> = (props) => {
                             : t('export.copyScreenshot')}
                       </button>
                       <button
-                        class={btnPrimarySm}
+                        class={btnPrimaryOutlineSm}
                         disabled={shotCapturing()}
                         onClick={() => handleScreenshotCapture('download')}
                       >
@@ -659,13 +659,16 @@ const ShareModal: Component<ShareModalProps> = (props) => {
                     </div>
                     <div class="flex items-center justify-end gap-3 px-6 py-4 border-t border-white/[0.06] shrink-0">
                       <button
-                        class={`${btnSecondary} ${copied() === 'markdown' ? btnSuccess : ''}`}
+                        class={`${btnSecondary} ${copied() === 'markdown' ? btnSuccessOutline : ''}`}
                         onClick={() => handleCopy('markdown')}
                       >
                         <Icon name="copy" class="w-3.5 h-3.5" />
                         {copied() === 'markdown' ? t('common.copied') : t('export.copyClipboard')}
                       </button>
-                      <button class={btnPrimarySm} onClick={() => handleDownload('markdown')}>
+                      <button
+                        class={btnPrimaryOutlineSm}
+                        onClick={() => handleDownload('markdown')}
+                      >
                         <Icon name="download" class="w-3.5 h-3.5" />
                         {t('export.downloadMd')}
                       </button>
@@ -705,13 +708,13 @@ const ShareModal: Component<ShareModalProps> = (props) => {
                     </div>
                     <div class="flex items-center justify-end gap-3 px-6 py-4 border-t border-white/[0.06] shrink-0">
                       <button
-                        class={`${btnSecondary} ${copied() === 'json' ? btnSuccess : ''}`}
+                        class={`${btnSecondary} ${copied() === 'json' ? btnSuccessOutline : ''}`}
                         onClick={() => handleCopy('json')}
                       >
                         <Icon name="copy" class="w-3.5 h-3.5" />
                         {copied() === 'json' ? t('common.copied') : t('export.copyClipboard')}
                       </button>
-                      <button class={btnPrimarySm} onClick={() => handleDownload('json')}>
+                      <button class={btnPrimaryOutlineSm} onClick={() => handleDownload('json')}>
                         <Icon name="download" class="w-3.5 h-3.5" />
                         {t('export.downloadJson')}
                       </button>
@@ -741,7 +744,7 @@ const ShareModal: Component<ShareModalProps> = (props) => {
                     </div>
                     <div class="flex items-center justify-end gap-3 px-6 py-4 border-t border-white/[0.06] shrink-0">
                       <button
-                        class={btnPrimarySm}
+                        class={btnPrimaryOutlineSm}
                         disabled={pdfCapturing()}
                         onClick={handlePdfDownload}
                       >

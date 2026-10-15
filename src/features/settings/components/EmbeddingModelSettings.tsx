@@ -13,7 +13,7 @@ import { listen } from '@tauri-apps/api/event';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import Icon from '../../../shared/components/Icon';
 import Switch from '../../../shared/components/Switch';
-import { btnDangerBadge, btnSecondarySm } from '../../../shared/components/buttonStyles';
+import { btnDangerOutline, btnSecondarySm } from '../../../shared/components/buttonStyles';
 import { t } from '../../../core/i18n';
 import {
   embeddingModelCancelDownload,
@@ -304,7 +304,7 @@ const EmbeddingModelSettings: Component = () => {
             <Show when={!m.bundled}>
               <button
                 type="button"
-                class={btnDangerBadge}
+                class={btnDangerOutline}
                 disabled={isDownloading()}
                 onClick={() => void removeModel(m)}
               >

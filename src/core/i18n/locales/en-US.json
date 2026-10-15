@@ -26,6 +26,7 @@
   "agent.subagent.menuTrigger": "Subagents ({{count}})",
   "agent.subagent.menuCount": "{{count}}",
   "agent.checkpoint.resume": "Interrupted turn detected (possible crash) — click to resume from checkpoint",
+  "agent.checkpoint.resumeShort": "Resume from checkpoint",
   "agent.mode.auto": "Full permission",
   "agent.mode.autoDescription": "Fully autonomous: files/commands/networked commands run without per-step confirmation (Deny rules and the untrusted-MCP-server gate still apply); sandbox denials auto-remediate under the narrowed policy — the runtime never breaks the sandbox boundary unless sandboxUnsandboxedFallback is explicitly enabled.",
   "agent.mode.danger": "Machine full trust",

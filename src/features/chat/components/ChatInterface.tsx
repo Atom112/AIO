@@ -107,6 +107,10 @@ interface ChatInterfaceProps {
   btwOverlays: Array<{ id: string; question: string; answer: string | null; loading: boolean }>;
   /** Dismiss a specific /btw overlay */
   onDismissBtw: (id: string) => void;
+  /** A resumable crash-orphaned checkpoint exists for the active topic */
+  checkpointAvailable: boolean;
+  /** Resume the interrupted turn from its checkpoint */
+  onResumeCheckpoint: () => void;
 }
 
 const ChatInterface: Component<ChatInterfaceProps> = (props) => {
@@ -886,6 +890,26 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
 
             <div class="flex items-center gap-2">
               <TokenStatsBar />
+              {/* Checkpoint resume: appears left of the send button when a crash-orphaned
+                  turn is detected; the label expands on hover (same animation as the
+                  copy/branch action buttons in the message history). */}
+              <Show when={props.checkpointAvailable && !props.isThinking}>
+                <button
+                  type="button"
+                  class="group inline-flex items-center bg-transparent rounded-lg cursor-pointer text-xs py-1 px-1.5 transition-all duration-200 hover:bg-[rgba(var(--text-base-rgb),0.08)] hover:!p-[4px_8px]"
+                  style={{
+                    border: '1px solid rgba(var(--primary-rgb),0.45)',
+                    color: 'rgb(var(--primary-rgb))',
+                  }}
+                  title={t('agent.checkpoint.resume')}
+                  onClick={() => props.onResumeCheckpoint()}
+                >
+                  <Icon name="rotate-ccw" size={13} />
+                  <span class="overflow-hidden whitespace-nowrap text-[11px] max-w-0 opacity-0 transition-all duration-200 group-hover:max-w-[110px] group-hover:opacity-100 group-hover:ml-1">
+                    {t('agent.checkpoint.resumeShort')}
+                  </span>
+                </button>
+              </Show>
               <button
                 class={`flex items-center justify-center border-none rounded-lg cursor-pointer h-8 w-8 transition-all duration-100 hover:opacity-90 hover:scale-105 active:scale-95 ${props.isThinking ? 'bg-[var(--color-danger)] text-white' : 'text-white'}`}
                 style={!props.isThinking ? { background: 'rgba(var(--primary-rgb),0.3)' } : {}}

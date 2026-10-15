@@ -16,19 +16,22 @@ export type BackgroundTaskKind =
   | 'reindex'
   | 'code-index'
   | 'model-download'
-  | 'gguf-download';
+  | 'gguf-download'
+  | 'shell-command';
 
 export type BackgroundTaskStatus = 'running' | 'done' | 'error' | 'paused' | 'cancelled';
 
 export interface BackgroundTask {
-  /** Registry key: `${kind}:${scope}` */
+  /** Registry key: `${kind}:${scope}`, or a unique run id for shell commands. */
   id: string;
   kind: BackgroundTaskKind;
   status: BackgroundTaskStatus;
-  /** Raw scope identity (project root path or model id); the menu resolves display names. */
+  /** Raw scope identity (project root path, model id, or command text); the menu resolves display names. */
   scope: string;
   /** Numeric progress when the job reports one (index counters / download bytes). */
   progress?: { done: number; total: number };
+  /** Wall-clock running time in ms (shell-command heartbeats); the menu formats it. */
+  elapsedMs?: number;
   /** Free-form detail line (downloaded file name). */
   detail?: string;
   error?: string;
@@ -124,14 +127,38 @@ export function finishBackgroundTask(
   status: Exclude<BackgroundTaskStatus, 'running'>,
   error?: string,
 ): void {
-  const id = `${kind}:${scope}`;
+  finishBackgroundTaskByKey(`${kind}:${scope}`, status, error);
+}
+
+/** Terminal state by registry key — shell commands are keyed by run id, not scope. */
+export function finishBackgroundTaskByKey(
+  key: string,
+  status: Exclude<BackgroundTaskStatus, 'running'>,
+  error?: string,
+): void {
   setBackgroundTasks((prev) => {
-    const idx = prev.findIndex((t) => t.id === id);
+    const idx = prev.findIndex((t) => t.id === key);
     if (idx < 0) return prev;
     const now = Date.now();
     const next = prev.slice();
     next[idx] = { ...next[idx], status, error, endedAt: now, lastEventAt: now };
     return next;
+  });
+}
+
+/** Heartbeat for keyed jobs (create-or-refresh): shell-command runs announce
+ *  themselves this way (the backend emits the first heartbeat after 5s). */
+export function heartbeatBackgroundTask(
+  kind: BackgroundTaskKind,
+  key: string,
+  scope: string,
+  elapsedMs: number,
+): void {
+  upsert(key, kind, scope, {
+    status: 'running',
+    elapsedMs,
+    error: undefined,
+    endedAt: undefined,
   });
 }
 

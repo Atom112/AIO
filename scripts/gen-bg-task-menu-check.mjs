@@ -21,14 +21,15 @@ const ICONS = {
   x: '<path d="M6 6l12 12M18 6 6 18"/>',
   spinner: '<path d="M12 3a9 9 0 1 0 9 9"/>',
   'chevron-up': '<path d="m6 14 6-6 6 6"/>',
+  terminal: '<path d="M4 17l6-5-6-5"/><path d="M12 19h8"/>',
 };
 
 const svg = (name, size, color, extra = '') =>
   `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="${size}" height="${size}" style="color:${color};flex-shrink:0" ${extra}>${ICONS[name]}</svg>`;
 
 // One menu row per task kind, mirroring BackgroundTaskMenu's row structure:
-// kind icon chip / title + scope + detail / progress bar / error line / status.
-const row = ({ icon, title, scope, detail, progressPct, progressText, error, right }) => `
+// kind icon chip / title + scope + detail / progress bar / elapsed / error / status.
+const row = ({ icon, title, scope, detail, progressPct, progressText, elapsed, error, right }) => `
   <div class="flex items-start gap-2 px-3 py-2" style="text-align:left">
     <span class="flex items-center justify-center rounded shrink-0" style="width:20px;height:20px;background:rgba(var(--text-base-rgb),0.06)">
       ${svg(icon, 12, 'rgba(var(--text-base-rgb),0.55)')}
@@ -47,6 +48,11 @@ const row = ({ icon, title, scope, detail, progressPct, progressText, error, rig
               </span>
               <span class="shrink-0" style="font-family:ui-monospace,monospace;font-size:10px;color:rgba(var(--text-base-rgb),0.4)">${progressText}</span>
             </span>`
+          : ''
+      }
+      ${
+        elapsed !== undefined
+          ? `<span class="block" style="font-family:ui-monospace,monospace;font-size:10px;margin-top:2px;color:rgba(var(--text-base-rgb),0.4)">已运行 ${elapsed}</span>`
           : ''
       }
       ${error ? `<span class="block truncate" style="font-size:11px;color:var(--color-danger)">${error}</span>` : ''}
@@ -114,6 +120,19 @@ const ROWS = [
     error: '下载中断: connection reset',
     right: statusRight('error'),
   }),
+  row({
+    icon: 'terminal',
+    title: '命令执行',
+    scope: 'cargo build --release',
+    elapsed: '1m22s',
+    right: statusRight('running'),
+  }),
+  row({
+    icon: 'terminal',
+    title: '命令执行',
+    scope: 'node scripts/watch.mjs',
+    right: statusRight('已取消'),
+  }),
 ];
 
 const popup = (title, rows) => `
@@ -133,7 +152,7 @@ const statusBar = (open) => `
     ${svg('code', 14, 'rgba(var(--text-base-rgb),0.6)')}
     <span style="font-size:12px;color:rgba(var(--text-base-rgb),0.7)">Agent 工作区模式 · demo-project</span>
     <div class="ml-auto flex items-center gap-2">
-      <div class="relative inline-block">${trigger('后台任务', '6 个', true)}
+      <div class="relative inline-block">${trigger('后台任务', '9 个', true)}
         ${open ? popup('后台任务', ROWS.join('')) : ''}
       </div>
       <div class="relative inline-block">${trigger('子智能体', '2 个', false)}

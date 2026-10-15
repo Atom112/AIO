@@ -8,6 +8,8 @@ const {
   startBackgroundTask,
   updateBackgroundTaskProgress,
   finishBackgroundTask,
+  finishBackgroundTaskByKey,
+  heartbeatBackgroundTask,
   resetBackgroundTasks,
 } = await import('./background-tasks');
 
@@ -82,5 +84,43 @@ describe('background task registry', () => {
 
     vi.advanceTimersByTime(2 * 60_000);
     expect(backgroundTasks()).toHaveLength(0);
+  });
+
+  it('shell 命令按运行 id 键控：heartbeat 创建/刷新 elapsed，终态按 key 关闭', () => {
+    heartbeatBackgroundTask(
+      'shell-command',
+      'shell-command:uuid-1',
+      'cargo build --release',
+      5_000,
+    );
+    expect(backgroundTasks()).toHaveLength(1);
+    expect(backgroundTasks()[0]).toMatchObject({
+      id: 'shell-command:uuid-1',
+      kind: 'shell-command',
+      status: 'running',
+      scope: 'cargo build --release',
+      elapsedMs: 5_000,
+    });
+
+    heartbeatBackgroundTask(
+      'shell-command',
+      'shell-command:uuid-1',
+      'cargo build --release',
+      10_000,
+    );
+    expect(backgroundTasks()[0].elapsedMs).toBe(10_000);
+
+    // Same command text, different run: a separate entry (concurrent runs never merge)
+    heartbeatBackgroundTask(
+      'shell-command',
+      'shell-command:uuid-2',
+      'cargo build --release',
+      5_000,
+    );
+    expect(backgroundTasks()).toHaveLength(2);
+
+    finishBackgroundTaskByKey('shell-command:uuid-1', 'done');
+    expect(backgroundTasks()[0].status).toBe('done');
+    expect(backgroundTasks()[1].status).toBe('running');
   });
 });

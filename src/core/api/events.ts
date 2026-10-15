@@ -19,6 +19,8 @@ export const EVENTS = {
   memoryExtractProgress: 'memory-extract-progress',
   /** Memory consolidation lifecycle (running / done / error) */
   memoryConsolidateProgress: 'memory-consolidate-progress',
+  /** Long-running agent shell command lifecycle (running heartbeat / terminal) */
+  commandProgress: 'command-progress',
 
   /** Start of one LLM call round */
   llmRoundStart: 'llm-round-start',

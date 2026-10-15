@@ -70,7 +70,8 @@ export type IconName =
   | 'compass'
   | 'rotate-ccw'
   | 'embedding'
-  | 'arrow-down-up';
+  | 'arrow-down-up'
+  | 'terminal';
 
 /**
  * Icon path factory table.
@@ -254,6 +255,13 @@ const PATHS: Record<IconName, () => JSX.Element> = {
     <>
       <path d="M7 4v16M7 20l-3.5-3.5M7 20l3.5-3.5" />
       <path d="M17 20V4M17 4l-3.5 3.5M17 4l3.5 3.5" />
+    </>
+  ),
+  // Shell command run: terminal window with a prompt cursor.
+  terminal: () => (
+    <>
+      <path d="M4 17l6-5-6-5" />
+      <path d="M12 19h8" />
     </>
   ),
   model: () => (

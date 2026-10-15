@@ -495,6 +495,100 @@ fn sandbox_not_found_signature(result: &ToolResult, command: &str) -> bool {
         && shell_tools::is_command_not_found_result(&text)
 }
 
+// ===== Long-running command visibility (background-task menu feed) =====
+//
+// A shell command the app is still waiting on after 5s is announced as a
+// background task (`command-progress` running heartbeat every 5s, carrying the
+// run id + command text); every exit path — including user stop and the
+// sandbox-expansion early returns — closes the entry exactly once via
+// [`CommandJobGuard::finish`] or its Drop. Sub-5s commands never announce.
+
+/// One execute_command dispatch's menu entry: spawn before the run, heartbeat
+/// while waiting, `finish` at convergence (Drop covers early returns).
+struct CommandJobGuard {
+    app: AppHandle,
+    id: String,
+    command_head: String,
+    cancel: CancellationToken,
+    announced: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    finished: std::sync::atomic::AtomicBool,
+}
+
+impl CommandJobGuard {
+    fn spawn(app: AppHandle, command: &str) -> Self {
+        let command_head = crate::utils::truncate::truncate_chars_head(command, 80);
+        let id = uuid::Uuid::new_v4().to_string();
+        let cancel = CancellationToken::new();
+        let announced = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        {
+            let app = app.clone();
+            let id = id.clone();
+            let command_head = command_head.clone();
+            let cancel = cancel.clone();
+            let announced = announced.clone();
+            tokio::spawn(async move {
+                let mut elapsed_ms: u64 = 0;
+                loop {
+                    tokio::select! {
+                        _ = cancel.cancelled() => break,
+                        _ = tokio::time::sleep(std::time::Duration::from_secs(5)) => {}
+                    }
+                    elapsed_ms += 5_000;
+                    announced.store(true, std::sync::atomic::Ordering::SeqCst);
+                    let _ = app.emit(
+                        ev::COMMAND_PROGRESS,
+                        json!({
+                            "id": id,
+                            "status": "running",
+                            "command": command_head,
+                            "elapsedMs": elapsed_ms,
+                        }),
+                    );
+                }
+            });
+        }
+        Self {
+            app,
+            id,
+            command_head,
+            cancel,
+            announced,
+            finished: std::sync::atomic::AtomicBool::new(false),
+        }
+    }
+
+    /// Close the entry (exactly once). No event when the job never announced —
+    /// sub-5s commands stay invisible by design.
+    fn finish(&self, status: &str) {
+        if self
+            .finished
+            .swap(true, std::sync::atomic::Ordering::SeqCst)
+        {
+            return;
+        }
+        self.cancel.cancel();
+        if self.announced.load(std::sync::atomic::Ordering::SeqCst) {
+            let _ = self.app.emit(
+                ev::COMMAND_PROGRESS,
+                json!({
+                    "id": self.id,
+                    "status": status,
+                    "command": self.command_head,
+                }),
+            );
+        }
+    }
+}
+
+impl Drop for CommandJobGuard {
+    fn drop(&mut self) {
+        // Early exits (user stop mid-select, expansion-dialog cancellation)
+        if !self.finished.load(std::sync::atomic::Ordering::SeqCst) {
+            self.finish("cancelled");
+        }
+    }
+}
+
 #[allow(
     clippy::too_many_arguments,
     reason = "explicit execution context incl. workspace isolation"
@@ -722,6 +816,11 @@ pub(crate) async fn execute_builtin_tool(
                 .unwrap_or_else(|_| shell_tools::tool_err("命令执行线程 panic"))
             }
         };
+        // Background-task menu visibility for the command the app is about to wait
+        // on: announces after 5s (sub-5s runs stay invisible), heartbeats every 5s,
+        // and closes on every exit — the guard's Drop also covers the user-stop
+        // early return inside the select below.
+        let _command_job = CommandJobGuard::spawn(app.clone(), &command_for_run);
         let started = std::time::SystemTime::now();
         // The select! frees the agent loop the instant the user stops; the blocking
         // thread itself observes the same token within one 500ms slice and kills the
@@ -893,6 +992,9 @@ pub(crate) async fn execute_builtin_tool(
                 );
             }
         }
+        // Close the menu entry before returning (all paths converge here; the guard's
+        // Drop already closed it on the early-cancel returns)
+        _command_job.finish(if result.is_error { "error" } else { "done" });
         Ok(result)
     } else if tool_name == tool_names::WEB_FETCH {
         let url = arguments["url"].as_str().unwrap_or("");

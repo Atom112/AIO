@@ -27,7 +27,8 @@ import { setActiveSubagentView } from '../../../core/store/store';
 import Icon, { type IconName } from '../../../shared/components/Icon';
 import ToolCallBubble from './ToolCallBubble';
 import Markdown from '../../../shared/components/Markdown';
-import { getSubagentProfileStyle, subagentProfileLabel } from './SubagentConversationView';
+import { subagentProfileLabel } from './SubagentConversationView';
+import { getSubagentProfileStyle } from '../../../core/utils/subagentProfileStyle';
 import { stopSubagent } from '../../../core/api/chat';
 import { t } from '../../../core/i18n';
 

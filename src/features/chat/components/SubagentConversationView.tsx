@@ -22,7 +22,7 @@ import {
   onCleanup,
   type JSX,
 } from 'solid-js';
-import Icon, { type IconName } from '../../../shared/components/Icon';
+import Icon from '../../../shared/components/Icon';
 import Markdown from '../../../shared/components/Markdown';
 import ThinkBlock from '../../../shared/components/ThinkBlock';
 import { t } from '../../../core/i18n';
@@ -35,47 +35,11 @@ import {
 } from '../../../core/store/store';
 import { stopSubagent } from '../../../core/api/chat';
 import { btnGhost, btnIcon } from '../../../shared/components/buttonStyles';
+import { getSubagentProfileStyle } from '../../../core/utils/subagentProfileStyle';
 
 // ---- Profile configuration (shared by the compact card and the pull-up menu) ----
-export interface SubagentProfileStyle {
-  icon: IconName;
-  color: string;
-  bgColor: string;
-  borderColor: string;
-}
-
-/** Builds a profile style from the per-role CSS var (colors live in index.css as
- * --role-<id>-rgb so the rgba ratchet has no literals to count here). */
-const role = (
-  id: string,
-  icon: SubagentProfileStyle['icon'],
-  alpha = 0.9,
-): SubagentProfileStyle => ({
-  icon,
-  color: `rgba(var(--role-${id}-rgb),${alpha})`,
-  bgColor: `rgba(var(--role-${id}-rgb),0.1)`,
-  borderColor: `rgba(var(--role-${id}-rgb),0.3)`,
-});
-
-const PROFILE_STYLES: Record<string, SubagentProfileStyle> = {
-  explorer: role('explorer', 'search'),
-  coder: role('coder', 'code'),
-  reviewer: role('reviewer', 'review-search'),
-  debugger: role('debugger', 'bug'),
-  writer: role('writer', 'pen-line'),
-  tester: role('tester', 'flask-check', 0.95),
-  requirements: role('requirements', 'lightbulb'),
-  architect: role('architect', 'compass'),
-  vision: role('vision', 'eye'),
-  general: role('general', 'sparkles'),
-};
-
-const DEFAULT_PROFILE: SubagentProfileStyle = {
-  icon: 'sparkles',
-  color: 'rgba(var(--role-default-rgb),0.75)',
-  bgColor: 'rgba(var(--role-default-rgb),0.06)',
-  borderColor: 'rgba(var(--role-default-rgb),0.2)',
-};
+// The style registry itself lives in core/utils/subagentProfileStyle.ts (shared with
+// the settings page rows); this module keeps the i18n label + duration formatters.
 
 /** profile id -> display name (i18n) */
 export function subagentProfileLabel(profileId?: string): string {
@@ -93,11 +57,6 @@ export function subagentProfileLabel(profileId?: string): string {
     default:
       return t('agent.profile.subagent');
   }
-}
-
-/** profile id -> color/icon style */
-export function getSubagentProfileStyle(profileId?: string): SubagentProfileStyle {
-  return PROFILE_STYLES[profileId || ''] || DEFAULT_PROFILE;
 }
 
 /** milliseconds -> duration text */

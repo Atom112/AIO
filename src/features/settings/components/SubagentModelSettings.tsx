@@ -25,6 +25,7 @@ import {
 import { getLogo as getLogoByIds } from '../../../core/utils/modelLogo';
 import { findModel, formatContextWindow } from '../../../core/utils/models';
 import Icon from '../../../shared/components/Icon';
+import { getSubagentProfileStyle } from '../../../core/utils/subagentProfileStyle';
 import {
   btnIcon,
   btnPrimaryOutlineSm,
@@ -351,6 +352,8 @@ const SubagentModelSettings: Component = () => {
         {(profile, index) => {
           const current = () => overrideModel(profile.id);
           const isOpen = () => openDropdown() === profile.id;
+          // Role identity chip (same icon/color registry as the conversation view)
+          const ps = getSubagentProfileStyle(profile.id);
           return (
             <div
               class="bg-white/[0.03] rounded-xl border border-[var(--border-dim)] overflow-hidden animate-row-in"
@@ -358,14 +361,22 @@ const SubagentModelSettings: Component = () => {
             >
               {/* Profile header */}
               <div class="p-4 flex items-center justify-between">
-                <div class="flex-1 min-w-0">
-                  <div class="flex items-center gap-1.5">
-                    <span class="text-sm font-semibold text-white">{profile.name}</span>
-                    <span class="text-[10px] px-1.5 py-0.5 rounded bg-pri-20 text-pri font-mono">
-                      {profile.id}
-                    </span>
+                <div class="flex-1 min-w-0 flex items-center gap-3">
+                  <div
+                    class="w-8 h-8 rounded-lg flex items-center justify-center shrink-0 border"
+                    style={{ background: ps.bgColor, 'border-color': ps.borderColor }}
+                  >
+                    <Icon name={ps.icon} size={15} style={{ color: ps.color }} />
                   </div>
-                  <p class="text-xs text-white/40 mt-1">{profile.description}</p>
+                  <div class="min-w-0">
+                    <div class="flex items-center gap-1.5">
+                      <span class="text-sm font-semibold text-white">{profile.name}</span>
+                      <span class="text-[10px] px-1.5 py-0.5 rounded bg-pri-20 text-pri font-mono">
+                        {profile.id}
+                      </span>
+                    </div>
+                    <p class="text-xs text-white/40 mt-1">{profile.description}</p>
+                  </div>
                 </div>
                 <div class="flex items-center gap-2 ml-3 shrink-0">
                   <button

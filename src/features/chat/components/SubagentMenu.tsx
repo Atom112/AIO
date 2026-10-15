@@ -13,11 +13,8 @@ import { t } from '../../../core/i18n';
 import { collectSubagents, setActiveSubagentView, type Topic } from '../../../core/store/store';
 import { btnGhost } from '../../../shared/components/buttonStyles';
 import Icon from '../../../shared/components/Icon';
-import {
-  formatSubagentDuration,
-  getSubagentProfileStyle,
-  subagentProfileLabel,
-} from './SubagentConversationView';
+import { formatSubagentDuration, subagentProfileLabel } from './SubagentConversationView';
+import { getSubagentProfileStyle } from '../../../core/utils/subagentProfileStyle';
 
 export interface SubagentMenuProps {
   /** Active topic (the subagent collection source). */

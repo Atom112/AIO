@@ -233,7 +233,7 @@ const McpServerDetail: Component<Props> = (props) => {
             {t('mcp.detail.name')}
           </label>
           <input
-            class="px-3 py-1.5 rounded text-sm outline-none"
+            class="px-3 py-1.5 rounded-lg text-sm outline-none"
             style={{
               background: 'rgba(0,0,0,0.3)',
               border: '1px solid var(--border-dim)',
@@ -300,7 +300,7 @@ const McpServerDetail: Component<Props> = (props) => {
                     {t('mcp.detail.command')}
                   </label>
                   <input
-                    class="px-3 py-1.5 rounded text-sm outline-none"
+                    class="px-3 py-1.5 rounded-lg text-sm outline-none"
                     style={{
                       background: 'rgba(0,0,0,0.3)',
                       border: '1px solid var(--border-dim)',
@@ -325,7 +325,7 @@ const McpServerDetail: Component<Props> = (props) => {
                     {(arg, idx) => (
                       <div class="flex items-center gap-1">
                         <input
-                          class="flex-1 px-3 py-1.5 rounded text-sm outline-none"
+                          class="flex-1 px-3 py-1.5 rounded-lg text-sm outline-none"
                           style={{
                             background: 'rgba(0,0,0,0.3)',
                             border: '1px solid var(--border-dim)',
@@ -355,7 +355,7 @@ const McpServerDetail: Component<Props> = (props) => {
                     {([k, v]) => (
                       <div class="flex items-center gap-1">
                         <input
-                          class="w-1/3 px-2 py-1.5 rounded text-sm outline-none"
+                          class="w-1/3 px-2 py-1.5 rounded-lg text-sm outline-none"
                           style={{
                             background: 'rgba(0,0,0,0.3)',
                             border: '1px solid var(--border-dim)',
@@ -368,7 +368,7 @@ const McpServerDetail: Component<Props> = (props) => {
                           when={v.includes('${KEYRING:')}
                           fallback={
                             <input
-                              class="flex-1 px-2 py-1.5 rounded text-sm outline-none"
+                              class="flex-1 px-2 py-1.5 rounded-lg text-sm outline-none"
                               style={{
                                 background: 'rgba(0,0,0,0.3)',
                                 border: '1px solid var(--border-dim)',
@@ -382,7 +382,7 @@ const McpServerDetail: Component<Props> = (props) => {
                         >
                           {/* FE-01: read-only keyring placeholder (title explains how to replace) */}
                           <input
-                            class="flex-1 px-2 py-1.5 rounded text-sm outline-none"
+                            class="flex-1 px-2 py-1.5 rounded-lg text-sm outline-none"
                             style={{
                               background: 'rgba(0,0,0,0.3)',
                               border: '1px solid var(--border-dim)',
@@ -431,7 +431,7 @@ const McpServerDetail: Component<Props> = (props) => {
                   URL
                 </label>
                 <input
-                  class="px-3 py-1.5 rounded text-sm outline-none"
+                  class="px-3 py-1.5 rounded-lg text-sm outline-none"
                   style={{
                     background: 'rgba(0,0,0,0.3)',
                     border: '1px solid var(--border-dim)',
@@ -485,7 +485,7 @@ const McpServerDetail: Component<Props> = (props) => {
                   {([k, v]) => (
                     <div class="flex items-center gap-1">
                       <input
-                        class="w-1/3 px-2 py-1.5 rounded text-sm outline-none"
+                        class="w-1/3 px-2 py-1.5 rounded-lg text-sm outline-none"
                         style={{
                           background: 'rgba(0,0,0,0.3)',
                           border: '1px solid var(--border-dim)',
@@ -499,7 +499,7 @@ const McpServerDetail: Component<Props> = (props) => {
                         when={v.includes('${KEYRING:')}
                         fallback={
                           <input
-                            class="flex-1 px-2 py-1.5 rounded text-sm outline-none"
+                            class="flex-1 px-2 py-1.5 rounded-lg text-sm outline-none"
                             style={{
                               background: 'rgba(0,0,0,0.3)',
                               border: '1px solid var(--border-dim)',
@@ -512,7 +512,7 @@ const McpServerDetail: Component<Props> = (props) => {
                         }
                       >
                         <input
-                          class="flex-1 px-2 py-1.5 rounded text-sm outline-none"
+                          class="flex-1 px-2 py-1.5 rounded-lg text-sm outline-none"
                           style={{
                             background: 'rgba(0,0,0,0.3)',
                             border: '1px solid var(--border-dim)',

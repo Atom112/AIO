@@ -59,6 +59,12 @@ const ToolApprovalBubble: Component<ToolApprovalBubbleProps> = (props) => {
     }
   };
 
+  // MCP tool calls carry the originating server id; builtin file/command tools use the
+  // reserved builtin ids (mirrors the filter in McpServerList) and get no chip.
+  const BUILTIN_SERVER_IDS = new Set(['__builtin__', '__aio-filesystem__']);
+  const serverLabel = () =>
+    BUILTIN_SERVER_IDS.has(props.approval.serverId) ? null : props.approval.serverId;
+
   // Format arguments for display
   const formatArgs = () => {
     const args = props.approval.arguments;
@@ -108,6 +114,16 @@ const ToolApprovalBubble: Component<ToolApprovalBubbleProps> = (props) => {
         <span class="text-[13px] font-semibold text-white/85 font-mono">
           {props.approval.toolName}
         </span>
+        <Show when={serverLabel()}>
+          {(sid) => (
+            <span
+              class="text-[10px] text-white/35 font-mono rounded bg-white/5 px-1 py-px truncate max-w-[160px]"
+              title={sid()}
+            >
+              {sid()}
+            </span>
+          )}
+        </Show>
         <Show when={isDangerous()}>
           <span class="text-[10px] font-semibold py-px px-1.5 rounded bg-[var(--color-danger)]/15 text-[var(--color-danger)]/80 uppercase tracking-[0.3px]">
             {t('agent.approval.dangerous')}
@@ -117,7 +133,11 @@ const ToolApprovalBubble: Component<ToolApprovalBubbleProps> = (props) => {
       <div class="text-[11px] text-white/55 bg-black/20 rounded-md px-2 py-1.5 mb-1.5 overflow-hidden text-ellipsis whitespace-nowrap">
         <code>{formatArgs()}</code>
       </div>
-      <div class="text-[11px] text-white/45 mb-2.5 leading-[1.4]">{t('agent.approval.title')}</div>
+      {/* Backend reason carries the specifics (untrusted MCP server name, danger
+          annotations, sandbox notices); the static title is only the fallback. */}
+      <div class="text-[11px] text-white/45 mb-2.5 leading-[1.4] whitespace-pre-wrap break-words max-h-32 overflow-y-auto">
+        {props.approval.reason || t('agent.approval.title')}
+      </div>
       <Show when={props.approval.previewDiff}>
         <div
           class="mb-2.5 rounded-md overflow-hidden border border-white/[0.06]"

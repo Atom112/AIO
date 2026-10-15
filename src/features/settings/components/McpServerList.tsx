@@ -34,7 +34,6 @@ import { statusColor, statusLabel, transportLabel } from '../../../core/utils/mc
 import Icon from '../../../shared/components/Icon';
 import Dropdown from '../../../shared/components/Dropdown';
 import {
-  btnBadge,
   btnBadgeBar,
   btnDanger,
   btnPrimaryOutlineSm,
@@ -580,7 +579,10 @@ const McpServerList: Component = () => {
                           {t('mcp.stop')}
                         </button>
                       </Show>
-                      <button class={btnBadge} onClick={() => setEditingConfig({ ...config })}>
+                      <button
+                        class={btnSecondarySm}
+                        onClick={() => setEditingConfig({ ...config })}
+                      >
                         {t('common.edit')}
                       </button>
                       <button class={btnDanger} onClick={() => void handleRemove(config.id)}>
@@ -680,7 +682,7 @@ const McpServerList: Component = () => {
                     </span>
                     <input
                       type={input.secret ? 'password' : 'text'}
-                      class="px-3 py-2 rounded text-sm outline-none"
+                      class="px-3 py-2 rounded-lg text-sm outline-none"
                       style={{
                         background: 'rgba(0,0,0,0.3)',
                         border: '1px solid var(--border-dim)',

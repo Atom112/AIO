@@ -167,6 +167,7 @@ src-tauri/src/
 - **下拉菜单统一**：所有下拉选择一律使用 `src/shared/components/Dropdown.tsx`；设置页/表单行内使用 `variant="ghost"`（透明触发器 + `--border-dim` 边框，参照 `src/features/settings/components/AppSettings.tsx` 的语言选择器），工具栏使用默认 `solid` 变体。禁止原生 `<select>` 元素（`npm run check:gates` 门禁强制执行）。
 - **勾选框统一**：所有勾选框一律使用 `src/shared/components/Checkbox.tsx`（主色描边方块 + check 图标；纯文本标签用 `label` 属性，富文本标签用 children）。禁止原生 `<input type="checkbox">`（`npm run check:gates` 门禁强制执行）。
 - **图标禁用字符代替**：按钮/控件中表达图形语义（关闭叉号、箭头、对勾等）一律使用 `<Icon name="..." />` SVG 图标，禁止用字符代替（如用 `x`/`×`/`✕` 当叉号、`→` 当箭头）；JSX 文本节点中禁止出现独占一个元素内容的 `× ✕ ✓ ✗ → ← ▲ ▼` 等符号字符（门禁强制执行）。仅有的例外是字符串上下文（`confirm()`/`alert()`/日志等纯文本）中的 `✓`/`✗`/`[!]`。图标缺失时在 `src/shared/components/Icon.tsx` 的 `PATHS` 表中新增（工厂函数形式），不得退用字符。
+- **同行元素高度相等**：同一行（同一 flex 行容器）内的按钮/输入框/下拉/标签等控件必须使用相同的高度档位——优先复用 `shared/components/buttonStyles.ts` 中同一档位的常量（行内操作统一 `px-3 py-1.5 text-xs` 档：`btnSecondarySm`/`btnDanger`/`btnSuccess`/outline 系列），禁止同一行混用不同 padding/字号档位（如 `btnBadge` 的 `px-2 py-1 text-[11px]` 与 `btnDanger` 的 `px-3 py-1.5 text-xs` 并排）；表单行内输入框的圆角与垂直内边距也需与同弹窗的下拉触发器一致（`Dropdown` ghost 变体为 `rounded-lg py-1.5`，输入框用 `rounded-lg` 匹配）。
 - **i18n**：所有面向用户的字符串必须通过 `t()`（`core/i18n`）取词；每个 key 必须同时存在于 `locales/zh-CN.json` 与 `locales/en-US.json`，且 `{{placeholder}}` 集合一致（`npm run check:i18n` 强制校验）。禁止在 JSX/模板字符串中硬编码 UI 文案。
 - **UI 文案克制**：界面上只放功能性文字（标签、状态、操作结果、错误提示、一句话占位符）。开发/设计阶段的解释性描述——功能介绍、原理说明、使用教程、配置字段的长说明——一律不写入 UI，它们属于 `docs/`。新增 UI 文案时先问：删掉这句话用户会不会用不了这个功能？会才留。操作状态反馈优先用控件自身的状态变化表达（如按钮文字短暂切换为「已取消/已下载」一秒后恢复、列表项消失、布局切换），而不是新增常驻状态文字行；错误信息（含失败原因）除外。
 

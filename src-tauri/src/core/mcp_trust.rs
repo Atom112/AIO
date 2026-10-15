@@ -97,6 +97,22 @@ impl McpTrustStore {
             .insert(server_id.to_string(), fingerprint.to_string());
         self.save(&file)
     }
+
+    /// 移除某项目下某 server 的信任条目（server 被删除时调用；不存在的条目为 no-op）。
+    pub fn remove_trust(&self, project_path: &str, server_id: &str) -> Result<(), String> {
+        let key = normalize_project_key(project_path);
+        let mut file = self.load();
+        let Some(servers) = file.entries.get_mut(&key) else {
+            return Ok(());
+        };
+        if servers.remove(server_id).is_none() {
+            return Ok(());
+        }
+        if servers.is_empty() {
+            file.entries.remove(&key);
+        }
+        self.save(&file)
+    }
 }
 
 #[cfg(test)]
@@ -176,6 +192,27 @@ mod tests {
             .set_trusted("/proj", "srv", "fp")
             .expect("覆盖坏文件失败");
         assert!(store.is_trusted("/proj", "srv", "fp"));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn remove_trust_drops_only_the_named_entry() {
+        let (store, dir) = temp_store("remove");
+        store.set_trusted("/proj", "a", "fa").expect("写入 a 失败");
+        store.set_trusted("/proj", "b", "fb").expect("写入 b 失败");
+        store
+            .set_trusted("/other", "a", "fa")
+            .expect("写入 other 失败");
+        // 删除存在的条目 → 同项目其他条目与其他项目不受影响
+        store.remove_trust("/proj", "a").expect("删除失败");
+        assert!(!store.is_trusted("/proj", "a", "fa"));
+        assert!(store.is_trusted("/proj", "b", "fb"));
+        assert!(store.is_trusted("/other", "a", "fa"));
+        // 不存在的条目 / 不存在的项目 → no-op 不报错
+        store.remove_trust("/proj", "a").expect("重复删除应 no-op");
+        store
+            .remove_trust("/never-existed", "x")
+            .expect("未知项目应 no-op");
         let _ = std::fs::remove_dir_all(dir);
     }
 }

@@ -93,7 +93,9 @@ The Catalog page reads the official MCP Registry:
 2. Selects available delivery methods among npm, PyPI, HTTP, or Streamable HTTP;
 3. Collects required parameters and secrets;
 4. Writes secrets to the system credential store and placeholders to the configuration;
-5. Saves to the current global or project scope, with auto-start enabled by default.
+5. Picks the install scope (default **global**; with an active project you may pick "Project" — written to the project's `.aio/mcp-servers.json` with trust recorded), then auto-starts by default.
+
+Editing an existing server saves it in place (a global entry stays global, a project entry stays project) — an open project never pulls a global config into the repo; deleting a server removes it from both the project and global layers, cleans its keyring secrets and the project trust marker. A "Project" badge marks project-scoped entries in the installed list.
 
 Catalog results are cached in `mcp-registry-cache.json`. Before installing a third-party server, check the publisher, actual command, environment variables, and accessible scope.
 

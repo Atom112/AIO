@@ -660,7 +660,20 @@ pub async fn install_mcp_catalog_server(
             delivery: Some(delivery.kind.clone()),
         }),
     };
-    mcp::upsert_config(&app, config.clone()).map_err(|error| error.to_string())?;
+    // Install scope: project-level writes ship with the repo (`.aio/mcp-servers.json`)
+    // and — like add_mcp_server's project path — record trust immediately (the install
+    // click through the UI is the user's authorization; the P0-1 gate targets
+    // repo-shipped configs, not UI installs). Global installs stay in the app-data file.
+    match &request.project_id {
+        Some(pid) => {
+            let project_path = mcp::resolve_project_path(&app, pid).map_err(|e| e.to_string())?;
+            mcp::upsert_project_config(&project_path, config.clone()).map_err(|e| e.to_string())?;
+            mcp::mark_project_server_trusted(&app, &project_path, &config);
+        }
+        None => {
+            mcp::upsert_config(&app, config.clone()).map_err(|error| error.to_string())?;
+        }
+    }
     Ok(config)
 }
 

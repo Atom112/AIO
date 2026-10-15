@@ -20,6 +20,7 @@ import {
   setMcpServerStatus,
   startMcpServerAndRefresh,
   currentProjectId,
+  currentProject,
 } from '../../../core/store/store';
 import type {
   McpCatalogDelivery,
@@ -82,12 +83,22 @@ const McpServerList: Component = () => {
   const [installValues, setInstallValues] = createSignal<Record<string, string>>({});
   const [runtimeAvailable, setRuntimeAvailable] = createSignal(true);
   const [installingId, setInstallingId] = createSignal<string | null>(null);
+  const [installScope, setInstallScope] = createSignal<'global' | 'project'>('global');
   const [error, setError] = createSignal<string | null>(null);
+  // Ids living in the global config file — a merged-list id missing here is project-scoped
+  const [globalIds, setGlobalIds] = createSignal<ReadonlySet<string>>(new Set());
 
   const loadLocal = async () => {
-    const list = await listMcpServers(currentProjectId());
+    const pid = currentProjectId();
+    const [list, globalList] = await Promise.all([
+      listMcpServers(pid),
+      pid ? listMcpServers(null) : Promise.resolve(null),
+    ]);
     setMcpServers(Object.fromEntries(list.map((server) => [server.id, server])));
+    setGlobalIds(new Set((globalList ?? list).map((server) => server.id)));
   };
+
+  const isProjectScoped = (id: string) => !!currentProjectId() && !globalIds().has(id);
 
   const loadCatalog = async (forceRefresh = false, cursor?: string) => {
     // Only show the blocking spinner when there is nothing to render yet;
@@ -170,7 +181,11 @@ const McpServerList: Component = () => {
   );
 
   const search = () => {
-    if (view() === 'market') void loadCatalog();
+    if (view() !== 'market') return;
+    // Explicit search takes the foreground spinner: the registry fetch is
+    // multi-second, and keeping the stale list up with no feedback read as frozen.
+    setLoading(true);
+    void loadCatalog();
   };
 
   const refresh = async () => {
@@ -285,6 +300,7 @@ const McpServerList: Component = () => {
         deliveryId: delivery.id,
         values,
         secrets,
+        projectId: installScope() === 'project' ? currentProjectId() : null,
       };
       const config = await installMcpCatalogServer(request);
       setMcpServers({ ...mcpServers(), [config.id]: config });
@@ -530,6 +546,17 @@ const McpServerList: Component = () => {
                             Registry
                           </span>
                         </Show>
+                        <Show when={isProjectScoped(config.id)}>
+                          <span
+                            class="text-[10px] px-1.5 py-0.5 rounded"
+                            style={{
+                              background: 'rgba(var(--text-base-rgb),0.07)',
+                              color: 'rgba(var(--text-base-rgb),0.55)',
+                            }}
+                          >
+                            {t('mcp.scopeBadgeProject')}
+                          </span>
+                        </Show>
                       </div>
                       <div
                         class="text-xs truncate mt-1"
@@ -609,6 +636,29 @@ const McpServerList: Component = () => {
                 </For>
               </select>
             </label>
+            {/* Install scope (mirrors the skills market): global is the default so a
+                catalog install never silently writes into the repo's .aio/ */}
+            <Show when={currentProjectId()}>
+              <label class="flex flex-col gap-1 text-xs">
+                {t('mcp.installScope')}
+                <select
+                  class="px-3 py-2 rounded text-sm"
+                  style={{
+                    background: 'rgba(var(--surface-alt-bg),0.95)',
+                    border: '1px solid var(--border-dim)',
+                  }}
+                  value={installScope()}
+                  onChange={(event) =>
+                    setInstallScope(event.currentTarget.value === 'project' ? 'project' : 'global')
+                  }
+                >
+                  <option value="global">{t('mcp.scopeGlobal')}</option>
+                  <option value="project">
+                    {t('mcp.scopeProject', { name: currentProject()?.name ?? '' })}
+                  </option>
+                </select>
+              </label>
+            </Show>
             <Show when={selectedDelivery()?.kind !== 'http' && !runtimeAvailable()}>
               <div
                 class="px-3 py-2 rounded text-xs"

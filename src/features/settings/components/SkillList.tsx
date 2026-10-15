@@ -17,6 +17,7 @@ import {
   listSkills,
   refreshNpxSkill,
   saveSkill,
+  searchSkillMarket,
 } from '../../../core/api/skills';
 import { openSafeUrl } from '../../../core/utils/safeUrl';
 import {
@@ -236,6 +237,50 @@ const SkillList: Component = () => {
     ),
   );
 
+  // Market search: the sort pages only ship the top slice of skills.sh, so a
+  // non-empty query ALSO hits the remote search API (debounced) — results cover
+  // the full catalog, not just the downloaded page.
+  const [searchResults, setSearchResults] = createSignal<MarketSkill[] | null>(null);
+  const [searching, setSearching] = createSignal(false);
+  let searchTimer: ReturnType<typeof setTimeout> | undefined;
+
+  const runMarketSearch = async (keyword: string) => {
+    setSearching(true);
+    try {
+      setSearchResults(await searchSkillMarket(keyword));
+    } catch (e) {
+      console.warn('Skill market search failed:', e);
+      setSearchResults([]);
+    } finally {
+      setSearching(false);
+    }
+  };
+
+  const onQueryInput = (value: string) => {
+    setQuery(value);
+    if (searchTimer) clearTimeout(searchTimer);
+    const keyword = value.trim();
+    // Remote search only applies to the market view; downloaded/npx views filter locally
+    if (!keyword || view() !== 'market') {
+      setSearchResults(null);
+      setSearching(false);
+      return;
+    }
+    searchTimer = setTimeout(() => void runMarketSearch(keyword), 300);
+  };
+
+  const selectView = (v: ViewMode) => {
+    setView(v);
+    if (searchTimer) clearTimeout(searchTimer);
+    const keyword = query().trim();
+    if (v === 'market' && keyword) {
+      void runMarketSearch(keyword);
+    } else {
+      setSearchResults(null);
+      setSearching(false);
+    }
+  };
+
   const filteredMarketSkills = createMemo(() => {
     const keyword = query().trim().toLowerCase();
     if (!keyword) return marketSkills();
@@ -245,6 +290,10 @@ const SkillList: Component = () => {
         .includes(keyword),
     );
   });
+
+  // What the market grid shows: remote full-catalog results while searching,
+  // otherwise the locally filtered browse slice
+  const displayedMarketSkills = createMemo(() => searchResults() ?? filteredMarketSkills());
 
   const filteredLocalSkills = createMemo(() => {
     const keyword = query().trim().toLowerCase();
@@ -259,6 +308,9 @@ const SkillList: Component = () => {
 
   const selectSort = (value: MarketSort) => {
     setSort(value);
+    // Leaving search mode: a sort tab click returns to the browse slice
+    setSearchResults(null);
+    setQuery('');
     void loadMarket(value);
   };
 
@@ -369,14 +421,14 @@ const SkillList: Component = () => {
             <button
               class={btnTabXs}
               classList={{ [tabActive]: view() === 'market' }}
-              onClick={() => setView('market')}
+              onClick={() => selectView('market')}
             >
               {t('skill.tabMarket')}
             </button>
             <button
               class={btnTabXs}
               classList={{ [tabActive]: view() === 'downloaded' }}
-              onClick={() => setView('downloaded')}
+              onClick={() => selectView('downloaded')}
             >
               {t('skill.tabDownloaded', { count: Object.keys(skills()).length })}
             </button>
@@ -384,7 +436,7 @@ const SkillList: Component = () => {
               class={btnTabXs}
               classList={{ [tabActive]: view() === 'npx' }}
               onClick={() => {
-                setView('npx');
+                selectView('npx');
                 if (!npxScanned) discoverNpx();
               }}
             >
@@ -423,9 +475,16 @@ const SkillList: Component = () => {
           <input
             class="w-[280px] max-w-full bg-black/25 border border-white/[0.08] rounded-lg text-white transition-[border-color,background,box-shadow] duration-200 placeholder:text-white/30 hover:border-white/[0.14] focus:outline-none pl-8 pr-3 py-2 text-sm"
             value={query()}
-            onInput={(e) => setQuery(e.currentTarget.value)}
+            onInput={(e) => onQueryInput(e.currentTarget.value)}
             placeholder={t('skill.searchPlaceholder')}
           />
+          <Show when={searching()}>
+            <Icon
+              name="spinner"
+              size={13}
+              class="absolute right-2.5 top-1/2 -translate-y-1/2 text-[rgba(var(--text-base-rgb),0.4)] animate-spin pointer-events-none"
+            />
+          </Show>
         </div>
       </div>
 
@@ -513,7 +572,7 @@ const SkillList: Component = () => {
         <Show when={!loading() && view() === 'market'}>
           <div class="grid grid-cols-1 lg:grid-cols-2 gap-3">
             <For
-              each={filteredMarketSkills()}
+              each={displayedMarketSkills()}
               fallback={
                 <div
                   class="col-span-full py-12 text-center text-sm"

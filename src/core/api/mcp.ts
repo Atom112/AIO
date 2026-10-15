@@ -4,6 +4,7 @@ import { invoke } from '@tauri-apps/api/core';
 import type {
   McpCatalogInstallRequest,
   McpCatalogPage,
+  McpCatalogServer,
   McpServerConfig,
   McpServerStatusInfo,
   ToolSpec,
@@ -55,6 +56,10 @@ export interface McpCatalogQuery {
 /** Browse the MCP marketplace catalog (paginated). */
 export const listMcpCatalog = (q: McpCatalogQuery) =>
   invoke<McpCatalogPage>('list_mcp_catalog', q as unknown as Record<string, unknown>);
+
+/** Fetch the full registry table (backend disk-caches it for 6h; forceRefresh re-downloads). The market page filters this locally for real-time search. */
+export const listMcpCatalogAll = (forceRefresh = false) =>
+  invoke<McpCatalogServer[]>('list_mcp_catalog_all', { forceRefresh });
 
 /** Remove an MCP server. */
 export const removeMcpServer = (id: string, projectId?: string | null) =>

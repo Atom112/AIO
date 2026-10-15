@@ -3,7 +3,7 @@ import {
   addMcpServer,
   checkMcpCatalogRuntime,
   installMcpCatalogServer,
-  listMcpCatalog,
+  listMcpCatalogAll,
   listMcpServers,
   removeMcpServer,
   stopMcpServer,
@@ -75,10 +75,11 @@ const catalogCache = createJsonCache<McpCatalogCache>(CATALOG_CACHE_KEY, (raw) =
 const McpServerList: Component = () => {
   const [view, setView] = createSignal<ViewMode>('market');
   const [catalog, setCatalog] = createSignal<McpCatalogServer[]>([]);
-  const [nextCursor, setNextCursor] = createSignal<string | undefined>();
+  // Client-side display window over the full table (search filters the whole
+  // table instantly; the window only caps how many cards render at once)
+  const [visibleCount, setVisibleCount] = createSignal(30);
   const [query, setQuery] = createSignal('');
   const [loading, setLoading] = createSignal(false);
-  const [loadingMore, setLoadingMore] = createSignal(false);
   const [refreshing, setRefreshing] = createSignal(false);
   const [editingConfig, setEditingConfig] = createSignal<McpServerConfig | null>(null);
   const [installing, setInstalling] = createSignal<McpCatalogServer | null>(null);
@@ -103,37 +104,27 @@ const McpServerList: Component = () => {
 
   const isProjectScoped = (id: string) => !!currentProjectId() && !globalIds().has(id);
 
-  const loadCatalog = async (forceRefresh = false, cursor?: string) => {
+  // The market now works on the FULL registry table (backend downloads every
+  // page once and disk-caches it 6h): typing filters locally with zero network
+  // round-trips; the refresh button is the only path that re-downloads.
+  const loadCatalog = async (forceRefresh = false) => {
     // Only show the blocking spinner when there is nothing to render yet;
     // with cached data the refresh happens silently in the background.
-    const isBackground = !!cursor || catalog().length > 0;
-    if (cursor) setLoadingMore(true);
-    else if (!isBackground) setLoading(true);
+    if (catalog().length === 0) setLoading(true);
     setError(null);
     try {
-      const page = await listMcpCatalog({
-        search: query().trim(),
-        cursor: cursor ?? null,
-        limit: 30,
-        forceRefresh,
+      const all = await listMcpCatalogAll(forceRefresh);
+      setCatalog(all);
+      // Persist a small head slice for the instant-render-on-mount path
+      // (the full table can exceed the localStorage budget).
+      catalogCache.write({
+        updatedAt: Date.now(),
+        servers: all.slice(0, 30),
       });
-      setCatalog(cursor ? [...catalog(), ...page.servers] : page.servers);
-      setNextCursor(page.nextCursor);
-      // Persist the default first page (no search, no pagination) for the
-      // instant-render-on-mount path; searched/paginated views rely on the
-      // backend cache alone.
-      if (!cursor && !query().trim()) {
-        catalogCache.write({
-          updatedAt: Date.now(),
-          servers: page.servers,
-          nextCursor: page.nextCursor,
-        });
-      }
     } catch (e) {
       setError(reportError('error.load', e));
     } finally {
       setLoading(false);
-      setLoadingMore(false);
     }
   };
 
@@ -145,7 +136,6 @@ const McpServerList: Component = () => {
       const cacheIsFresh = !!cache && catalogCache.isFresh(cache.updatedAt, CATALOG_CACHE_TTL_MS);
       if (cache) {
         setCatalog(cache.servers);
-        setNextCursor(cache.nextCursor);
       }
       await Promise.all([loadLocal(), cacheIsFresh ? Promise.resolve() : loadCatalog()]);
     } catch (e) {
@@ -176,20 +166,28 @@ const McpServerList: Component = () => {
     );
   });
 
+  // Real-time local filter over the full registry table (no network per keystroke)
+  const filteredCatalog = createMemo(() => {
+    const keyword = query().trim().toLowerCase();
+    if (!keyword) return catalog();
+    return catalog().filter((server) =>
+      `${server.displayName} ${server.name} ${server.description}`.toLowerCase().includes(keyword),
+    );
+  });
+  const visibleCatalog = createMemo(() => filteredCatalog().slice(0, visibleCount()));
+  const hasMoreCatalog = createMemo(() => filteredCatalog().length > visibleCount());
+
+  const onQueryInput = (value: string) => {
+    setQuery(value);
+    setVisibleCount(30);
+  };
+
   const resultCount = createMemo(() =>
-    view() === 'market' ? catalog().length : filteredLocal().length,
+    view() === 'market' ? filteredCatalog().length : filteredLocal().length,
   );
   const selectedDelivery = createMemo(() =>
     installing()?.deliveries.find((delivery) => delivery.id === selectedDeliveryId()),
   );
-
-  const search = () => {
-    if (view() !== 'market') return;
-    // Explicit search takes the foreground spinner: the registry fetch is
-    // multi-second, and keeping the stale list up with no feedback read as frozen.
-    setLoading(true);
-    void loadCatalog();
-  };
 
   const refresh = async () => {
     setRefreshing(true);
@@ -368,14 +366,13 @@ const McpServerList: Component = () => {
             <input
               class="w-[280px] max-w-full bg-black/25 border border-white/[0.08] rounded-lg text-white transition-[border-color,background,box-shadow] duration-200 placeholder:text-white/30 hover:border-white/[0.14] focus:outline-none pl-8 pr-3 py-2 text-sm"
               value={query()}
-              onInput={(event) => setQuery(event.currentTarget.value)}
-              onKeyDown={(event) => event.key === 'Enter' && search()}
+              onInput={(event) => onQueryInput(event.currentTarget.value)}
               placeholder={t('mcp.search')}
             />
           </div>
           <span class="text-xs self-center" style={{ color: 'rgba(var(--text-base-rgb),0.4)' }}>
             {t('mcp.results', {
-              count: `${formatNumber(resultCount())}${nextCursor() ? '+' : ''}`,
+              count: formatNumber(resultCount()),
             })}
           </span>
           <Show when={view() === 'market'}>
@@ -419,7 +416,7 @@ const McpServerList: Component = () => {
         <Show when={!loading() && view() === 'market'}>
           <div class="grid grid-cols-1 lg:grid-cols-2 gap-3">
             <For
-              each={catalog()}
+              each={visibleCatalog()}
               fallback={
                 <div
                   class="col-span-full py-12 text-center text-sm"
@@ -500,14 +497,10 @@ const McpServerList: Component = () => {
               }}
             </For>
           </div>
-          <Show when={nextCursor()}>
+          <Show when={hasMoreCatalog()}>
             <div class="flex justify-center py-5">
-              <button
-                class={btnSecondary}
-                disabled={loadingMore()}
-                onClick={() => void loadCatalog(false, nextCursor())}
-              >
-                {loadingMore() ? t('common.loading') : t('mcp.loadMore')}
+              <button class={btnSecondary} onClick={() => setVisibleCount((c) => c + 30)}>
+                {t('mcp.loadMore')}
               </button>
             </div>
           </Show>

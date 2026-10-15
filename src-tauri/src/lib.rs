@@ -181,6 +181,7 @@ pub fn run() {
             commands::skill::save_skill,
             commands::skill::delete_skill,
             commands::skill::list_skill_market,
+            commands::skill::search_skill_market,
             commands::skill::download_market_skill,
             commands::skill::discover_npx_skills,
             commands::skill::import_npx_skill,
@@ -206,6 +207,7 @@ pub fn run() {
             commands::mcp::list_mcp_prompts,
             commands::mcp::get_mcp_prompt,
             commands::mcp_catalog::list_mcp_catalog,
+            commands::mcp_catalog::list_mcp_catalog_all,
             commands::mcp_catalog::check_mcp_catalog_runtime,
             commands::mcp_catalog::install_mcp_catalog_server,
             // LSP language server management

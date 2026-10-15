@@ -556,6 +556,82 @@ pub async fn list_skill_market(
     Ok(skills)
 }
 
+/// skills.sh search API item (`/api/search?q=`, Algolia-backed fuzzy search).
+#[derive(serde::Deserialize)]
+struct SkillsShSearchItem {
+    /// `owner/repo/slug`
+    id: String,
+    name: String,
+    #[serde(default)]
+    installs: u64,
+}
+
+/// Compact install-count label matching the scraped pages' style (1.2k / 3.4M).
+fn format_installs_label(installs: u64) -> String {
+    if installs >= 1_000_000 {
+        format!("{:.1}M", installs as f64 / 1_000_000.0)
+    } else if installs >= 1_000 {
+        format!("{:.1}k", installs as f64 / 1_000.0)
+    } else {
+        installs.to_string()
+    }
+}
+
+/// Map the skills.sh `/api/search` JSON body into MarketSkill rows
+/// (owner/repo/slug split from the 3-segment id; malformed ids dropped).
+fn map_search_response(value: &Value) -> Vec<MarketSkill> {
+    let items: Vec<SkillsShSearchItem> = value
+        .get("skills")
+        .cloned()
+        .and_then(|v| serde_json::from_value(v).ok())
+        .unwrap_or_default();
+    items
+        .into_iter()
+        .filter_map(|item| {
+            let mut parts = item.id.splitn(3, '/');
+            let (owner, repo, slug) = (
+                parts.next()?.to_string(),
+                parts.next()?.to_string(),
+                parts.next()?.to_string(),
+            );
+            if slug.is_empty() {
+                return None;
+            }
+            Some(MarketSkill {
+                id: format!("skills-sh-{}-{}-{}", owner, repo, slug),
+                name: item.name,
+                source_url: format!("{}/{}/{}/{}", SKILLS_SH, owner, repo, slug),
+                installs: item.installs,
+                installs_label: format_installs_label(item.installs),
+                owner,
+                repo,
+                slug,
+                description: String::new(),
+                weekly_installs: Vec::new(),
+            })
+        })
+        .collect()
+}
+
+/// Searches the full skills.sh catalog via its JSON search API — the market pages
+/// only ship the top slice per sort view, so skills outside it were unfindable
+/// before this existed. Results are cached per query with the market cache TTL.
+#[tauri::command]
+pub async fn search_skill_market(
+    app: AppHandle,
+    query: String,
+) -> Result<Vec<MarketSkill>, String> {
+    let q = query.trim();
+    if q.is_empty() {
+        return Ok(Vec::new());
+    }
+    let encoded: String = url::form_urlencoded::byte_serialize(q.as_bytes()).collect();
+    let path = format!("/api/search?q={encoded}");
+    let body = fetch_market_page_cached(&app, &path, false).await?;
+    let value: Value = serde_json::from_str(&body).map_err(|e| e.to_string())?;
+    Ok(map_search_response(&value))
+}
+
 /// Downloads skill content from a skills.sh detail page and saves it to the skill library. When project_id is present, writes to the project-level file.
 #[tauri::command]
 pub async fn download_market_skill(
@@ -1552,5 +1628,33 @@ mod tests {
             1_000 + MARKET_CACHE_TTL_SECS - 1
         ));
         assert!(!cache_entry_is_fresh(&entry, 1_000 + MARKET_CACHE_TTL_SECS));
+    }
+
+    #[test]
+    fn installs_label_formats_compact() {
+        assert_eq!(format_installs_label(0), "0");
+        assert_eq!(format_installs_label(999), "999");
+        assert_eq!(format_installs_label(2_236), "2.2k");
+        assert_eq!(format_installs_label(210_769), "210.8k");
+        assert_eq!(format_installs_label(1_234_567), "1.2M");
+    }
+
+    /// skills.sh `/api/search` items map into MarketSkill rows (owner/repo/slug
+    /// split, installs compacted, source URL rebuilt).
+    #[test]
+    fn search_response_maps_to_market_skills() {
+        let body = r#"{"query":"pdf","skills":[{"id":"anthropics/skills/pdf","name":"pdf","installs":210769},{"id":"claude-office-skills/skills/pdf-ocr-extraction","name":"PDF OCR Extraction","installs":5436},{"id":"malformed-no-slash","name":"x","installs":1}]}"#;
+        let value: Value = serde_json::from_str(body).unwrap();
+        let skills = map_search_response(&value);
+        assert_eq!(skills.len(), 2, "畸形 id 必须被丢弃");
+        assert_eq!(skills[0].owner, "anthropics");
+        assert_eq!(skills[0].repo, "skills");
+        assert_eq!(skills[0].slug, "pdf");
+        assert_eq!(skills[0].installs_label, "210.8k");
+        assert_eq!(
+            skills[0].source_url,
+            "https://www.skills.sh/anthropics/skills/pdf"
+        );
+        assert_eq!(skills[1].slug, "pdf-ocr-extraction");
     }
 }

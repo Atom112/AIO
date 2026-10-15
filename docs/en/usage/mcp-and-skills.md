@@ -97,7 +97,7 @@ The Catalog page reads the official MCP Registry:
 
 Editing an existing server saves it in place (a global entry stays global, a project entry stays project) — an open project never pulls a global config into the repo; deleting a server removes it from both the project and global layers, cleans its keyring secrets and the project trust marker. A "Project" badge marks project-scoped entries in the installed list.
 
-Catalog results are cached in `mcp-registry-cache.json`. Before installing a third-party server, check the publisher, actual command, environment variables, and accessible scope.
+On opening, the market downloads the full official registry once and caches it in `mcp-registry-cache.json` (6h TTL); typing in the search box filters the full table locally (name/description) with zero network round-trips, and the refresh button re-downloads the table. Before installing a third-party server, check the publisher, actual command, environment variables, and accessible scope.
 
 ## Tool Permissions and Approval
 
@@ -169,7 +169,7 @@ Availability depends on the capabilities declared by the server. If a server doe
 - Downloaded global or project Skills;
 - Skills discovered and imported from NPX packages.
 
-The marketplace supports category, popular, and trending browsing, with a 6-hour cache. Project Skills are saved in `.aio/skills.json`, global Skills in the application data directory. After downloading or importing, they must also be enabled in the corresponding assistant or project settings before their content is injected into conversations.
+The marketplace supports category, popular, and trending browsing, with a 6-hour cache. Typing in the search box queries the **full skills.sh catalog** through its search API (300ms debounce) — results are no longer limited to the charted pages. Project Skills are saved in `.aio/skills.json`, global Skills in the application data directory. After downloading or importing, they must also be enabled in the corresponding assistant or project settings before their content is injected into conversations.
 
 ## Project Files
 

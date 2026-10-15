@@ -29,9 +29,6 @@ export interface AgentStep {
   subagentSteps?: SubagentStep[];
   /** Final result produced by the subagent */
   subagentResult?: string;
-  /** True for fire-and-forget delegates (delegate_task wait=false): routed to the
-   *  background-task menu and individually stoppable; absent in old persisted data → awaited. */
-  subagentBackground?: boolean;
   /** Full (untruncated) tool result; only valid for type=tool_call */
   fullResult?: string;
 }

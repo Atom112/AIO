@@ -48,7 +48,6 @@ import WelcomeScreen from './WelcomeScreen';
 import { useChatAutoScroll } from '../hooks/useChatAutoScroll';
 import MessageBubble from './MessageBubble';
 import SubagentMenu from './SubagentMenu';
-import BackgroundTaskMenu from './BackgroundTaskMenu';
 import PendingFileChips from './PendingFileChips';
 import DiagnosticsToggle from './DiagnosticsToggle';
 import BtwResponseBox from './BtwResponseBox';
@@ -792,13 +791,8 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                     </span>
                   </Show>
 
-                  {/* Right-aligned pull-up menu group: background tasks (fire-and-forget
-                      delegates) sit LEFT of the awaited-subagent menu; the group wrapper
-                      owns the ml-auto push so either menu can hide without moving the other */}
-                  <div class="ml-auto flex items-center gap-2">
-                    <BackgroundTaskMenu activeTopic={() => props.activeTopic} />
-                    <SubagentMenu activeTopic={() => props.activeTopic} />
-                  </div>
+                  {/* Subagent pull-up menu (extracted: SubagentMenu owns state + outside-click) */}
+                  <SubagentMenu activeTopic={() => props.activeTopic} />
                 </div>
               </div>
             );

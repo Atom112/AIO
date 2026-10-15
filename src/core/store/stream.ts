@@ -25,6 +25,8 @@ export interface PendingApproval {
   previewDiff?: string;
   /** Path of the affected file */
   filePath?: string;
+  /** Project-bound calls persist "always allow" into .aio/permissions.json; project-less ones stay session-scoped */
+  projectBound?: boolean;
 }
 
 /** One option of an ask_user question. */

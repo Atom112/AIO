@@ -1247,11 +1247,10 @@ pub async fn import_npx_skill(
         Some(c) => c,
         None => {
             let pkg = package_name.clone();
-            let npx_result = tokio::task::spawn_blocking(move || {
-                run_npx_sandboxed(&[&pkg], 30, 64 * 1024)
-            })
-            .await
-            .map_err(|_| ierr!("npx 线程 panic", "npx thread panicked"))?;
+            let npx_result =
+                tokio::task::spawn_blocking(move || run_npx_sandboxed(&[&pkg], 30, 64 * 1024))
+                    .await
+                    .map_err(|_| ierr!("npx 线程 panic", "npx thread panicked"))?;
             match npx_result {
                 Ok(Some(raw)) => raw,
                 Ok(None) => {
@@ -1376,36 +1375,38 @@ pub async fn refresh_npx_skill(
 
     // 刷新同样分源：skills CLI / skill-dir 来源（有 source_disk_path）直接从安装
     // 目录重读（其 name 不是 npm 包，npx 执行必然失败）；npm 包来源走 npx 重跑。
-    let (raw_content, disk_version) =
-        match existing.source_disk_path.as_deref().map(std::path::Path::new) {
-            Some(dir) if dir.is_dir() => {
-                let content = read_content_from_skill_dir(dir).ok_or_else(|| {
-                    ierr!(
-                        "安装目录 {} 中未找到 SKILL.md / README.md",
-                        "No SKILL.md / README.md found in install dir {}",
-                        dir.display()
-                    )
-                })?;
-                let (version, _) = try_read_package_meta_from_dir(dir);
-                (content, version)
-            }
-            _ => {
-                let pkg = pkg_name.to_string();
-                let raw = tokio::task::spawn_blocking(move || {
-                    run_npx_sandboxed(&[&pkg], 30, 64 * 1024)
-                })
-                .await
-                .map_err(|_| ierr!("npx 线程 panic", "npx thread panicked"))??
-                .ok_or_else(|| {
-                    ierr!(
-                        "npx {} 未返回任何内容",
-                        "npx {} returned no content",
-                        pkg_name
-                    )
-                })?;
-                (raw, String::new())
-            }
-        };
+    let (raw_content, disk_version) = match existing
+        .source_disk_path
+        .as_deref()
+        .map(std::path::Path::new)
+    {
+        Some(dir) if dir.is_dir() => {
+            let content = read_content_from_skill_dir(dir).ok_or_else(|| {
+                ierr!(
+                    "安装目录 {} 中未找到 SKILL.md / README.md",
+                    "No SKILL.md / README.md found in install dir {}",
+                    dir.display()
+                )
+            })?;
+            let (version, _) = try_read_package_meta_from_dir(dir);
+            (content, version)
+        }
+        _ => {
+            let pkg = pkg_name.to_string();
+            let raw =
+                tokio::task::spawn_blocking(move || run_npx_sandboxed(&[&pkg], 30, 64 * 1024))
+                    .await
+                    .map_err(|_| ierr!("npx 线程 panic", "npx thread panicked"))??
+                    .ok_or_else(|| {
+                        ierr!(
+                            "npx {} 未返回任何内容",
+                            "npx {} returned no content",
+                            pkg_name
+                        )
+                    })?;
+            (raw, String::new())
+        }
+    };
 
     let content = sanitize_skill_content(&raw_content)?;
 

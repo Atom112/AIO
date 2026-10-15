@@ -57,7 +57,7 @@ pub const MCP_TOOLS_CHANGED: &str = "mcp-tools-changed";
 /// Tool approval request (waiting for user confirmation)
 pub const TOOL_APPROVAL_REQUESTED: &str = "tool-approval-requested";
 
-/// Tool approval expired (backend 60s wait timed out / channel closed; the bubble
+/// Tool approval expired (backend wait timed out / channel closed; the bubble
 /// must disappear instead of lingering until a button press errors out)
 pub const TOOL_APPROVAL_EXPIRED: &str = "tool-approval-expired";
 

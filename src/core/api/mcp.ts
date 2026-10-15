@@ -68,9 +68,16 @@ export const saveMcpServerSecret = (
   value: string,
 ) => invoke<string>('save_mcp_server_secret', { serverId, target, key, value });
 
-/** Respond to a tool approval (approved = allow once, false = deny; always='session' = session-level allow). */
-export const respondToolApproval = (approvalId: string, approved: boolean, always?: 'session') =>
-  invoke<void>('respond_tool_approval', { approvalId, approved, always });
+/**
+ * Respond to a tool approval (approved = allow once, false = deny).
+ * always='always' persists the derived allow rule into the project's .aio/permissions.json
+ * (session fallback when the call is not project-bound); always='session' is process-lifetime.
+ */
+export const respondToolApproval = (
+  approvalId: string,
+  approved: boolean,
+  always?: 'session' | 'always',
+) => invoke<void>('respond_tool_approval', { approvalId, approved, always });
 
 /** List available MCP transport types. */
 export const listMcpTransports = () => invoke<string[]>('list_mcp_transports');

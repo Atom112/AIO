@@ -277,17 +277,22 @@ impl McpRequestManager {
     }
 }
 
-/// Approval context (basis for deriving a session rule from "always allow this session")
+/// Approval context (basis for deriving an allow rule from "always allow" — session-scoped
+/// or persisted into the project's `.aio/permissions.json` when `project_path` is set)
 #[derive(Clone, Debug)]
 pub struct ApprovalContext {
     pub server_id: String,
     pub tool_name: String,
     pub arguments: serde_json::Value,
+    /// Project root the call belongs to; `None` (project-less chat) falls back to a
+    /// session-scoped rule because `.aio/permissions.json` has no home then.
+    pub project_path: Option<String>,
 }
 
 /// Pending tool-call approvals: approval_id -> (oneshot::Sender<bool>, approval context)
 /// The channel is signaled when the frontend calls `respond_tool_approval(approval_id, approved, always?)`;
-/// always=Some("session") derives a session-level allow rule from the context.
+/// always=Some("always") persists an allow rule into the project config (falling back to
+/// session scope without a project); always=Some("session") derives a session-level rule.
 pub struct PendingApprovals(pub Arc<DashMap<String, (oneshot::Sender<bool>, ApprovalContext)>>);
 
 impl PendingApprovals {

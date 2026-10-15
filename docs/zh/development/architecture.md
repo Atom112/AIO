@@ -107,7 +107,7 @@ Plan 模式只研究并输出计划；只读模式仅保留读取/搜索/联网�
 - **并行分发**：同一响应块内的只读内置工具并发执行（`FuturesUnordered`），变更类工具与 MCP 工具按原始顺序串行；`role:tool` 回填保持索引序。开关：`parallelToolExecution`。
 - **多智能体写协调**：变更类文件工具全部经 `execute_builtin_tool` 单一咽喉点串行化——per-file 互斥锁（`core/file_locks.rs`，等待 120 秒超时报持有者；锁键在 Windows 上大小写折叠，长等待经 tracing 记录）+ last-writer 追踪；文件被其他智能体修改过后，`replace_in_file` 强制携带 `anchor_hash`、覆盖性 `write_file` 强制携带 `expect_hash`（丢失更新转为可恢复的重读错误）；`read_file` 返回完整文件哈希；写入走 tmp+rename 原子替换（保留目标权限位，失败回退直接写并留日志）。内置文件系统 MCP server 的工具变体按 `FsServerPolicy` 从主 Agent 与子智能体工具集中过滤（变更类一律丢弃、读类去重），保证任何文件写入都无法绕过该咽喉点；git 写操作（`git_add`/`git_commit`/`checkout_branch`）与 shell 写文件同样不经锁，worktree 合并落盘后会对每个变更文件刷新 last-writer，迫使下一次写入重新锚定。
 - **主 Agent 工具集**（`mainAgentToolAccess`）：默认 `hybrid`——只读工具直达 + 变更走子代理；`orchestrator` 为严格编排（旧行为）；`full` 为主 Agent 持有全部内置工具。
-- **MCP 工具回接**：助手勾选的 server 工具注入主 Agent 与 general 子代理（`allow_mcp_tools`）；重名自动改写为 `mcp__<server>__<tool>`；未信任 server 在 Auto/Workflow 下强制逐次审批（`trusted` 字段）。
+- **MCP 工具回接**：助手勾选的 server 工具注入主 Agent 与 general 子代理（`allow_mcp_tools`）；重名自动改写为 `mcp__<server>__<tool>`；未信任 server 在 Auto/Workflow 下强制逐次审批（`trusted` 字段），但已覆盖调用的用户 Allow 规则（`.aio/permissions.json` 或会话规则，如审批弹窗「始终允许」的持久化产物）视为已配置，直接放行不再询问。
 - **模型调用重试**：POST + 状态检查阶段对传输错误与 429/5xx 按 1s/2s/4s 退避重试（`modelCallRetries`，默认 3）；流中段错误不重试。
 - **后台子智能体**：`delegate_task(wait=false)` 的句柄与独立取消令牌登记于 `SubagentHandles`，可经 `stop_subagent` 命令单独停止（父取消级联）。
 

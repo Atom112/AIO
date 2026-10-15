@@ -11,5 +11,6 @@ export * from './ui-prefs';
 export * from './update';
 export * from './task-board';
 export * from './subagent-view';
+export * from './background-tasks';
 export * from './stream';
 export * from './layout';

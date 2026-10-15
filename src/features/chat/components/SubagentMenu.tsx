@@ -2,14 +2,11 @@
  * Subagent pull-up menu (阶段4 第2项拆分切片：ChatInterface <900 目标).
  *
  * Verbatim extraction of the subagent menu from ChatInterface's status bar: the
- * trigger button (count + running spinner) and the dropdown listing every AWAITED
- * subagent (status icon, profile style, name/task, duration) — fire-and-forget
- * (wait=false) delegates are excluded here and listed by BackgroundTaskMenu
- * instead. Owns the open state and the outside-click-to-close handler; the parent
- * passes only the active topic (subagent collection source). Selection navigates
- * via the module-level setActiveSubagentView store signal. Rendered right of the
- * background-task menu; the ChatInterface right-group wrapper owns the ml-auto
- * alignment for both.
+ * trigger button (count + running spinner) and the dropdown listing every subagent
+ * (status icon, profile style, name/task, duration). Owns the open state and the
+ * outside-click-to-close handler; the parent passes only the active topic
+ * (subagent collection source). Selection navigates via the module-level
+ * setActiveSubagentView store signal.
  */
 import { For, Show, createMemo, createSignal, onCleanup, onMount, type Component } from 'solid-js';
 import { t } from '../../../core/i18n';
@@ -26,9 +23,7 @@ export interface SubagentMenuProps {
 
 const SubagentMenu: Component<SubagentMenuProps> = (props) => {
   const [subagentMenuOpen, setSubagentMenuOpen] = createSignal(false);
-  const subagents = createMemo(() =>
-    collectSubagents(props.activeTopic()).filter((s) => !s.subagentBackground),
-  );
+  const subagents = createMemo(() => collectSubagents(props.activeTopic()));
   const hasRunningSubagent = () => subagents().some((s) => s.status === 'running');
 
   // Close the pull-up menu on outside click (the container class is the boundary)

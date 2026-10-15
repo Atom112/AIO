@@ -34,6 +34,7 @@ import {
 } from './core/store/store';
 import { updateDiagnostics, type LspDiagnosticsUpdatePayload } from './core/store/diagnostics';
 import { registerChatStreamListeners } from './features/chat/hooks/chatEventListeners';
+import { registerBackgroundTaskListeners } from './features/chat/hooks/backgroundTaskListeners';
 
 /**
  * Layout component
@@ -83,6 +84,11 @@ const Layout: Component<ParentProps> = (props) => {
     // (which persists the assistant) never ran, losing the whole turn. The Layout
     // never unmounts, so these listeners stay for the whole app lifetime.
     registerChatStreamListeners();
+
+    // Background-task listeners (memory jobs / index rebuilds / model downloads)
+    // also live for the whole app: the jobs keep running no matter which page is
+    // open, and the status-bar pull-up menu reads the registry from anywhere.
+    registerBackgroundTaskListeners();
 
     // Load the models catalog asynchronously (non-blocking for first paint; consumed on demand by the settings page)
     setModelsCatalogStatus('loading');

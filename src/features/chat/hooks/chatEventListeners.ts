@@ -811,7 +811,6 @@ export function registerChatStreamListeners(): Promise<UnlistenFn>[] {
         profile_id,
         profile_name,
         task_summary,
-        background,
       } = e.payload;
       setDatas(
         'assistants',
@@ -838,7 +837,6 @@ export function registerChatStreamListeners(): Promise<UnlistenFn>[] {
               subagentTask: task_summary,
               subagentSteps: [],
               subagentResult: '',
-              subagentBackground: background === true,
             },
           ];
         }),

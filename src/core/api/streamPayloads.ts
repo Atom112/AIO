@@ -101,8 +101,6 @@ export interface SubagentStartPayload {
   profile_id: string;
   profile_name: string;
   task_summary: string;
-  /** True for fire-and-forget (wait=false) delegates; absent in old payloads → awaited. */
-  background?: boolean;
 }
 
 /** `subagent-step`: internal step update from a running subagent. */

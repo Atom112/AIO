@@ -97,6 +97,8 @@ Agent mode provides several built-in tools. In addition to file, Git, and search
 
 Agent replies display steps including reasoning, tool calls, sub-agents, and elapsed time. Steps, tool results, and final text are written to the message record and persist after app restart; overly long results are truncated in the UI to avoid bloating the message area.
 
+The "Background Tasks" pull-up menu on the right of the Agent status bar (left of the sub-agent menu) tracks the app's own background async jobs live: automatic memory extraction and consolidation (fired asynchronously after each turn, scheduled daily in the background), index rebuilds, code indexing, and embedding / local GGUF model downloads. Each entry shows the kind, the owning project or model, a progress bar, and elapsed time — download progress stays visible after leaving the settings page, and entries vanish automatically once their job settles. The jobs themselves are still controlled from their own surfaces (the project memory panel and the model settings pages).
+
 Before file tool execution, a unified Diff can be shown in the approval bubble. After execution, a summary below the reply shows added/deleted lines per file and allows expanding the Diff.
 
 In Git projects, you can revert changes for individual files or the entire batch. Revert works by restoring the target files to `HEAD`:
@@ -140,8 +142,6 @@ The main Agent has two delegation methods:
 - `delegate_tasks`: Submits 1-10 mutually independent sub-tasks at once, running in parallel.
 
 Batch delegation produces only one approval in non-auto modes. The current effective concurrency limit is 5; tasks exceeding this limit queue up. The backend type reserves `maxConcurrentSubagents`, but the settings page and disk configuration do not yet support persistent modification.
-
-Passing `wait: false` to `delegate_task` runs the sub-agent in the background while the main Agent continues immediately. Two pull-up menus on the right of the Agent status bar track the two kinds of delegation: the left "Background Tasks" menu lists fire-and-forget delegates that are still running (or have finished) — running entries can be stopped individually and clicking one opens its standalone conversation view; the right "Sub-agents" menu lists delegates the main Agent waits on. Background tasks always work in the shared project directory; on completion their results are injected into the conversation as a system notice.
 
 In "Settings -> Sub-agent Model", you can:
 

@@ -412,18 +412,35 @@ pub async fn memory_code_index(
     force: Option<bool>,
 ) -> Result<crate::services::memory::code::CodeIndexResult, String> {
     let root = resolve_root(&app, &project_id)?;
-    crate::services::memory::code::index_code(
+    let progress_root = root.clone();
+    let result = crate::services::memory::code::index_code(
         &app,
         &root,
         force.unwrap_or(false),
         move |done, total| {
             let _ = window.emit(
                 ev::CODE_INDEX_PROGRESS,
-                serde_json::json!({ "done": done, "total": total }),
+                serde_json::json!({ "project": progress_root, "done": done, "total": total }),
             );
         },
     )
-    .await
+    .await;
+    // Terminal lifecycle event (background-task menu feed): done or error, with
+    // the same project-root identity the progress events carry.
+    let _ = app.emit(
+        ev::CODE_INDEX_PROGRESS,
+        match &result {
+            Ok(r) => serde_json::json!({
+                "project": root,
+                "status": "done",
+                "files": r.files,
+                "chunks": r.chunks,
+                "elapsedMs": r.elapsed_ms,
+            }),
+            Err(e) => serde_json::json!({ "project": root, "status": "error", "error": e }),
+        },
+    );
+    result
 }
 
 /// Semantic code search (backend for the search_code tool; optional path/symbol filters).
@@ -504,7 +521,8 @@ pub async fn memory_reindex(
     let store = app.state::<MemoryStoreManager>().open(&root)?;
     let cfg = crate::services::memory::resolve_project_embedding(&app, &store);
     let embedder = crate::plugins::embed::resolve(&app, &cfg)?;
-    store
+    let progress_root = root.clone();
+    let result = store
         .reindex(
             |content| {
                 let embedder = embedder.clone();
@@ -518,14 +536,29 @@ pub async fn memory_reindex(
                     }
                 }
             },
-            |done, total| {
+            move |done, total| {
                 let _ = window.emit(
                     ev::REINDEX_PROGRESS,
-                    serde_json::json!({ "done": done, "total": total }),
+                    serde_json::json!({ "project": progress_root, "done": done, "total": total }),
                 );
             },
         )
-        .await
+        .await;
+    // Terminal lifecycle event (background-task menu feed): done or error, with
+    // the same project-root identity the progress events carry.
+    let _ = app.emit(
+        ev::REINDEX_PROGRESS,
+        match &result {
+            Ok((done, failed)) => serde_json::json!({
+                "project": root,
+                "status": "done",
+                "done": done,
+                "failed": failed,
+            }),
+            Err(e) => serde_json::json!({ "project": root, "status": "error", "error": e }),
+        },
+    );
+    result
 }
 
 /// Switch the project embedding model: validate → probe actual dimensions with the selected model → persist to project meta →
@@ -584,7 +617,8 @@ pub async fn memory_update_embedding(
     store.reset_vectors()?;
     // 4) Rebuild the fact index automatically (re-embed with the new model)
     let embedder = crate::plugins::embed::resolve(&app, &resolved)?;
-    let (done, failed) = store
+    let progress_root = root.clone();
+    let reindex_result = store
         .reindex(
             |content| {
                 let embedder = embedder.clone();
@@ -598,14 +632,28 @@ pub async fn memory_update_embedding(
                     }
                 }
             },
-            |done, total| {
+            move |done, total| {
                 let _ = window.emit(
                     ev::REINDEX_PROGRESS,
-                    serde_json::json!({ "done": done, "total": total }),
+                    serde_json::json!({ "project": progress_root, "done": done, "total": total }),
                 );
             },
         )
-        .await?;
+        .await;
+    // Terminal lifecycle event (background-task menu feed) for the model-switch rebuild
+    let _ = app.emit(
+        ev::REINDEX_PROGRESS,
+        match &reindex_result {
+            Ok((done, failed)) => serde_json::json!({
+                "project": root,
+                "status": "done",
+                "done": done,
+                "failed": failed,
+            }),
+            Err(e) => serde_json::json!({ "project": root, "status": "error", "error": e }),
+        },
+    );
+    let (done, failed) = reindex_result?;
     let _ = (done, failed);
     memory_get_status(app, project_id)
 }
@@ -661,5 +709,14 @@ pub async fn memory_consolidate(
     let budget = budget
         .map(|b| b.max(1) as usize)
         .unwrap_or_else(|| load_cfg(&app).memory_consolidate_budget.max(1) as usize);
-    crate::services::memory::consolidate::consolidate(&app, &store, budget).await
+    let result = crate::services::memory::consolidate::consolidate(&app, &store, budget).await;
+    // Terminal lifecycle event for the background-task menu (the pass itself
+    // emitted "running" after taking the per-project lock)
+    crate::services::memory::consolidate::emit_consolidate_terminal(&app, &root, {
+        match &result {
+            Ok(rep) => Ok(rep),
+            Err(e) => Err(e.as_str()),
+        }
+    });
+    result
 }

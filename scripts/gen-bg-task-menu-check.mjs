@@ -1,6 +1,7 @@
-// Visual check: agent status-bar right group — background-task pull-up menu (fire-and-forget
-// delegates, running row carries a stop button) LEFT of the subagent pull-up menu, both themes.
-// Usage: node scripts/gen-bg-task-menu-check.mjs [outfile]
+// Visual check: agent status-bar right group — background-task pull-up menu (app
+// background jobs: memory extraction/consolidation, reindex, code index, model
+// downloads) LEFT of the subagent pull-up menu, both themes. Usage:
+// node scripts/gen-bg-task-menu-check.mjs [outfile]
 import { readFileSync, writeFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -11,11 +12,13 @@ const css = readFileSync(join(assetsDir, cssFile), 'utf8');
 
 // icon path snippets mirroring shared/components/Icon.tsx PATHS entries
 const ICONS = {
-  search: '<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>',
+  brain:
+    '<path d="M9 4a3 3 0 0 0-3 3v0a3 3 0 0 0-2 5 3 3 0 0 0 1 4 3 3 0 0 0 3 3 3 3 0 0 0 3-1l1-1V7l-1-1a3 3 0 0 0-3-2Z"/><path d="M15 4a3 3 0 0 1 3 3v0a3 3 0 0 1 2 5 3 3 0 0 1-1 4 3 3 0 0 1-3 3 3 3 0 0 1-3-1l-1-1V7l1-1a3 3 0 0 1 3-2Z"/>',
+  layers: '<path d="m3 12 9-7 9 7-9 7-9-7Z"/><path d="m3 16 9 5 9-5"/><path d="m3 8 9 5 9-5"/>',
+  'rotate-ccw': '<path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/>',
   code: '<path d="m9 8-4 4 4 4M15 8l4 4-4 4"/>',
-  check: '<path d="m5 12 5 5L20 7"/>',
+  download: '<path d="M12 4v12M7 11l5 5 5-5"/><path d="M4 20h16"/>',
   x: '<path d="M6 6l12 12M18 6 6 18"/>',
-  stop: '<rect x="6" y="6" width="12" height="12" rx="1"/>',
   spinner: '<path d="M12 3a9 9 0 1 0 9 9"/>',
   'chevron-up': '<path d="m6 14 6-6 6 6"/>',
 };
@@ -23,42 +26,98 @@ const ICONS = {
 const svg = (name, size, color, extra = '') =>
   `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="${size}" height="${size}" style="color:${color};flex-shrink:0" ${extra}>${ICONS[name]}</svg>`;
 
-const chip = (icon, role) => `
-  <span class="relative flex items-center justify-center rounded" style="width:20px;height:20px;flex-shrink:0;background:rgba(var(--role-${role}-rgb),0.1);border:1px solid rgba(var(--role-${role}-rgb),0.3);color:rgba(var(--role-${role}-rgb),0.9)">
-    ${svg(icon, 11, 'inherit')}
-  </span>`;
-
-const statusIcon = (status) =>
-  status === 'running'
-    ? svg('spinner', 12, 'inherit', 'class="animate-spin"')
-    : status === 'error'
-      ? svg('x', 12, 'rgba(248,113,113,0.7)')
-      : svg('check', 12, 'rgba(255,255,255,0.3)');
-
-const taskRow = (icon, role, name, profile, task, status, right) => `
-  <div class="w-full flex items-center gap-2 px-3 py-2 cursor-pointer hover:bg-[rgba(var(--text-base-rgb),0.05)]" style="color:rgba(var(--text-base-rgb),0.75);text-align:left">
-    ${chip(icon, role)}
-    <span class="flex items-center justify-center" style="width:14px;height:14px;flex-shrink:0">${statusIcon(status)}</span>
+// One menu row per task kind, mirroring BackgroundTaskMenu's row structure:
+// kind icon chip / title + scope + detail / progress bar / error line / status.
+const row = ({ icon, title, scope, detail, progressPct, progressText, error, right }) => `
+  <div class="flex items-start gap-2 px-3 py-2" style="text-align:left">
+    <span class="flex items-center justify-center rounded shrink-0" style="width:20px;height:20px;background:rgba(var(--text-base-rgb),0.06)">
+      ${svg(icon, 12, 'rgba(var(--text-base-rgb),0.55)')}
+    </span>
     <span class="flex-1 min-w-0" style="text-align:left">
       <span class="flex items-center gap-1.5">
-        <span class="truncate" style="font-size:12px;font-weight:500">${name}</span>
-        <span class="shrink-0" style="font-size:10px;color:rgba(255,255,255,0.35)">${profile}</span>
+        <span class="truncate" style="font-size:12px;font-weight:500;color:rgba(var(--text-base-rgb),0.8)">${title}</span>
+        <span class="truncate shrink-0" style="font-size:10px;color:rgba(var(--text-base-rgb),0.35)">${scope}</span>
       </span>
-      <span class="block truncate" style="font-size:11px;color:rgba(255,255,255,0.35)">${task}</span>
+      ${detail ? `<span class="block truncate" style="font-size:11px;color:rgba(var(--text-base-rgb),0.35)">${detail}</span>` : ''}
+      ${
+        progressPct !== undefined
+          ? `<span class="flex items-center gap-1.5" style="margin-top:4px">
+              <span class="rounded-full overflow-hidden" style="height:4px;flex:1;background:rgba(var(--text-base-rgb),0.1)">
+                <span class="block rounded-full" style="height:100%;width:${progressPct}%;background:rgba(var(--primary-rgb),0.65);transition:width 0.2s ease-out"></span>
+              </span>
+              <span class="shrink-0" style="font-family:ui-monospace,monospace;font-size:10px;color:rgba(var(--text-base-rgb),0.4)">${progressText}</span>
+            </span>`
+          : ''
+      }
+      ${error ? `<span class="block truncate" style="font-size:11px;color:var(--color-danger)">${error}</span>` : ''}
     </span>
-    ${right}
+    <span class="flex items-center gap-1.5 shrink-0" style="padding-top:2px">${right}</span>
   </div>`;
 
-const stopBtn = `
-  <button type="button" class="flex items-center justify-center rounded" style="width:20px;height:20px;flex-shrink:0;background:transparent;border:none;cursor:pointer;color:rgba(255,255,255,0.4)" title="停止此后台任务">
-    ${svg('stop', 11, 'inherit')}
-  </button>`;
+const spinner = svg('spinner', 12, 'inherit', 'class="animate-spin"');
+const statusRight = (status) =>
+  status === 'running'
+    ? spinner
+    : status === 'error'
+      ? svg('x', 12, 'rgba(248,113,113,0.7)')
+      : `<span style="font-size:10px;color:rgba(var(--text-base-rgb),0.45)">${status}</span>`;
 
-const dur = (t) =>
-  `<span class="shrink-0" style="font-family:ui-monospace,monospace;font-size:10px;color:rgba(255,255,255,0.25)">${t}</span>`;
+const ROWS = [
+  row({
+    icon: 'brain',
+    title: '记忆提取',
+    scope: 'AIO',
+    right: statusRight('running'),
+  }),
+  row({
+    icon: 'layers',
+    title: '记忆整理',
+    scope: 'AIO',
+    right: statusRight('running'),
+  }),
+  row({
+    icon: 'rotate-ccw',
+    title: '索引重建',
+    scope: 'AIO',
+    progressPct: 62,
+    progressText: '31 / 50',
+    right: statusRight('running'),
+  }),
+  row({
+    icon: 'code',
+    title: '代码索引',
+    scope: 'demo-project',
+    right: statusRight('2m05s'),
+  }),
+  row({
+    icon: 'download',
+    title: '模型下载',
+    scope: 'bge-m3',
+    detail: 'onnx/model_quantized.onnx',
+    progressPct: 37,
+    progressText: '384.2 / 1024.0 MB',
+    right: statusRight('running'),
+  }),
+  row({
+    icon: 'download',
+    title: '本地模型下载',
+    scope: 'qwen3-4b-instruct',
+    detail: 'qwen3-4b-instruct-q4_k_m.gguf',
+    progressPct: 82,
+    progressText: '2.1 / 2.6 GB',
+    right: statusRight('running'),
+  }),
+  row({
+    icon: 'download',
+    title: '模型下载',
+    scope: 'bge-m3',
+    error: '下载中断: connection reset',
+    right: statusRight('error'),
+  }),
+];
 
 const popup = (title, rows) => `
-  <div class="absolute bottom-full right-0 mb-2 z-[41] w-[320px] rounded-xl overflow-hidden" style="background:var(--popup-bg);border:1px solid var(--border-dim);backdrop-filter:var(--popup-blur);box-shadow:0 -8px 30px rgba(0,0,0,0.4)">
+  <div class="absolute bottom-full right-0 mb-2 z-[41] w-[340px] rounded-xl overflow-hidden" style="background:var(--popup-bg);border:1px solid var(--border-dim);backdrop-filter:var(--popup-blur);box-shadow:0 -8px 30px rgba(0,0,0,0.4)">
     <div class="px-3 py-2 uppercase tracking-widest" style="font-size:11px;font-weight:700;color:rgba(var(--text-base-rgb),0.35);background:rgba(var(--text-base-rgb),0.04);border-bottom:1px solid var(--border-dim)">${title}</div>
     <div class="py-1 max-h-[280px] overflow-y-auto">${rows}</div>
   </div>`;
@@ -69,61 +128,39 @@ const trigger = (label, count, spinning) => `
   </button>`;
 
 // Status-bar frame mirroring the agent status row: status text left, pull-up group right.
-// Both menus open to verify side-by-side popups (background left, subagents right).
-const statusBar = `
+const statusBar = (open) => `
   <div class="rounded-2xl" style="display:flex;align-items:center;gap:8px;padding:0 12px;height:32px;position:relative;width:640px;background:rgba(var(--surface-bg),0.5);border:1px solid rgba(var(--border-rgb),0.15)">
     ${svg('code', 14, 'rgba(var(--text-base-rgb),0.6)')}
     <span style="font-size:12px;color:rgba(var(--text-base-rgb),0.7)">Agent 工作区模式 · demo-project</span>
     <div class="ml-auto flex items-center gap-2">
-      <div class="relative inline-block">${trigger('后台任务', '3 个', true)}
-        ${popup(
-          '后台任务',
-          taskRow(
-            'search',
-            'explorer',
-            '探索者',
-            'explorer',
-            '搜索 workspace 下的模块',
-            'running',
-            stopBtn,
-          ) +
-            taskRow('code', 'coder', '实现者', 'coder', '实现下载重试逻辑', 'running', stopBtn) +
-            taskRow(
-              'search',
-              'explorer',
-              '探索者',
-              'explorer',
-              '检查 embedding 目录结构',
-              'complete',
-              dur('1m42s'),
-            ) +
-            taskRow('code', 'coder', '实现者', 'coder', '写单元测试', 'error', dur('0m31s')),
-        )}
+      <div class="relative inline-block">${trigger('后台任务', '6 个', true)}
+        ${open ? popup('后台任务', ROWS.join('')) : ''}
       </div>
-      <div class="relative inline-block">${trigger('子智能体', '1 个', false)}
-        ${popup('子智能体', taskRow('search', 'explorer', '探索者', 'explorer', '梳理依赖关系图', 'complete', dur('2m05s')))}
+      <div class="relative inline-block">${trigger('子智能体', '2 个', false)}
+        ${
+          open
+            ? popup(
+                '子智能体',
+                row({
+                  icon: 'brain',
+                  title: '探索者',
+                  scope: 'explorer',
+                  right: statusRight('1m42s'),
+                }),
+              )
+            : ''
+        }
       </div>
-    </div>
-  </div>`;
-
-// Trigger-only variant (menus closed): the two chips sit adjacent on the right.
-const statusBarClosed = `
-  <div class="rounded-2xl" style="display:flex;align-items:center;gap:8px;padding:0 12px;height:32px;width:640px;background:rgba(var(--surface-bg),0.5);border:1px solid rgba(var(--border-rgb),0.15)">
-    ${svg('code', 14, 'rgba(var(--text-base-rgb),0.6)')}
-    <span style="font-size:12px;color:rgba(var(--text-base-rgb),0.7)">Agent 工作区模式 · demo-project</span>
-    <div class="ml-auto flex items-center gap-2">
-      <div class="relative inline-block">${trigger('后台任务', '3 个', true)}</div>
-      <div class="relative inline-block">${trigger('子智能体', '1 个', false)}</div>
     </div>
   </div>`;
 
 const col = (theme, title) => `
-  <div style="flex:1;position:relative;min-height:560px" ${theme === 'dark' ? 'data-theme="dark"' : ''}>
+  <div style="flex:1;position:relative;min-height:640px" ${theme === 'dark' ? 'data-theme="dark"' : ''}>
     <div style="position:absolute;inset:0;overflow:hidden;background:var(--app-bg)"></div>
     <div style="position:relative;z-index:1;padding:16px;color:rgb(var(--text-base-rgb))">
       <div style="font-weight:600;margin-bottom:24px">${title}</div>
-      <div style="margin-bottom:200px">${statusBarClosed}</div>
-      <div style="margin-top:200px">${statusBar}</div>
+      <div style="margin-bottom:420px">${statusBar(false)}</div>
+      <div style="margin-top:420px">${statusBar(true)}</div>
     </div>
   </div>`;
 

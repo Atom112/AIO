@@ -97,13 +97,18 @@ pub async fn extract_and_store(
             }
         }
     }
-    // Extract
+    // A real run starts here (skips above never extracted anything): tell the
+    // frontend's background-task menu the job is running.
+    let _ = app.emit(
+        crate::core::events::MEMORY_EXTRACT_PROGRESS,
+        serde_json::json!({ "status": "running", "project": project_root }),
+    );
     let lcfg = match llm_config(app) {
         Ok(c) => c,
         Err(e) => {
             let _ = app.emit(
-                "memory-extract-progress",
-                serde_json::json!({ "status": "error", "error": e }),
+                crate::core::events::MEMORY_EXTRACT_PROGRESS,
+                serde_json::json!({ "status": "error", "project": project_root, "error": e }),
             );
             return Ok(ExtractionReport {
                 error: Some(e),
@@ -228,9 +233,10 @@ pub async fn extract_and_store(
     report.archived_over_cap = store.prune_to_capacity(cfg.memory_max_facts.max(100))?;
     store.meta_put(META_LAST_EXTRACT, &crate::utils::time::now_iso())?;
     let _ = app.emit(
-        "memory-extract-progress",
+        crate::core::events::MEMORY_EXTRACT_PROGRESS,
         serde_json::json!({
             "status": "done",
+            "project": project_root,
             "extracted": report.extracted,
             "embedded": report.embedded,
             "skipped": report.skipped,

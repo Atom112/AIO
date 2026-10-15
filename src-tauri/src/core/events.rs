@@ -16,6 +16,10 @@ pub const REINDEX_PROGRESS: &str = "reindex-progress";
 pub const CODE_INDEX_PROGRESS: &str = "code-index-progress";
 /// App update download progress
 pub const APP_UPDATE_PROGRESS: &str = "app-update-progress";
+/// Memory auto fact extraction lifecycle (running / done / error; payload carries the project root)
+pub const MEMORY_EXTRACT_PROGRESS: &str = "memory-extract-progress";
+/// Memory consolidation lifecycle (running / done / error; payload carries the project root)
+pub const MEMORY_CONSOLIDATE_PROGRESS: &str = "memory-consolidate-progress";
 
 /// One LLM round starts (the frontend pushes an empty assistant placeholder)
 pub const LLM_ROUND_START: &str = "llm-round-start";
@@ -95,6 +99,8 @@ mod tests {
             REINDEX_PROGRESS,
             CODE_INDEX_PROGRESS,
             APP_UPDATE_PROGRESS,
+            MEMORY_EXTRACT_PROGRESS,
+            MEMORY_CONSOLIDATE_PROGRESS,
             LLM_ROUND_START,
             LLM_CHUNK,
             LLM_REASONING,

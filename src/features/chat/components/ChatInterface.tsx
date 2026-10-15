@@ -792,9 +792,10 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
                     </span>
                   </Show>
 
-                  {/* Right-aligned pull-up menu group: background tasks (fire-and-forget
-                      delegates) sit LEFT of the awaited-subagent menu; the group wrapper
-                      owns the ml-auto push so either menu can hide without moving the other */}
+                  {/* Right-aligned pull-up menu group: app background jobs (memory /
+                      downloads / indexing) sit LEFT of the subagent menu; the group
+                      wrapper owns the ml-auto push so either menu can hide without
+                      moving the other */}
                   <div class="ml-auto flex items-center gap-2">
                     <BackgroundTaskMenu activeTopic={() => props.activeTopic} />
                     <SubagentMenu activeTopic={() => props.activeTopic} />

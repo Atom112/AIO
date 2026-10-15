@@ -339,6 +339,7 @@ pub(crate) async fn handle_delegate_task(
         locale,
         isolation_hint,
         !is_background,
+        is_background,
     )
     .await?;
 
@@ -657,6 +658,7 @@ pub(crate) async fn execute_single_delegate(
     locale: &str,
     isolation_hint: Option<&str>,
     allow_worktree: bool,
+    background: bool,
 ) -> Result<DelegateOutcome, String> {
     let profile = subagent::find_profile(profile_id, custom_profiles)
         .ok_or_else(|| format!("未知的子智能体类型: '{}'，可用: explorer, coder, general, architect, debugger, reviewer, writer, tester, requirements, 或自定义角色 ID", profile_id))?;
@@ -717,6 +719,7 @@ pub(crate) async fn execute_single_delegate(
         token,
         mcp_server_ids,
         locale,
+        background,
     )
     .await;
 
@@ -1018,7 +1021,8 @@ pub(crate) async fn handle_delegate_tasks(
                 &mcp_ids_clone,
                 &locale_clone,
                 isolation_hint.as_deref(),
-                true, // awaited batch delegation supports worktree isolation
+                true,  // awaited batch delegation supports worktree isolation
+                false, // batch delegates are always awaited (no wait parameter)
             )
             .await;
             (task_idx, outcome)
@@ -1146,6 +1150,7 @@ pub(crate) async fn execute_subagent(
     token: &CancellationToken,
     mcp_server_ids: &[String],
     locale: &str,
+    background: bool,
 ) -> Result<ToolResult, String> {
     let subagent_id = uuid::Uuid::new_v4().to_string();
     let model_to_use = profile.model_override.as_deref().unwrap_or(model);
@@ -1168,6 +1173,7 @@ pub(crate) async fn execute_subagent(
             profile_id: profile.id.clone(),
             profile_name: profile.name.clone(),
             task_summary: truncate_chars_head(task_desc, 150),
+            background,
         },
     );
 
@@ -2119,6 +2125,9 @@ pub(crate) struct SubagentStartPayload {
     profile_id: String,
     profile_name: String,
     task_summary: String,
+    /// True for fire-and-forget (wait=false) delegates: the frontend routes them to
+    /// the dedicated background-task menu instead of the awaited-subagent menu.
+    background: bool,
 }
 
 #[derive(Serialize, Clone)]

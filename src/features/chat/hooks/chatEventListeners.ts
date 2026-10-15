@@ -50,6 +50,7 @@ import {
   type ToolCallDisplay,
 } from '../../../core/store/store';
 import { checkAndRename, checkAndSummarize, estimateMsgTokens } from './chatTurnEffects';
+import { clearStreamKey } from '../../../core/api/chat';
 import { TOOL_INTERRUPTED } from '../constants';
 
 /**
@@ -354,6 +355,8 @@ export function registerChatStreamListeners(): Promise<UnlistenFn>[] {
       if (done) {
         // Flush this stream's residual batched content (CHAT-7: per-stream keying)
         flushStreamBatch(streamKey(assistant_id, topic_id));
+        // The stream is over — drop its stop-button ownership key.
+        clearStreamKey(assistant_id, topic_id);
         // The whole round is truly over (only the backend run_agent_turn epilogue emits done)
         if (error) {
           // Error: append the error text to the last assistant message

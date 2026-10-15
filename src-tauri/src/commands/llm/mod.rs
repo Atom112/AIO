@@ -376,22 +376,89 @@ pub async fn fetch_models(api_url: String, api_key: String) -> Result<Vec<ModelI
 
 /// Stop function: called when the user clicks "Stop generating".
 ///
-/// Notifies the task to exit gracefully via `CancellationToken::cancel()` (not `abort()`),
-/// so after the `select!` branch returns the task still runs its epilogue
-/// (emit done + remove itself), guaranteeing the frontend `isThinking` state is reset.
+/// Two-phase stop (mainstream parity — cooperative cancel, hard abort after a grace
+/// window, cf. Codex's drain budget): `cancel()` lets the task exit through its
+/// select! branches and run its epilogue (emit done + remove itself); if the entry
+/// survives the grace window the task is stuck in an await that does not observe the
+/// token, so it is aborted and THIS path runs the terminal bookkeeping in its place
+/// (finalize checkpoints + emit the done that resets the frontend thinking state).
+/// Stop must always visibly work — a cancel-only stop leaves a stuck task permanently
+/// unkillable short of restarting the app.
 #[tauri::command]
 pub async fn stop_llm_stream(
+    app: AppHandle,
+    window: Window,
     state: tauri::State<'_, StreamManager>,
     assistant_id: String,
     topic_id: String,
 ) -> Result<(), String> {
     let task_key = (assistant_id.clone(), topic_id.clone());
 
-    // Take the cancellation token and cancel; the task itself emits done and removes itself from state.
-    // Note: cancel only, never abort, so the epilogue is guaranteed.
     // 阶段5: the stop protocol lives on StreamManager (single source, tested).
-    state.cancel(&task_key);
+    match state
+        .stop_with_escalation(&task_key, std::time::Duration::from_secs(2))
+        .await
+    {
+        crate::core::state::StopOutcome::NotFound | crate::core::state::StopOutcome::Graceful => {}
+        crate::core::state::StopOutcome::Aborted(turn_id) => {
+            tracing::warn!(
+                "[stop] 任务未响应取消信号，已强制终止 ({} / {}, turn {})",
+                assistant_id,
+                topic_id,
+                turn_id
+            );
+            {
+                let conn = app.state::<DbState>();
+                checkpoints::finalize_checkpoints(&conn.0.lock(), &topic_id, &turn_id, "cancelled");
+            }
+            let note = ierr!(
+                "\n[已停止：任务未响应取消信号，已强制终止]",
+                "\n[Stopped: the task ignored the cancel signal and was force-terminated]"
+            );
+            let _ = window.emit(
+                ev::LLM_CHUNK,
+                StreamPayload {
+                    assistant_id,
+                    topic_id,
+                    content: note,
+                    done: true,
+                    error: None,
+                    input_tokens: None,
+                    output_tokens: None,
+                    context_tokens: None,
+                    cached_input_tokens: None,
+                    images: None,
+                },
+            );
+        }
+    }
     Ok(())
+}
+
+/// One active LLM stream (used for startup reconciliation after a webview reload).
+#[derive(serde::Serialize)]
+pub struct ActiveStreamInfo {
+    pub assistant_id: String,
+    pub topic_id: String,
+}
+
+/// List the streams currently running in the backend.
+///
+/// The frontend records stop-button stream ownership in module-level state; a webview
+/// reload wipes it while backend tasks keep running, leaving the stop button a silent
+/// no-op. On startup the frontend calls this and re-registers every active key.
+#[tauri::command]
+pub async fn list_active_streams(
+    state: tauri::State<'_, StreamManager>,
+) -> Result<Vec<ActiveStreamInfo>, String> {
+    Ok(state
+        .keys()
+        .into_iter()
+        .map(|(assistant_id, topic_id)| ActiveStreamInfo {
+            assistant_id,
+            topic_id,
+        })
+        .collect())
 }
 
 /// Executes a built-in tool (direct in-process call, with permission checks and approval).
@@ -631,6 +698,10 @@ pub(crate) async fn execute_builtin_tool(
         let command_for_run = command.clone();
         let run_command = |ac_dirs: Option<Vec<String>>, command: String| {
             let root = root.clone();
+            // User-stop propagation: the token is checked in 500ms slices inside the
+            // blocking wait; on cancel the whole process tree is torn down (mainstream
+            // parity — Claude Code's Esc kills the running command).
+            let cancel_tok = token.clone();
             async move {
                 tokio::task::spawn_blocking(move || {
                     shell_tools::execute_command(
@@ -644,6 +715,7 @@ pub(crate) async fn execute_builtin_tool(
                         shell_kind,
                         #[cfg(not(windows))]
                         crate::utils::shell_tools::WindowsShell::Cmd,
+                        Some(cancel_tok),
                     )
                 })
                 .await
@@ -651,7 +723,13 @@ pub(crate) async fn execute_builtin_tool(
             }
         };
         let started = std::time::SystemTime::now();
-        let result = run_command(ac_dirs, command_for_run.clone()).await;
+        // The select! frees the agent loop the instant the user stops; the blocking
+        // thread itself observes the same token within one 500ms slice and kills the
+        // process tree, so no orphaned command keeps running.
+        let result = tokio::select! {
+            _ = token.cancelled() => return Err("cancelled".into()),
+            r = run_command(ac_dirs, command_for_run.clone()) => r,
+        };
         // Harness round 3 (sandbox expansion): an access-denied signature from inside
         // the AppContainer — or a not-found signature when the command targets a
         // forwarded interpreter (cmd /c python … → 9009 inside the sandbox) — becomes

@@ -23,6 +23,18 @@ pub type StreamTaskKey = (String, String);
 /// delete the NEW task's entry (orphan: stop can't find it, double main loops).
 pub type StreamTaskEntry = (JoinHandle<()>, CancellationToken, String);
 
+/// Outcome of [`StreamManager::stop_with_escalation`].
+pub enum StopOutcome {
+    /// No active task for the key (frontend state drifted; nothing to do).
+    NotFound,
+    /// The task acknowledged cancellation and removed its own entry within the grace window.
+    Graceful,
+    /// The task ignored cancellation past the grace window; its entry was removed and
+    /// the JoinHandle aborted. Carries the aborted generation's `turn_id` so the caller
+    /// can run that generation's terminal bookkeeping (checkpoints + done event).
+    Aborted(String),
+}
+
 /// Concurrent map of active LLM streaming tasks.
 ///
 /// 阶段5（报告第3项：并发 run_agent_turn 换代）：换代协议此前内联在两个命令层
@@ -59,6 +71,51 @@ impl StreamManager {
                 true
             }
             None => false,
+        }
+    }
+
+    /// All active stream keys — the frontend reconciles its stop-button stream
+    /// ownership on startup (a webview reload loses the module-level keys while
+    /// backend tasks keep running, leaving nothing for stop to target).
+    pub fn keys(&self) -> Vec<StreamTaskKey> {
+        self.0.iter().map(|e| e.key().clone()).collect()
+    }
+
+    /// Two-phase stop (mainstream parity: cooperative cancel, then a hard abort after
+    /// a grace window — cf. Codex's drain budget): cancellation gives the task the
+    /// chance to run its epilogue; if the entry is still present after `grace`, the
+    /// task is stuck in an await that does not observe the token (a blocking wait, a
+    /// sync mutex, or a regression), so it is aborted and the caller runs the terminal
+    /// bookkeeping (checkpoints + terminal done event) in its place.
+    ///
+    /// The abort is identity-matched: if a replacement generation registered under the
+    /// same key during the grace window, it is left running untouched.
+    pub async fn stop_with_escalation(
+        &self,
+        key: &StreamTaskKey,
+        grace: std::time::Duration,
+    ) -> StopOutcome {
+        let Some(turn_id) = self.0.get(key).map(|e| e.2.clone()) else {
+            return StopOutcome::NotFound;
+        };
+        self.cancel(key);
+        let deadline = tokio::time::Instant::now() + grace;
+        loop {
+            if !self.0.contains_key(key) {
+                return StopOutcome::Graceful;
+            }
+            let now = tokio::time::Instant::now();
+            if now >= deadline {
+                break;
+            }
+            tokio::time::sleep((deadline - now).min(std::time::Duration::from_millis(50))).await;
+        }
+        if let Some((_, (handle, _, _))) = self.0.remove_if(key, |_, (_, _, tid)| *tid == turn_id) {
+            handle.abort();
+            StopOutcome::Aborted(turn_id)
+        } else {
+            // The entry vanished at the last moment, or a new generation owns the key now.
+            StopOutcome::Graceful
         }
     }
 
@@ -200,6 +257,104 @@ mod generation_tests {
         assert!(mgr.remove_own(&key, "turn-new"));
         assert!(mgr.0.get(&key).is_none(), "持有者注销应清空条目");
         assert!(!mgr.cancel(&key), "清空后 stop 返回 false");
+    }
+
+    /// 两阶段停止：协作任务在宽限期内自注销 → Graceful，不触发 abort。
+    #[tokio::test(start_paused = true)]
+    async fn stop_with_escalation_graceful_within_window() {
+        let mgr = StreamManager::new();
+        let key = ("assistant-3".to_string(), "topic-1".to_string());
+        let token = CancellationToken::new();
+        let token_wait = token.clone();
+        let mgr_inner = mgr.clone();
+        let key_c = key.clone();
+        let handle = tokio::spawn(async move {
+            token_wait.cancelled().await;
+            assert!(mgr_inner.remove_own(&key_c, "turn-coop"));
+        });
+        mgr.register(key.clone(), handle, token, "turn-coop".to_string());
+
+        let outcome = mgr.stop_with_escalation(&key, Duration::from_secs(2)).await;
+        assert!(
+            matches!(outcome, StopOutcome::Graceful),
+            "协作任务应走 Graceful 通道"
+        );
+        assert!(mgr.0.get(&key).is_none());
+    }
+
+    /// 两阶段停止：任务卡在永不观察 token 的 await（如阻塞互斥）→ 宽限期后
+    /// 升级 abort，条目移除并带回 turn_id（调用方代跑终末簿记）。
+    #[tokio::test(start_paused = true)]
+    async fn stop_with_escalation_aborts_stuck_task() {
+        let mgr = StreamManager::new();
+        let key = ("assistant-3".to_string(), "topic-2".to_string());
+        let token = CancellationToken::new();
+        // Stuck task: never observes the token (std::future::pending).
+        let handle = tokio::spawn(std::future::pending::<()>());
+        mgr.register(key.clone(), handle, token.clone(), "turn-stuck".to_string());
+
+        let outcome = mgr.stop_with_escalation(&key, Duration::from_secs(2)).await;
+        match outcome {
+            StopOutcome::Aborted(turn_id) => assert_eq!(turn_id, "turn-stuck"),
+            _ => panic!("卡死任务必须升级为 Aborted"),
+        }
+        assert!(token.is_cancelled(), "协作取消仍应先发出");
+        assert!(mgr.0.get(&key).is_none(), "abort 后条目必须移除");
+    }
+
+    /// 两阶段停止的身份防线：宽限期内换代注册了新代 → 升级 abort 不得误杀新代。
+    #[tokio::test(start_paused = true)]
+    async fn stop_with_escalation_never_aborts_replacement_generation() {
+        let mgr = StreamManager::new();
+        let key = ("assistant-3".to_string(), "topic-3".to_string());
+        // Old stuck generation.
+        let old_handle = tokio::spawn(std::future::pending::<()>());
+        mgr.register(
+            key.clone(),
+            old_handle,
+            CancellationToken::new(),
+            "turn-old".to_string(),
+        );
+
+        let mgr_stop = mgr.clone();
+        let key_stop = key.clone();
+        let stop_fut = tokio::spawn(async move {
+            mgr_stop
+                .stop_with_escalation(&key_stop, Duration::from_secs(2))
+                .await
+        });
+
+        // Mid-grace: a replacement takes over the key (replace_generation semantics).
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        let new_token = CancellationToken::new();
+        let new_handle = tokio::spawn(std::future::pending::<()>());
+        mgr.register(
+            key.clone(),
+            new_handle,
+            new_token.clone(),
+            "turn-new".to_string(),
+        );
+
+        let outcome = stop_fut.await.expect("stop task panicked");
+        assert!(
+            matches!(outcome, StopOutcome::Graceful),
+            "升级 abort 不得命中新代（应落回 Graceful）"
+        );
+        let entry = mgr.0.get(&key);
+        assert!(entry.is_some(), "新代条目必须保留");
+        assert_eq!(entry.as_ref().unwrap().2, "turn-new");
+        assert!(!new_token.is_cancelled(), "新代令牌不得被取消");
+    }
+
+    /// 无活动流时停止为 NotFound（前端状态漂移的无害路径）。
+    #[tokio::test]
+    async fn stop_with_escalation_not_found() {
+        let mgr = StreamManager::new();
+        let key = ("assistant-9".to_string(), "topic-9".to_string());
+        let outcome = mgr
+            .stop_with_escalation(&key, Duration::from_millis(10))
+            .await;
+        assert!(matches!(outcome, StopOutcome::NotFound));
     }
 }
 

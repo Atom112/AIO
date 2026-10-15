@@ -43,8 +43,9 @@ export const createTopic = (name?: string): Topic => ({
 export const handleStopGeneration = async () => {
   try {
     // CHAT-4: 按流归属键停止——切话题后当前视图 ID 打不到流（后端按键控
-    // 静默 no-op），用户被迫切回原话题才能停止
-    await stopActiveLlmStream();
+    // 静默 no-op），用户被迫切回原话题才能停止。优先停止当前视图的流，
+    // 否则停止最近记录的活动流（启动对账后键集与后端一致）。
+    await stopActiveLlmStream(currentAssistantId() ?? undefined, currentTopicId() ?? undefined);
   } catch (err) {
     console.error('stop_llm_stream failed:', err);
   }

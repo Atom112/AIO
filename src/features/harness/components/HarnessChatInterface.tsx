@@ -290,6 +290,7 @@ const HarnessChatInterface: Component<HarnessChatInterfaceProps> = (props) => {
                   <Dropdown
                     variant="ghost"
                     class="w-[128px]"
+                    menuUp
                     value={harnessClaudeMode()}
                     onChange={(mode) => {
                       saveHarnessClaudeMode(mode);

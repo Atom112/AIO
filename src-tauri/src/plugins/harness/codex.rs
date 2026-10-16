@@ -84,7 +84,10 @@ impl CodexDriver {
         // has no dynamic model/list) + effort selector; changes via
         // SetConfigOption store for the next per-turn spawn.
         driver.ctx.emit_event(HarnessEvent::ConfigOptions {
-            options: codex_config_options(&driver),
+            options: codex_config_options(
+                driver.runtime_model.lock().clone(),
+                driver.runtime_effort.lock().clone(),
+            ),
         });
         let d = driver.clone();
         tokio::spawn(async move {
@@ -174,7 +177,10 @@ impl CodexDriver {
                         }
                     }
                     self.ctx.emit_event(HarnessEvent::ConfigOptions {
-                        options: codex_config_options(&self),
+                        options: codex_config_options(
+                            self.runtime_model.lock().clone(),
+                            self.runtime_effort.lock().clone(),
+                        ),
                     });
                 }
             }
@@ -354,8 +360,9 @@ impl CodexDriver {
 /// selector (preset list — exec mode has no dynamic model/list surface; the
 /// app-server-only model/list method is deliberately avoided) and an effort
 /// selector mapping to the `-c model_reasoning_effort=` per-turn override.
-fn codex_config_options(
-    d: &CodexDriver,
+pub fn codex_config_options(
+    model: Option<String>,
+    effort: Option<String>,
 ) -> Vec<crate::plugins::harness::model::HarnessConfigOption> {
     use crate::plugins::harness::model::{HarnessConfigOption, HarnessConfigValue};
     let model_values = vec![
@@ -396,7 +403,7 @@ fn codex_config_options(
             name: Some("Model".into()),
             kind: "select".into(),
             category: Some("model".into()),
-            current: d.runtime_model.lock().clone(),
+            current: model,
             values: model_values,
             boolean_value: None,
         },
@@ -405,7 +412,7 @@ fn codex_config_options(
             name: Some("Effort".into()),
             kind: "select".into(),
             category: Some("thought_level".into()),
-            current: d.runtime_effort.lock().clone(),
+            current: effort,
             values: effort_values,
             boolean_value: None,
         },

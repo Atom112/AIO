@@ -258,3 +258,35 @@ pub async fn harness_set_config_option(
     manager.set_config_option(&session_row_id, &config_id, value);
     Ok(())
 }
+
+/// Synthesized config options for a NATIVE adapter without a live session
+/// (first-use dropdown data before any turn has run). ACP agents own their
+/// option lists (reported in session/new), so they return an empty list here.
+#[tauri::command]
+pub async fn harness_tool_config_options(
+    app: AppHandle,
+    tool_id: String,
+) -> Result<Vec<crate::plugins::harness::model::HarnessConfigOption>, String> {
+    use crate::plugins::harness::registry::{lookup_any, HarnessToolKind};
+    let Some(spec) = lookup_any(&app, &tool_id) else {
+        return Ok(Vec::new());
+    };
+    let options = match spec.kind {
+        HarnessToolKind::ClaudeNative { .. } => {
+            if crate::plugins::harness::claude::detect_native_binary().is_some() {
+                crate::plugins::harness::claude::claude_config_options(None, None)
+            } else {
+                Vec::new()
+            }
+        }
+        HarnessToolKind::CodexExec { .. } => {
+            if crate::utils::exec_resolve::resolve_executable("codex").is_some() {
+                crate::plugins::harness::codex::codex_config_options(None, None)
+            } else {
+                Vec::new()
+            }
+        }
+        HarnessToolKind::Acp { .. } => Vec::new(),
+    };
+    Ok(options)
+}

@@ -101,6 +101,39 @@ const saveHarnessNativePref = (toolId: string, key: 'model' | 'thinking', value:
   });
 };
 
+// ===== Per-tool config-option snapshot (last reported set, persisted) =====
+// The live `harnessConfig` signal is keyed by topic and only populated after a
+// driver has reported; this per-tool snapshot lets the config controls render
+// immediately after an app restart (stale until the next live report refreshes).
+
+const CONFIG_CACHE_KEY = 'aio-harness-config-cache-v1';
+
+function loadConfigCache(): Record<string, HarnessConfigOption[]> {
+  try {
+    const raw = localStorage.getItem(CONFIG_CACHE_KEY);
+    if (raw) return JSON.parse(raw);
+  } catch {
+    /* corrupted entry — fall through */
+  }
+  return {};
+}
+
+const [harnessConfigCache, setHarnessConfigCache] =
+  createSignal<Record<string, HarnessConfigOption[]>>(loadConfigCache());
+
+/** Persist the latest config-option set reported for a tool. */
+const saveHarnessConfigCacheEntry = (toolId: string, options: HarnessConfigOption[]) => {
+  setHarnessConfigCache((prev) => {
+    const next = { ...prev, [toolId]: options };
+    try {
+      localStorage.setItem(CONFIG_CACHE_KEY, JSON.stringify(next));
+    } catch {
+      /* restricted storage — session-only */
+    }
+    return next;
+  });
+};
+
 const [currentHarnessToolId, setCurrentHarnessToolId] = createSignal<string | null>(null);
 const [currentHarnessWorkspaceId, setCurrentHarnessWorkspaceId] = createSignal<string | null>(null);
 const [currentHarnessTopicId, setCurrentHarnessTopicId] = createSignal<string | null>(null);
@@ -251,6 +284,8 @@ export {
   currentHarnessConfigOptions,
   harnessNativePrefs,
   saveHarnessNativePref,
+  harnessConfigCache,
+  saveHarnessConfigCacheEntry,
   harnessNativeModel,
   harnessNativeThinking,
   restoreHarnessSelection,

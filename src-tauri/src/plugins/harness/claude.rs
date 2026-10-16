@@ -264,7 +264,10 @@ impl ClaudeDriver {
         // new one). The system/init frame's model field corrects the current
         // model once it arrives.
         ctx.emit_event(HarnessEvent::ConfigOptions {
-            options: claude_config_options(&driver),
+            options: claude_config_options(
+                driver.current_model.lock().clone(),
+                driver.thinking_level.lock().clone(),
+            ),
         });
 
         {
@@ -394,7 +397,10 @@ impl ClaudeDriver {
                     model,
                 });
                 self.ctx.emit_event(HarnessEvent::ConfigOptions {
-                    options: claude_config_options(self),
+                    options: claude_config_options(
+                        self.current_model.lock().clone(),
+                        self.thinking_level.lock().clone(),
+                    ),
                 });
             }
             Some("compact_boundary") => {
@@ -640,7 +646,10 @@ impl ClaudeDriver {
                 // field reflects the CLI's actual model.
                 *self.current_model.lock() = Some(val.to_string());
                 self.ctx.emit_event(HarnessEvent::ConfigOptions {
-                    options: claude_config_options(self),
+                    options: claude_config_options(
+                        self.current_model.lock().clone(),
+                        self.thinking_level.lock().clone(),
+                    ),
                 });
             }
             "effort" => {
@@ -649,7 +658,10 @@ impl ClaudeDriver {
                 // session runtime so the next prompt respawns with it).
                 *self.thinking_level.lock() = Some(val.to_string());
                 self.ctx.emit_event(HarnessEvent::ConfigOptions {
-                    options: claude_config_options(self),
+                    options: claude_config_options(
+                        self.current_model.lock().clone(),
+                        self.thinking_level.lock().clone(),
+                    ),
                 });
             }
             _ => {
@@ -666,9 +678,12 @@ impl ClaudeDriver {
 
 /// Synthesize the config-option set for the Claude native driver: a model
 /// selector (stable aliases + the CLI's resolved current model) and an
-/// effort/thinking selector (spawn-time --effort flag values).
-fn claude_config_options(
-    d: &ClaudeDriver,
+/// effort/thinking selector (spawn-time --effort flag values). Pure over the
+/// current values so the `harness_tool_config_options` command can reuse it
+/// without a live driver (first-use dropdown data).
+pub fn claude_config_options(
+    model: Option<String>,
+    effort: Option<String>,
 ) -> Vec<crate::plugins::harness::model::HarnessConfigOption> {
     use crate::plugins::harness::model::{HarnessConfigOption, HarnessConfigValue};
     let model_values = vec![
@@ -705,7 +720,7 @@ fn claude_config_options(
             name: Some("Model".into()),
             kind: "select".into(),
             category: Some("model".into()),
-            current: d.current_model.lock().clone(),
+            current: model,
             values: model_values,
             boolean_value: None,
         },
@@ -714,7 +729,7 @@ fn claude_config_options(
             name: Some("Effort".into()),
             kind: "select".into(),
             category: Some("thought_level".into()),
-            current: d.thinking_level.lock().clone(),
+            current: effort,
             values: effort_values,
             boolean_value: None,
         },

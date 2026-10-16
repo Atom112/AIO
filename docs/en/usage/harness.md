@@ -56,7 +56,7 @@ Codex (native integration) has no approval interaction — headless exec mode ne
 
 ### Model and thinking level
 
-The input bar's bottom-left shows the selected tool's config controls (only those the tool actually exposes are rendered):
+The input bar's bottom-left shows the selected tool's config controls (only those the tool actually exposes are rendered; a tool you have used before shows its last reported options immediately, native Claude Code / Codex show presets even on first use, and an ACP tool that has never run on this machine reveals its options after its first session):
 
 - **ACP tools** (OpenCode / Oh My Pi / Gemini CLI / Qwen Code / goose / DSH / custom ACP tools, plus Claude Code / Codex in their ACP-fallback mode): the dropdowns come from the options the tool itself reports at session setup (model selector, reasoning-effort selector, ...); picking one dispatches to the tool immediately — per the protocol, changes take effect from the next turn.
 - **Claude Code (native)**: the model dropdown switches live (the `set_model` control frame); the thinking level is a spawn flag (`--effort`) — changing it restarts the session process and resumes the conversation on the next send.

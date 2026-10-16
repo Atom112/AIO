@@ -5,6 +5,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import type { Message } from '../store/types';
 import type {
+  HarnessConfigOption,
   HarnessCustomAgent,
   HarnessToolStatus,
   HarnessTopic,
@@ -99,6 +100,11 @@ export const harnessSetConfigOption = (
   configId: string,
   value: string | boolean,
 ): Promise<void> => invoke<void>('harness_set_config_option', { sessionRowId, configId, value });
+
+/** Synthesized config options for a NATIVE adapter without a live session
+ * (first-use dropdown data; ACP agents own their lists → empty). */
+export const harnessToolConfigOptions = (toolId: string): Promise<HarnessConfigOption[]> =>
+  invoke<HarnessConfigOption[]>('harness_tool_config_options', { toolId });
 
 /** List user-registered custom ACP agents. */
 export const harnessListCustomAgents = (): Promise<HarnessCustomAgent[]> =>

@@ -74,6 +74,21 @@ impl<T> PendingMap<T> {
             }
         }
     }
+
+    /// Resolve every pending waiter with `value` and clear the map — used when a
+    /// child transport dies (agent process exited / killed) so no waiter blocks
+    /// forever; each waiter detects the sentinel and turns it into an error.
+    pub fn fail_all(&self, value: T)
+    where
+        T: Clone,
+    {
+        let ids: Vec<u64> = self.map.iter().map(|e| *e.key()).collect();
+        for id in ids {
+            if let Some((_, tx)) = self.map.remove(&id) {
+                let _ = tx.send(value.clone());
+            }
+        }
+    }
 }
 
 #[cfg(test)]

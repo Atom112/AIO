@@ -35,6 +35,7 @@ import {
 import { updateDiagnostics, type LspDiagnosticsUpdatePayload } from './core/store/diagnostics';
 import { registerChatStreamListeners } from './features/chat/hooks/chatEventListeners';
 import { registerBackgroundTaskListeners } from './features/chat/hooks/backgroundTaskListeners';
+import { registerHarnessEventListeners } from './features/harness/hooks/harnessEventListeners';
 
 /**
  * Layout component
@@ -89,6 +90,11 @@ const Layout: Component<ParentProps> = (props) => {
     // also live for the whole app: the jobs keep running no matter which page is
     // open, and the status-bar pull-up menu reads the registry from anywhere.
     registerBackgroundTaskListeners();
+
+    // Harness workbench listeners (CLI agent event stream / approvals / states):
+    // harness agents keep running across page navigation — the drivers feed the
+    // store from here no matter which page is open.
+    registerHarnessEventListeners();
 
     // Load the models catalog asynchronously (non-blocking for first paint; consumed on demand by the settings page)
     setModelsCatalogStatus('loading');

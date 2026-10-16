@@ -75,6 +75,16 @@ export const EVENTS = {
 
   /** Models catalog updated (fresh fetch persisted) */
   modelsCatalogUpdated: 'models-catalog-updated',
+
+  /** Harness workbench (CLI-agent GUI compatibility layer) */
+  /** Normalized harness event stream */
+  harnessEvent: 'harness-event',
+  /** Harness session run-state change (connecting / running / idle / error) */
+  harnessState: 'harness-state',
+  /** Harness approval request (the CLI agent is waiting on the user) */
+  harnessApprovalRequested: 'harness-approval-requested',
+  /** Harness approval expired (bubble removes itself) */
+  harnessApprovalExpired: 'harness-approval-expired',
 } as const;
 
 export type EventName = (typeof EVENTS)[keyof typeof EVENTS];

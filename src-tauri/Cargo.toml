@@ -64,6 +64,11 @@ auto-launch = "0.6"
 sqlite-vec = "0.1.9"
 sysinfo = "0.33"
 fastembed = { version = "4", default-features = false, features = ["ort-download-binaries"] }
+# ACP wire types for the harness workbench (CLI-agent GUI compatibility layer).
+# Types-only usage (default features = none): AIO owns the transport (tokio child
+# stdio + utils/jsonrpc.rs), the crate supplies the serde v1 schema shapes.
+# Pinned to ~3.3: the crate majors land roughly quarterly — upgrades are deliberate.
+agent-client-protocol = { version = "~3.3", default-features = false }
 
 [dev-dependencies]
 # http is already in the dependency tree via reqwest 0.13 (same major version);

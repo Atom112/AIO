@@ -13,7 +13,7 @@
 //! CLI adds frame types between versions and must never kill the session.
 
 use crate::plugins::harness::adapter::{
-    spawn_harness_child, DriverCtx, DriverHandle, DriverSpawn, HarnessAdapter, HarnessCommand,
+    spawn_harness_child_env, DriverCtx, DriverHandle, DriverSpawn, HarnessAdapter, HarnessCommand,
 };
 use crate::plugins::harness::model::{
     HarnessApprovalOption, HarnessApprovalRequest, HarnessEvent, HarnessUsage,
@@ -202,7 +202,8 @@ impl ClaudeDriver {
             args.push(format!("--resume={sid}"));
         }
         let program = binary.to_string_lossy().into_owned();
-        let mut child = spawn_harness_child(&program, &args, &spawn.workspace_path)?;
+        let mut child =
+            spawn_harness_child_env(&program, &args, &spawn.workspace_path, &spawn.extra_env)?;
         let stdout = child
             .stdout
             .take()
@@ -1081,6 +1082,7 @@ mod live_tests {
                 initial_model: None,
                 initial_thinking: None,
                 spawn_option_values: Default::default(),
+                extra_env: vec![],
             },
             cmd_rx,
         )

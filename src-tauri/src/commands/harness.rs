@@ -8,7 +8,7 @@ use crate::plugins::harness::registry::{self, HarnessToolStatus};
 use crate::plugins::harness::store::{
     self, HarnessCustomAgent, HarnessSessionRow, HarnessWorkspaceRow,
 };
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Manager, State};
 
 /// Detect every harness tool's availability (ready / installable / missing),
 /// covering built-ins and user-registered custom ACP agents.
@@ -309,11 +309,19 @@ pub async fn harness_tool_config_options(
             }
         }
         HarnessToolKind::CodexExec { .. } => {
-            if crate::utils::exec_resolve::resolve_executable("codex").is_some() {
+            // Native presets when the CLI exists; registry-declared spawn
+            // options (sandbox) render either way.
+            let mut options = if crate::utils::exec_resolve::resolve_executable("codex").is_some() {
                 crate::plugins::harness::codex::codex_config_options(None, None)
             } else {
                 Vec::new()
-            }
+            };
+            options.extend(
+                spec.spawn_options
+                    .iter()
+                    .map(|s| crate::plugins::harness::acp::synth_spawn_option(s, None)),
+            );
+            options
         }
         // ACP agents own their option lists (reported in session/new), but
         // registry-declared spawn options (e.g. omp --approval-mode) are
@@ -325,4 +333,173 @@ pub async fn harness_tool_config_options(
             .collect(),
     };
     Ok(options)
+}
+
+// ===== Tool setup: auth status, AIO-stored API key, instruction file =====
+
+/// Setup surface of one harness tool for the settings modal.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HarnessToolSetupInfo {
+    /// A probe path exists → the tool's own auth/config setup is present.
+    pub configured: bool,
+    /// Env var receiving an AIO-stored API key at spawn (None = the tool only
+    /// supports its own auth flow).
+    pub api_key_env: Option<String>,
+    /// A key is stored in AIO's secure store for this tool.
+    pub has_aio_key: bool,
+    pub auth_docs_url: String,
+    /// Workspace instruction file convention (CLAUDE.md / AGENTS.md / ...).
+    pub instruction_file: String,
+}
+
+/// Resolve a registry probe path: `~/…` → the home directory, `%APPDATA%/…` →
+/// the roaming app-data dir.
+fn resolve_probe_path(raw: &str) -> Option<std::path::PathBuf> {
+    if let Some(rest) = raw.strip_prefix("~/") {
+        let home_var = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
+        return Some(std::path::Path::new(&std::env::var_os(home_var)?).join(rest));
+    }
+    if let Some(rest) = raw.strip_prefix("%APPDATA%/") {
+        return Some(std::path::Path::new(&std::env::var_os("APPDATA")?).join(rest));
+    }
+    Some(std::path::PathBuf::from(raw))
+}
+
+/// Setup/auth status of one tool for the settings modal.
+#[tauri::command]
+pub async fn harness_tool_setup_info(
+    app: AppHandle,
+    tool_id: String,
+) -> Result<HarnessToolSetupInfo, String> {
+    let spec = registry::lookup_any(&app, &tool_id).ok_or_else(|| {
+        ierr!(
+            "未知的 harness 工具: {tool_id}",
+            "Unknown harness tool: {tool_id}"
+        )
+    })?;
+    let configured = spec
+        .setup
+        .auth_probe_paths
+        .iter()
+        .filter_map(|p| resolve_probe_path(p))
+        .any(|p| p.exists());
+    let has_aio_key = crate::core::secure_store::get(
+        &app,
+        &crate::core::secure_store::accounts::harness_tool_key(&tool_id),
+    )
+    .ok()
+    .flatten()
+    .map(|k| !k.trim().is_empty())
+    .unwrap_or(false);
+    Ok(HarnessToolSetupInfo {
+        configured,
+        api_key_env: spec.setup.api_key_env.clone(),
+        has_aio_key,
+        auth_docs_url: spec.setup.auth_docs_url.clone(),
+        instruction_file: spec.setup.instruction_file.clone(),
+    })
+}
+
+/// Store (or clear with an empty string) a tool's API key in the OS keychain;
+/// injected as the tool's provider env var at the next spawn.
+#[tauri::command]
+pub async fn harness_set_tool_api_key(
+    app: AppHandle,
+    tool_id: String,
+    api_key: String,
+) -> Result<(), String> {
+    let spec = registry::lookup_any(&app, &tool_id).ok_or_else(|| {
+        ierr!(
+            "未知的 harness 工具: {tool_id}",
+            "Unknown harness tool: {tool_id}"
+        )
+    })?;
+    if spec.setup.api_key_env.is_none() {
+        return Err(ierr!(
+            "该工具不支持 API Key 注入",
+            "This tool does not support API key injection"
+        ));
+    }
+    let account = crate::core::secure_store::accounts::harness_tool_key(&tool_id);
+    if api_key.trim().is_empty() {
+        crate::core::secure_store::delete(&app, &account).map_err(|e| e.to_string())?;
+    } else {
+        crate::core::secure_store::set(&app, &account, api_key.trim())
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+/// One workspace instruction file payload.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HarnessInstruction {
+    /// Absolute path of the instruction file.
+    pub path: String,
+    pub exists: bool,
+    pub content: String,
+}
+
+/// The instruction file path for a (tool, workspace) — the workspace must be a
+/// registered harness workspace for that tool (the registry file name is ours,
+/// the path comes from the frontend: the registration check is the boundary).
+fn instruction_path(
+    app: &AppHandle,
+    tool_id: &str,
+    workspace_path: &str,
+) -> Result<std::path::PathBuf, String> {
+    let spec = registry::lookup_any(app, tool_id).ok_or_else(|| {
+        ierr!(
+            "未知的 harness 工具: {tool_id}",
+            "Unknown harness tool: {tool_id}"
+        )
+    })?;
+    let db = app.state::<DbState>();
+    let conn = db.0.lock();
+    let registered = store::list_workspaces(&conn)
+        .map_err(|e| e.to_string())?
+        .iter()
+        .any(|w| w.tool_id == tool_id && w.path == workspace_path);
+    if !registered {
+        return Err(ierr!(
+            "工作区未注册到该工具",
+            "Workspace is not registered for this tool"
+        ));
+    }
+    Ok(std::path::Path::new(workspace_path).join(&spec.setup.instruction_file))
+}
+
+/// Read the workspace's instruction file for the tool (empty when absent).
+#[tauri::command]
+pub async fn harness_instruction_read(
+    app: AppHandle,
+    tool_id: String,
+    workspace_path: String,
+) -> Result<HarnessInstruction, String> {
+    let path = instruction_path(&app, &tool_id, &workspace_path)?;
+    let exists = path.exists();
+    let content = if exists {
+        std::fs::read_to_string(&path).map_err(|e| e.to_string())?
+    } else {
+        String::new()
+    };
+    Ok(HarnessInstruction {
+        path: path.to_string_lossy().into_owned(),
+        exists,
+        content,
+    })
+}
+
+/// Write (create or overwrite) the workspace's instruction file for the tool —
+/// atomic write, no backup (the file is user-authored prose, not state).
+#[tauri::command]
+pub async fn harness_instruction_write(
+    app: AppHandle,
+    tool_id: String,
+    workspace_path: String,
+    content: String,
+) -> Result<(), String> {
+    let path = instruction_path(&app, &tool_id, &workspace_path)?;
+    crate::core::fs_util::atomic_write(&path, content.as_bytes()).map_err(|e| e.to_string())
 }

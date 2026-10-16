@@ -145,6 +145,7 @@ impl HarnessManager {
                             command: fallback.clone(),
                         },
                         spawn_options: spec.spawn_options.clone(),
+                        setup: spec.setup.clone(),
                     };
                     Arc::new(crate::plugins::harness::acp::AcpAdapter)
                 }
@@ -160,11 +161,27 @@ impl HarnessManager {
                             command: fallback.clone(),
                         },
                         spawn_options: spec.spawn_options.clone(),
+                        setup: spec.setup.clone(),
                     };
                     Arc::new(crate::plugins::harness::acp::AcpAdapter)
                 }
             }
         };
+
+        // Tool-bound API key: the key the user stored in AIO's secure store for
+        // this tool is injected as the tool's provider env var at spawn (only
+        // that one named var, on top of the child env whitelist).
+        let mut extra_env: Vec<(String, String)> = Vec::new();
+        if let Some(env_var) = &spec.setup.api_key_env {
+            if let Ok(Some(key)) = crate::core::secure_store::get(
+                app,
+                &crate::core::secure_store::accounts::harness_tool_key(tool_id),
+            ) {
+                if !key.trim().is_empty() {
+                    extra_env.push((env_var.clone(), key));
+                }
+            }
+        }
 
         let (cmd_tx, cmd_rx) = mpsc::unbounded_channel::<HarnessCommand>();
         let DriverHandle { child } = adapter
@@ -177,6 +194,7 @@ impl HarnessManager {
                     permission_mode: prefs.permission_mode,
                     initial_model: prefs.model,
                     initial_thinking: prefs.thinking_level,
+                    extra_env,
                     spawn_option_values: prefs.spawn_option_values,
                 },
                 cmd_rx,

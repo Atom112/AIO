@@ -196,6 +196,9 @@ pub struct DriverSpawn {
     /// Registry-declared spawn-option values keyed by option id (e.g.
     /// {"approval-mode": "yolo"} → the driver injects the matching CLI flag).
     pub spawn_option_values: std::collections::HashMap<String, String>,
+    /// Extra env for the child: the tool's AIO-stored API key var (from the
+    /// secure store) — loaded by the manager at ensure_session time.
+    pub extra_env: Vec<(String, String)>,
 }
 
 /// Frontend-stored preferences applied to a freshly spawned runtime (native
@@ -274,11 +277,19 @@ fn inherited_env_whitelist() -> HashMap<String, String> {
 
 /// Spawn a harness child: PATH-only executable resolution (SEC-06 — the workspace
 /// may be model-writable, so the current directory must never be consulted),
-/// whitelisted env, no console window, killed when dropped.
-pub fn spawn_harness_child(command: &str, args: &[String], cwd: &str) -> Result<Child, String> {
+/// whitelisted env, no console window, killed when dropped. `extra_env` adds
+/// tool-bound settings on top of the whitelist (spawn-option env values like
+/// GOOSE_MODE, and the tool's AIO-stored API key var) — only these named vars.
+pub fn spawn_harness_child_env(
+    command: &str,
+    args: &[String],
+    cwd: &str,
+    extra_env: &[(String, String)],
+) -> Result<Child, String> {
     let program = crate::utils::exec_resolve::resolve_or_keep(command);
     let mut cmd = Command::new(&program);
     cmd.env_clear().envs(inherited_env_whitelist());
+    cmd.envs(extra_env.iter().map(|(k, v)| (k.as_str(), v.as_str())));
     cmd.args(args)
         .current_dir(cwd)
         .stdin(Stdio::piped())

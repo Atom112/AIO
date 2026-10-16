@@ -14,14 +14,14 @@
 //! requests get a `-32601` reply so the agent cannot hang waiting on us.
 
 use crate::plugins::harness::adapter::{
-    resolve_acp_command, spawn_harness_child, DriverCtx, DriverHandle, DriverSpawn, HarnessAdapter,
-    HarnessCommand,
+    resolve_acp_command, spawn_harness_child_env, DriverCtx, DriverHandle, DriverSpawn,
+    HarnessAdapter, HarnessCommand,
 };
 use crate::plugins::harness::model::{
     HarnessApprovalOption, HarnessApprovalRequest, HarnessConfigOption, HarnessConfigValue,
     HarnessEvent, HarnessFileChange, HarnessPlanEntry, HarnessUsage,
 };
-use crate::plugins::harness::registry::SpawnOptionSpec;
+use crate::plugins::harness::registry::{SpawnOptionInject, SpawnOptionSpec};
 use crate::utils::jsonrpc::{PendingMap, WaitError};
 use agent_client_protocol::schema::v1::{
     RequestPermissionRequest, SessionNotification, SessionUpdate,
@@ -85,13 +85,15 @@ impl AcpDriver {
         let tool_label = spawn.spec.name.to_string();
         let (program, mut args) =
             resolve_acp_command(&spawn.spec).map_err(|e| format!("[{tool_label}] {e}"))?;
-        // Registry-declared CLI-flag-backed options (omp --approval-mode etc.):
-        // inject the chosen value's flag at process start.
-        args.extend(spawn_option_args(
-            &spawn.spec.spawn_options,
-            &spawn.spawn_option_values,
-        ));
-        let mut child = spawn_harness_child(&program, &args, &spawn.workspace_path)?;
+        // Registry-declared spawn options (omp --approval-mode, goose
+        // GOOSE_MODE, ...): inject the chosen values' flags/env at process start.
+        let (opt_args, opt_env) =
+            spawn_option_injections(&spawn.spec.spawn_options, &spawn.spawn_option_values);
+        args.extend(opt_args);
+        let mut extra_env = spawn.extra_env.clone();
+        extra_env.extend(opt_env);
+        let mut child =
+            spawn_harness_child_env(&program, &args, &spawn.workspace_path, &extra_env)?;
         let stdout = child
             .stdout
             .take()
@@ -946,21 +948,35 @@ fn notice_event(w: &Value) -> Option<HarnessEvent> {
     Some(HarnessEvent::Notice { message })
 }
 
-/// Compute the CLI args injected for the chosen spawn-option values
-/// (`{arg}={value}` for values marked `inject`; unknown ids are ignored).
-fn spawn_option_args(specs: &[SpawnOptionSpec], values: &HashMap<String, String>) -> Vec<String> {
-    let mut out = Vec::new();
+/// Compute the spawn injections for the chosen spawn-option values: CLI args
+/// and env vars, split by the option's inject kind. Values marked
+/// `inject: false` (the tool default) and unknown ids inject nothing. Shared
+/// by the ACP driver (spawn-time) and the Codex driver (per-turn).
+pub(crate) fn spawn_option_injections(
+    specs: &[SpawnOptionSpec],
+    values: &HashMap<String, String>,
+) -> (Vec<String>, Vec<(String, String)>) {
+    let mut args = Vec::new();
+    let mut env = Vec::new();
     for spec in specs {
         let Some(chosen) = values.get(&spec.option_id) else {
             continue;
         };
-        if let Some(v) = spec.values.iter().find(|v| &v.id == chosen) {
-            if v.inject {
-                out.push(format!("{}={}", spec.arg, v.id));
+        let Some(v) = spec.values.iter().find(|v| &v.id == chosen) else {
+            continue;
+        };
+        if !v.inject {
+            continue;
+        }
+        match &spec.inject {
+            SpawnOptionInject::Flag { arg } => {
+                args.push(arg.clone());
+                args.push(v.id.clone());
             }
+            SpawnOptionInject::Env { var } => env.push((var.clone(), v.id.clone())),
         }
     }
-    out
+    (args, env)
 }
 
 /// Synthesize one registry-declared spawn option into the normalized
@@ -1245,16 +1261,21 @@ mod tests {
         }
     }
 
-    /// Spawn options (CLI-flag-backed): chosen injectable values become
-    /// `{arg}={value}` args; the default value and unknown ids inject nothing;
-    /// synthesis marks the category "spawn" with the chosen (or first) current.
+    /// Spawn options (CLI-flag/env-backed): chosen injectable values become
+    /// flag argv pairs or env vars by inject kind; the default value and
+    /// unknown ids inject nothing; synthesis marks the category "spawn" with
+    /// the chosen (or first) current.
     #[test]
     fn spawn_option_args_and_synthesis() {
-        use crate::plugins::harness::registry::{SpawnOptionSpec, SpawnOptionValueSpec};
-        let spec = SpawnOptionSpec {
+        use crate::plugins::harness::registry::{
+            SpawnOptionInject, SpawnOptionSpec, SpawnOptionValueSpec,
+        };
+        let flag_spec = SpawnOptionSpec {
             option_id: "approval-mode".to_string(),
             name: "Approval Mode".to_string(),
-            arg: "--approval-mode".to_string(),
+            inject: SpawnOptionInject::Flag {
+                arg: "--approval-mode".to_string(),
+            },
             values: vec![
                 SpawnOptionValueSpec {
                     id: "always-ask".to_string(),
@@ -1273,31 +1294,66 @@ mod tests {
                 },
             ],
         };
-        let specs = vec![spec.clone()];
+        let env_spec = SpawnOptionSpec {
+            option_id: "goose-mode".to_string(),
+            name: "Permission Mode".to_string(),
+            inject: SpawnOptionInject::Env {
+                var: "GOOSE_MODE".to_string(),
+            },
+            values: vec![
+                SpawnOptionValueSpec {
+                    id: "auto".to_string(),
+                    name: "Autonomous".to_string(),
+                    inject: false,
+                },
+                SpawnOptionValueSpec {
+                    id: "approve".to_string(),
+                    name: "Manual approval".to_string(),
+                    inject: true,
+                },
+            ],
+        };
+        let specs = vec![flag_spec.clone(), env_spec];
 
-        // Default value (inject=false) → no args.
+        // Default value (inject=false) → no injections.
         let mut values = HashMap::from([("approval-mode".to_string(), "always-ask".to_string())]);
-        assert!(spawn_option_args(&specs, &values).is_empty());
-        // Injectable values → {arg}={id}.
+        assert_eq!(spawn_option_injections(&specs, &values), (vec![], vec![]));
+        // Injectable flag values → two argv entries (space-separated form).
         values.insert("approval-mode".to_string(), "yolo".to_string());
-        assert_eq!(spawn_option_args(&specs, &values), ["--approval-mode=yolo"]);
-        values.insert("approval-mode".to_string(), "write".to_string());
         assert_eq!(
-            spawn_option_args(&specs, &values),
-            ["--approval-mode=write"]
+            spawn_option_injections(&specs, &values),
+            (
+                vec!["--approval-mode".to_string(), "yolo".to_string()],
+                vec![]
+            )
+        );
+        // Env-kind option → env var, no args.
+        values.insert("goose-mode".to_string(), "approve".to_string());
+        assert_eq!(
+            spawn_option_injections(&specs, &values),
+            (
+                vec!["--approval-mode".to_string(), "yolo".to_string()],
+                vec![("GOOSE_MODE".to_string(), "approve".to_string())]
+            )
         );
         // Unknown value id → ignored.
         values.insert("approval-mode".to_string(), "bogus".to_string());
-        assert!(spawn_option_args(&specs, &values).is_empty());
+        assert_eq!(
+            spawn_option_injections(&specs, &values),
+            (
+                vec![],
+                vec![("GOOSE_MODE".to_string(), "approve".to_string())]
+            )
+        );
 
         // Synthesis: current = chosen value, category "spawn", full value list.
-        let opt = synth_spawn_option(&spec, values.get("approval-mode"));
+        let opt = synth_spawn_option(&flag_spec, values.get("approval-mode"));
         assert_eq!(opt.option_id, "approval-mode");
         assert_eq!(opt.category.as_deref(), Some("spawn"));
         assert_eq!(opt.current.as_deref(), Some("bogus"));
         assert_eq!(opt.values.len(), 3);
         // Synthesis without a preference falls back to the first value.
-        let opt = synth_spawn_option(&spec, None);
+        let opt = synth_spawn_option(&flag_spec, None);
         assert_eq!(opt.current.as_deref(), Some("always-ask"));
     }
 
@@ -1580,6 +1636,7 @@ mod live_tests {
                 initial_model: None,
                 initial_thinking: None,
                 spawn_option_values: Default::default(),
+                extra_env: vec![],
             },
             cmd_rx,
         )

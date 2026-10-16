@@ -115,6 +115,48 @@ export const harnessSetConfigOption = (
 export const harnessToolConfigOptions = (toolId: string): Promise<HarnessConfigOption[]> =>
   invoke<HarnessConfigOption[]>('harness_tool_config_options', { toolId });
 
+/** Setup/auth surface of one tool (settings modal). */
+export interface HarnessToolSetupInfo {
+  /** The tool's own auth/config probe files exist. */
+  configured: boolean;
+  /** Env var receiving an AIO-stored API key at spawn (null = no injection). */
+  apiKeyEnv: string | null;
+  /** A key is stored in AIO's secure store for this tool. */
+  hasAioKey: boolean;
+  authDocsUrl: string;
+  /** Workspace instruction file convention (CLAUDE.md / AGENTS.md / ...). */
+  instructionFile: string;
+}
+
+/** Setup/auth status of one tool. */
+export const harnessToolSetupInfo = (toolId: string): Promise<HarnessToolSetupInfo> =>
+  invoke<HarnessToolSetupInfo>('harness_tool_setup_info', { toolId });
+
+/** Store (or clear with an empty string) a tool's API key in the OS keychain. */
+export const harnessSetToolApiKey = (toolId: string, apiKey: string): Promise<void> =>
+  invoke<void>('harness_set_tool_api_key', { toolId, apiKey });
+
+/** Workspace instruction file payload. */
+export interface HarnessInstruction {
+  path: string;
+  exists: boolean;
+  content: string;
+}
+
+/** Read the workspace's instruction file for the tool (empty when absent). */
+export const harnessInstructionRead = (
+  toolId: string,
+  workspacePath: string,
+): Promise<HarnessInstruction> =>
+  invoke<HarnessInstruction>('harness_instruction_read', { toolId, workspacePath });
+
+/** Write (create or overwrite) the workspace's instruction file for the tool. */
+export const harnessInstructionWrite = (
+  toolId: string,
+  workspacePath: string,
+  content: string,
+): Promise<void> => invoke<void>('harness_instruction_write', { toolId, workspacePath, content });
+
 /** List user-registered custom ACP agents. */
 export const harnessListCustomAgents = (): Promise<HarnessCustomAgent[]> =>
   invoke<HarnessCustomAgent[]>('harness_list_custom_agents');

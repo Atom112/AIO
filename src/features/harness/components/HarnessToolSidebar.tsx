@@ -41,6 +41,10 @@ interface HarnessToolSidebarProps {
   onRemoveWorkspace: (workspaceId: string) => void;
   onAddCustomAgent: () => void;
   onDeleteCustomAgent: (agentId: string, name: string) => void;
+  /** Open the tool settings modal (auth/API key/docs). */
+  onToolSettings: (toolId: string, toolName: string) => void;
+  /** Open the workspace instruction-file editor. */
+  onEditInstruction: (workspaceId: string) => void;
 }
 
 /** Page container left inset (page root px-[6px]) — compensates right padding. */
@@ -257,6 +261,19 @@ const HarnessToolSidebar: Component<HarnessToolSidebarProps> = (props) => {
                             <Icon name={isFolded() ? 'caret-down' : 'caret-up'} size={15} />
                           </button>
                         </Show>
+                        {/* Tool settings (auth / API key / docs) — hover-visible. */}
+                        <button
+                          type="button"
+                          class="flex items-center justify-center border-none bg-transparent cursor-pointer rounded-md text-white/40 hover:text-white/85 transition-all duration-200 active:scale-90 opacity-0 group-hover:opacity-100"
+                          style={{ width: '24px', height: '24px' }}
+                          title={t('harness.sidebar.toolSettings')}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            props.onToolSettings(tool.id, tool.name);
+                          }}
+                        >
+                          <Icon name="gear" size={14} />
+                        </button>{' '}
                         {/* Add workspace for THIS tool (hover-visible). */}
                         <button
                           type="button"
@@ -343,6 +360,19 @@ const HarnessToolSidebar: Component<HarnessToolSidebarProps> = (props) => {
                                   >
                                     {ws.name}
                                   </span>
+                                  {/* Workspace instruction file (AGENTS.md /
+                                      CLAUDE.md / ... per tool convention). */}
+                                  <button
+                                    class="flex items-center justify-center border-none rounded-full cursor-pointer transition-all duration-200 active:scale-90 opacity-0 group-hover:opacity-100 bg-white/[0.06] text-white/60 hover:bg-pri-10"
+                                    style={{ width: '22px', height: '22px' }}
+                                    title={t('harness.sidebar.editInstruction')}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      props.onEditInstruction(ws.id);
+                                    }}
+                                  >
+                                    <Icon name="pen-line" class="w-[12px] h-[12px]" />
+                                  </button>
                                   <button
                                     class="flex items-center justify-center border-none rounded-full cursor-pointer transition-all duration-200 active:scale-90 opacity-0 group-hover:opacity-100 bg-white/[0.06] text-white/60 hover:bg-pri-10"
                                     style={{ width: '22px', height: '22px' }}

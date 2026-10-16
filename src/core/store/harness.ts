@@ -125,13 +125,6 @@ const saveHarnessClaudeMode = (mode: string) => {
 
 // ===== Selectors =====
 
-/** Workspaces under the currently selected tool. */
-const currentHarnessWorkspaces = () => {
-  const toolId = currentHarnessToolId();
-  if (!toolId) return [];
-  return harnessWorkspaces().filter((w) => w.toolId === toolId);
-};
-
 /** The selected workspace row. */
 const currentHarnessWorkspace = () =>
   harnessWorkspaces().find((w) => w.id === currentHarnessWorkspaceId());
@@ -201,7 +194,6 @@ export {
   selectHarnessWorkspace,
   currentHarnessTopicId,
   selectHarnessTopic,
-  currentHarnessWorkspaces,
   currentHarnessWorkspace,
   currentHarnessRun,
   currentHarnessDraft,

@@ -74,7 +74,7 @@ import llamacppIconSvg from '../assets/llamacpp-icon.svg?raw';
 import vllmColorSvg from '@lobehub/icons-static-svg/icons/vllm-color.svg?raw';
 
 /** SVG string -> data URL (base64-encoded, UTF-8 safe) */
-function svgToDataUrl(svg: string): string {
+export function svgToDataUrl(svg: string): string {
   const b64 = btoa(unescape(encodeURIComponent(svg)));
   return `data:image/svg+xml;base64,${b64}`;
 }

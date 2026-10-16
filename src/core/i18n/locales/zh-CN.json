@@ -1069,5 +1069,10 @@
   "harness.addWorkspace.fromProjects": "从 AIO 项目快速添加",
   "harness.addWorkspace.confirm": "添加",
   "harness.addWorkspace.pathRequired": "请选择或输入工作区路径",
-  "harness.usage.context": "上下文 tokens"
+  "harness.usage.context": "上下文 tokens",
+  "harness.mode.default": "默认（逐次确认）",
+  "harness.mode.acceptEdits": "自动接受编辑",
+  "harness.mode.plan": "计划模式",
+  "harness.mode.dontAsk": "不再询问",
+  "harness.mode.bypassPermissions": "完全放手"
 }

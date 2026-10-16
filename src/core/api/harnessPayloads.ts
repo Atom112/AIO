@@ -41,6 +41,7 @@ export interface HarnessEvent {
     | 'tool_call_update'
     | 'tool_call_end'
     | 'plan_update'
+    | 'subagent_delta'
     | 'usage_update'
     | 'turn_ended'
     | 'notice'
@@ -116,6 +117,8 @@ export interface HarnessApprovalExpiredPayload {
 export interface HarnessToolStatus {
   id: string;
   state: 'ready' | 'installable' | 'missing';
+  /** Which adapter serves this tool: claude-native | acp | acp-fallback. */
+  adapter: string;
 }
 
 /** Registered workspace row. */

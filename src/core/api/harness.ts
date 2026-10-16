@@ -69,9 +69,14 @@ export const harnessLoadMessages = (sessionRowId: string): Promise<Message[]> =>
 export const harnessAppendMessage = (sessionRowId: string, message: Message): Promise<void> =>
   invoke<void>('harness_append_message', { sessionRowId, message });
 
-/** Send a user prompt (persisted + submitted to the harness agent); returns the stored user message. */
-export const harnessSendMessage = (sessionRowId: string, text: string): Promise<Message> =>
-  invoke<Message>('harness_send_message', { sessionRowId, text });
+/** Send a user prompt (persisted + submitted to the harness agent); returns the stored user message.
+ * `permissionMode` applies to a freshly spawned Claude Code native agent (ignored otherwise). */
+export const harnessSendMessage = (
+  sessionRowId: string,
+  text: string,
+  permissionMode?: string,
+): Promise<Message> =>
+  invoke<Message>('harness_send_message', { sessionRowId, text, permissionMode });
 
 /** Stop the running turn of a topic. */
 export const harnessStopSession = (sessionRowId: string): Promise<void> =>
@@ -83,3 +88,7 @@ export const harnessRespondApproval = (requestId: string, optionId: string): Pro
 
 /** Which harness topics still have a live runtime (stop-button reconciliation). */
 export const harnessListRunning = (): Promise<string[]> => invoke<string[]>('harness_list_running');
+
+/** Switch the permission mode of a running session (Claude Code native; no-op otherwise). */
+export const harnessSetPermissionMode = (sessionRowId: string, mode: string): Promise<void> =>
+  invoke<void>('harness_set_permission_mode', { sessionRowId, mode });

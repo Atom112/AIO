@@ -102,6 +102,29 @@ function loadSelection(): {
   return { toolId: null, workspaceId: null, topicId: null };
 }
 
+// ===== Claude Code permission mode (global default; applied at spawn and
+// switched live via harness_set_permission_mode when a session runs) =====
+
+const MODE_KEY = 'aio-harness-claude-mode';
+const loadClaudeMode = (): string => {
+  try {
+    return localStorage.getItem(MODE_KEY) || 'default';
+  } catch {
+    return 'default';
+  }
+};
+const [harnessClaudeMode, setHarnessClaudeMode] = createSignal<string>(loadClaudeMode());
+
+/** Set + persist the Claude permission-mode choice. */
+const saveHarnessClaudeMode = (mode: string) => {
+  setHarnessClaudeMode(mode);
+  try {
+    localStorage.setItem(MODE_KEY, mode);
+  } catch {
+    /* restricted storage — session-only choice */
+  }
+};
+
 // ===== Selectors =====
 
 /** Workspaces under the currently selected tool. */
@@ -187,4 +210,6 @@ export {
   currentHarnessTurnError,
   currentHarnessApprovals,
   restoreHarnessSelection,
+  harnessClaudeMode,
+  saveHarnessClaudeMode,
 };

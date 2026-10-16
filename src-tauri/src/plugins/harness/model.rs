@@ -106,6 +106,13 @@ pub enum HarnessEvent {
     /// Agent plan / task list replaced wholesale.
     #[serde(rename_all = "camelCase")]
     PlanUpdate { entries: Vec<HarnessPlanEntry> },
+    /// Text streamed from a subagent run (Claude Code Task tool etc.).
+    #[serde(rename_all = "camelCase")]
+    SubagentDelta {
+        /// Subagent display name when the harness reports one
+        name: Option<String>,
+        text: String,
+    },
     /// Usage / cost update (may arrive mid-turn or at turn end).
     #[serde(rename_all = "camelCase")]
     UsageUpdate { usage: HarnessUsage },

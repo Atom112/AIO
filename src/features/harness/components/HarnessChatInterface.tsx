@@ -5,6 +5,7 @@
  */
 import { Component, For, Show } from 'solid-js';
 import Icon from '../../../shared/components/Icon';
+import Dropdown from '../../../shared/components/Dropdown';
 import {
   currentHarnessApprovals,
   currentHarnessDraft,
@@ -13,13 +14,16 @@ import {
   currentHarnessTopicId,
   currentHarnessTurnError,
   currentHarnessWorkspace,
+  harnessClaudeMode,
   harnessMessages,
   harnessTopics,
   harnessTools,
   harnessTurnErrors,
+  saveHarnessClaudeMode,
   setHarnessTurnErrors,
 } from '../../../core/store/harness';
 import { formatNumber, t } from '../../../core/i18n';
+import { harnessSetPermissionMode } from '../../../core/api/harness';
 import HarnessMessageList from './HarnessMessageList';
 import HarnessApprovalBubble from './HarnessApprovalBubble';
 
@@ -96,6 +100,27 @@ const HarnessChatInterface: Component<HarnessChatInterfaceProps> = (props) => {
         </Show>
 
         <div class="ml-auto flex items-center gap-2 shrink-0">
+          {/* Claude Code permission-mode selector (native adapter only) */}
+          <Show when={tool()?.id === 'claude' && tool()?.adapter === 'claude-native'}>
+            <Dropdown
+              variant="ghost"
+              class="w-[128px]"
+              value={harnessClaudeMode()}
+              onChange={(mode) => {
+                saveHarnessClaudeMode(mode);
+                const sid = currentHarnessTopicId();
+                if (sid) void harnessSetPermissionMode(sid, mode).catch(console.error);
+              }}
+              options={[
+                { value: 'default', label: t('harness.mode.default') },
+                { value: 'acceptEdits', label: t('harness.mode.acceptEdits') },
+                { value: 'plan', label: t('harness.mode.plan') },
+                { value: 'dontAsk', label: t('harness.mode.dontAsk') },
+                { value: 'bypassPermissions', label: t('harness.mode.bypassPermissions') },
+              ]}
+            />
+          </Show>
+
           <Show when={contextTokens() || inputTokens() || outputTokens()}>
             <span
               class="text-[11px] text-white/35 whitespace-nowrap"

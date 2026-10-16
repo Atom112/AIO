@@ -16,7 +16,7 @@ use crate::plugins::harness::adapter::{
     kill_child_tree, DriverHandle, DriverSpawn, HarnessAdapter, HarnessCommand,
 };
 use crate::plugins::harness::model::{ApprovalDecision, DriverEvent, HarnessSessionKey};
-use crate::plugins::harness::registry::{lookup, HarnessToolKind};
+use crate::plugins::harness::registry::{lookup, HarnessToolKind, HarnessToolSpec};
 use dashmap::DashMap;
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager};
@@ -71,12 +71,13 @@ impl HarnessManager {
         session_row_id: &str,
         workspace_path: &str,
         harness_session_id: Option<String>,
+        permission_mode: Option<String>,
     ) -> Result<Arc<SessionRuntime>, String> {
         let key: HarnessSessionKey = (tool_id.to_string(), session_row_id.to_string());
         if let Some(rt) = self.sessions.get(&key) {
             return Ok(rt.clone());
         }
-        let spec = lookup(tool_id).ok_or_else(|| {
+        let mut spec = lookup(tool_id).ok_or_else(|| {
             ierr!(
                 "未知的 harness 工具: {tool_id}",
                 "Unknown harness tool: {tool_id}"
@@ -126,9 +127,25 @@ impl HarnessManager {
             });
         }
 
-        // Dispatch to the adapter family (PR1: ACP only; later PRs add native ones).
+        // Dispatch to the adapter family. Claude Code prefers its native driver
+        // when a real binary exists; without one the bundled ACP fallback serves
+        // the tool (registry rewrites the spec for the ACP adapter).
         let adapter: Arc<dyn HarnessAdapter> = match &spec.kind {
             HarnessToolKind::Acp { .. } => Arc::new(crate::plugins::harness::acp::AcpAdapter),
+            HarnessToolKind::ClaudeNative { fallback } => {
+                if crate::plugins::harness::claude::detect_native_binary().is_some() {
+                    Arc::new(crate::plugins::harness::claude::ClaudeAdapter)
+                } else {
+                    spec = HarnessToolSpec {
+                        id: spec.id,
+                        name: spec.name,
+                        kind: HarnessToolKind::Acp {
+                            command: fallback.clone(),
+                        },
+                    };
+                    Arc::new(crate::plugins::harness::acp::AcpAdapter)
+                }
+            }
         };
 
         let (cmd_tx, cmd_rx) = mpsc::unbounded_channel::<HarnessCommand>();
@@ -139,6 +156,7 @@ impl HarnessManager {
                     spec,
                     workspace_path: workspace_path.to_string(),
                     harness_session_id,
+                    permission_mode,
                 },
                 cmd_rx,
             )
@@ -187,6 +205,24 @@ impl HarnessManager {
         kill_child_tree(&runtime.child).await;
         self.sessions.remove(&key);
         Ok(())
+    }
+
+    /// Switch the permission mode of a RUNNING session (Claude Code native:
+    /// set_permission_mode control frame; other adapters ignore it). Silent
+    /// no-op when the session is not live — the frontend stores the choice and
+    /// applies it at the next spawn instead.
+    pub fn set_permission_mode(&self, session_row_id: &str, mode: &str) {
+        for entry in self.sessions.iter() {
+            if entry.key().1 == session_row_id {
+                let _ = entry
+                    .value()
+                    .cmd_tx
+                    .send(HarnessCommand::SetPermissionMode {
+                        mode: mode.to_string(),
+                    });
+                return;
+            }
+        }
     }
 
     /// Hard cleanup (app window destroyed): cancel every live session without

@@ -209,7 +209,7 @@ impl AcpDriver {
             });
         }
 
-        Ok(DriverHandle { child })
+        Ok(DriverHandle { child: Some(child) })
     }
 
     /// Serialize + write one NDJSON line to the agent's stdin.
@@ -1181,7 +1181,9 @@ mod live_tests {
 
         // Cleanup: cancel + hard-kill the agent process tree before asserting.
         token.cancel();
-        kill_child_tree(&handle.child).await;
+        if let Some(child) = &handle.child {
+            kill_child_tree(child).await;
+        }
         let _ = std::fs::remove_dir_all(&ws);
 
         assert!(ended.is_ok(), "240s 内未收到 TurnEnded");

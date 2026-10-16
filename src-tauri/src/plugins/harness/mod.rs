@@ -13,12 +13,14 @@
 //! - [`registry`] — built-in tool entries + availability detection
 //! - [`acp`]      — the universal ACP driver (JSON-RPC over stdio)
 //! - [`claude`]   — the Claude Code native driver (stream-json control protocol)
+//! - [`codex`]    — the OpenAI Codex native driver (exec --json, one process per turn)
 //! - [`store`]    — SQLite persistence (workspaces / topics / messages)
 //! - [`manager`]  — live-session runtime management + event emission
 
 pub mod acp;
 pub mod adapter;
 pub mod claude;
+pub mod codex;
 pub mod manager;
 pub mod model;
 pub mod registry;

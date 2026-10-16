@@ -196,6 +196,35 @@ pub async fn harness_send_message(
     Ok(stored)
 }
 
+/// Eagerly connect a harness topic: spawn the agent runtime (handshake +
+/// session/new-or-resume) WITHOUT a prompt, so the live state and config
+/// controls appear immediately on selection instead of on first send.
+/// Idempotent — an existing runtime is reused. `prefs` are the frontend's
+/// native-adapter preferences (same semantics as harness_send_message).
+#[tauri::command]
+pub async fn harness_connect_topic(
+    app: AppHandle,
+    state: State<'_, DbState>,
+    manager: State<'_, HarnessManager>,
+    session_row_id: String,
+    prefs: Option<crate::plugins::harness::adapter::DriverSpawnPrefs>,
+) -> Result<(), String> {
+    let row = {
+        let conn = state.0.lock();
+        store::get_session(&conn, &session_row_id)?
+    };
+    manager
+        .ensure_session(
+            &app,
+            &row.tool_id,
+            &session_row_id,
+            &row.workspace_path,
+            row.harness_session_id.clone(),
+            prefs.unwrap_or_default(),
+        )
+        .await?;
+    Ok(())
+}
 /// Stop the running turn of a harness topic (protocol-level cancel, then a
 /// hard kill after the grace window). Safe to call when nothing is running.
 #[tauri::command]

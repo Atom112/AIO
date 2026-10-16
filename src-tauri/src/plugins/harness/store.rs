@@ -34,15 +34,6 @@ pub struct HarnessSessionRow {
     pub updated_at: String,
 }
 
-/// Stored message row: full chat-model JSON plus role/created_at columns.
-#[derive(Serialize, Deserialize, Clone)]
-#[serde(rename_all = "camelCase")]
-struct StoredHarnessMessage {
-    #[serde(flatten)]
-    message: Message,
-    created_at: String,
-}
-
 fn row_workspace(r: &rusqlite::Row<'_>) -> rusqlite::Result<HarnessWorkspaceRow> {
     Ok(HarnessWorkspaceRow {
         id: r.get(0)?,
@@ -333,7 +324,10 @@ pub fn append_message(
     Ok(stored)
 }
 
-/// Load a topic's messages in insertion order.
+/// Load a topic's messages in insertion order. The `data` blob is the plain
+/// `Message` JSON written by [`append_message`] (the created_at timestamp
+/// lives in its own column); unparseable rows are skipped with a warning
+/// rather than blanking the whole history.
 pub fn load_messages(conn: &Connection, session_row_id: &str) -> Result<Vec<Message>, String> {
     let mut stmt = conn
         .prepare("SELECT data FROM harness_messages WHERE session_row_id = ?1 ORDER BY rowid ASC")
@@ -343,10 +337,16 @@ pub fn load_messages(conn: &Connection, session_row_id: &str) -> Result<Vec<Mess
         .map_err(|e| e.to_string())?
         .collect::<std::result::Result<Vec<_>, _>>()
         .map_err(|e| e.to_string())?;
-    rows.into_iter()
-        .map(|data| serde_json::from_str::<StoredHarnessMessage>(&data).map(|s| s.message))
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| e.to_string())
+    Ok(rows
+        .into_iter()
+        .filter_map(|data| match serde_json::from_str::<Message>(&data) {
+            Ok(m) => Some(m),
+            Err(e) => {
+                tracing::warn!("[harness] 跳过无法解析的历史消息行: {e}");
+                None
+            }
+        })
+        .collect())
 }
 
 // ===== Custom ACP agents (app-data JSON file; AIO is not the trust boundary —
@@ -423,4 +423,77 @@ fn write_custom_agents(
     let path = custom_agents_path(app)?;
     let raw = serde_json::to_string_pretty(agents).map_err(|e| e.to_string())?;
     crate::core::fs_util::atomic_write(&path, raw.as_bytes()).map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn messages_conn() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE harness_messages (
+                id TEXT PRIMARY KEY,
+                session_row_id TEXT NOT NULL,
+                role TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                data TEXT NOT NULL
+            );",
+        )
+        .unwrap();
+        conn
+    }
+
+    /// Regression: append writes plain `Message` JSON; load must parse exactly
+    /// that shape. (A wrapper struct with a required extra `created_at` field
+    /// failed on every row before — harness history never loaded.)
+    #[test]
+    fn message_roundtrip() {
+        let conn = messages_conn();
+        let user = Message {
+            id: None,
+            role: "user".to_string(),
+            content: serde_json::json!("你好"),
+            ..Default::default()
+        };
+        let stored = append_message(&conn, "sess1", &user).unwrap();
+        assert!(stored.id.is_some());
+        let assistant = Message {
+            id: None,
+            role: "assistant".to_string(),
+            content: serde_json::json!("回答"),
+            ..Default::default()
+        };
+        append_message(&conn, "sess1", &assistant).unwrap();
+
+        let loaded = load_messages(&conn, "sess1").unwrap();
+        assert_eq!(loaded.len(), 2);
+        assert_eq!(loaded[0].role, "user");
+        assert_eq!(loaded[0].content, serde_json::json!("你好"));
+        assert_eq!(loaded[1].role, "assistant");
+        // Sessions are isolated.
+        assert!(load_messages(&conn, "other").unwrap().is_empty());
+    }
+
+    /// One corrupt row must not blank the rest of the history.
+    #[test]
+    fn load_skips_unparseable_rows() {
+        let conn = messages_conn();
+        conn.execute(
+            "INSERT INTO harness_messages (id, session_row_id, role, created_at, data)
+             VALUES ('bad', 's', 'user', 'now', 'not-json')",
+            [],
+        )
+        .unwrap();
+        let msg = Message {
+            id: None,
+            role: "user".to_string(),
+            content: serde_json::json!("ok"),
+            ..Default::default()
+        };
+        append_message(&conn, "s", &msg).unwrap();
+        let loaded = load_messages(&conn, "s").unwrap();
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].content, serde_json::json!("ok"));
+    }
 }

@@ -8,6 +8,7 @@ pub mod embedding;
 pub mod engine;
 pub mod export;
 pub mod git;
+pub mod harness;
 pub mod image_gen;
 pub mod llm;
 pub mod local_model_download;

@@ -16,6 +16,7 @@ use crate::core::state::{
     DbState, LocalEngineState, StreamManager, SubagentCompletions, SubagentHandles,
 };
 use crate::plugins::engine::EngineManager;
+use crate::plugins::harness::HarnessManager;
 use crate::plugins::lsp::LspManager;
 use crate::plugins::mcp::{McpRequestManager, McpServerManager, McpServerState, PendingApprovals};
 use crate::services::memory::MemoryStoreManager;
@@ -107,6 +108,7 @@ pub fn run() {
         .manage(core::state::AgentTaskBoard::new())
         .manage(core::state::PendingAgentQuestions::new())
         .manage(MemoryStoreManager::new())
+        .manage(HarnessManager::new())
         .invoke_handler(tauri::generate_handler![
             commands::config::load_assistants,
             commands::config::save_assistant,
@@ -282,6 +284,21 @@ pub fn run() {
             commands::local_model_download::local_model_installed_list,
             commands::local_model_download::local_models_get_dir,
             commands::local_model_download::local_models_set_dir,
+            // Harness workbench (CLI-agent GUI compatibility layer)
+            commands::harness::harness_detect_tools,
+            commands::harness::harness_list_workspaces,
+            commands::harness::harness_add_workspace,
+            commands::harness::harness_remove_workspace,
+            commands::harness::harness_list_sessions,
+            commands::harness::harness_new_session,
+            commands::harness::harness_rename_session,
+            commands::harness::harness_delete_session,
+            commands::harness::harness_load_messages,
+            commands::harness::harness_append_message,
+            commands::harness::harness_send_message,
+            commands::harness::harness_stop_session,
+            commands::harness::harness_respond_approval,
+            commands::harness::harness_list_running,
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::Destroyed = event {
@@ -330,6 +347,10 @@ pub fn run() {
                         }
                     });
                 }
+                // Clean up harness workbench runtimes (CLI agent child processes):
+                // two-phase stop without awaiting — the window is going away.
+                let harness_mgr = window.state::<HarnessManager>();
+                harness_mgr.shutdown_all();
             }
         })
         .run(tauri::generate_context!())

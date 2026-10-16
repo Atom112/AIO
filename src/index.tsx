@@ -86,6 +86,7 @@ render(
       <Router root={Layout}>
         <Route path="/" component={() => <Navigate href="/chat" />} />
         <Route path="/chat" component={lazy(() => import('./features/chat/ChatPage'))} />
+        <Route path="/harness" component={lazy(() => import('./features/harness/HarnessPage'))} />
         <Route path="/settings" component={Settings}>
           <Route path="" component={ProviderList} />
           <Route path="/provider/:providerId" component={ProviderDetail} />

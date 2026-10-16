@@ -4,19 +4,12 @@
  */
 import { invoke } from '@tauri-apps/api/core';
 import type { Message } from '../store/types';
-import type { HarnessToolStatus, HarnessTopic, HarnessWorkspace } from './harnessPayloads';
-
-/** Display names for the built-in harness tool ids (brand names — not localized). */
-export const HARNESS_TOOL_NAMES: Record<string, string> = {
-  claude: 'Claude Code',
-  codex: 'Codex',
-  opencode: 'OpenCode',
-  omp: 'Oh My Pi',
-  gemini: 'Gemini CLI',
-  qwen: 'Qwen Code',
-  goose: 'goose',
-  dsh: 'DSH',
-};
+import type {
+  HarnessCustomAgent,
+  HarnessToolStatus,
+  HarnessTopic,
+  HarnessWorkspace,
+} from './harnessPayloads';
 
 /** Detect every built-in harness tool's availability. */
 export const harnessDetectTools = (): Promise<HarnessToolStatus[]> =>
@@ -92,3 +85,15 @@ export const harnessListRunning = (): Promise<string[]> => invoke<string[]>('har
 /** Switch the permission mode of a running session (Claude Code native; no-op otherwise). */
 export const harnessSetPermissionMode = (sessionRowId: string, mode: string): Promise<void> =>
   invoke<void>('harness_set_permission_mode', { sessionRowId, mode });
+
+/** List user-registered custom ACP agents. */
+export const harnessListCustomAgents = (): Promise<HarnessCustomAgent[]> =>
+  invoke<HarnessCustomAgent[]>('harness_list_custom_agents');
+
+/** Insert or update a custom ACP agent (id generated when empty). */
+export const harnessSaveCustomAgent = (agent: HarnessCustomAgent): Promise<HarnessCustomAgent> =>
+  invoke<HarnessCustomAgent>('harness_save_custom_agent', { agent });
+
+/** Delete a custom ACP agent by id. */
+export const harnessDeleteCustomAgent = (id: string): Promise<void> =>
+  invoke<void>('harness_delete_custom_agent', { id });

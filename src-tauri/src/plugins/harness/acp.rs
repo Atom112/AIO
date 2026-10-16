@@ -301,7 +301,10 @@ impl AcpDriver {
                     }
                 },
             };
-            self.handle_line(&line).await;
+            // Tolerate CRLF line endings: some ACP agents on Windows emit \r\n
+            // (BufReader lines keep the trailing \r, which breaks JSON parsing).
+            let line = line.trim_end_matches('\r');
+            self.handle_line(line).await;
         }
         // Transport closed / cancelled: end the session for everyone — pending
         // waiters get the sentinel, approval waiters see the token cancel.

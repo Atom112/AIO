@@ -35,11 +35,15 @@ Node.js 20+ (`npx` on PATH) is required for everything except DSH. Tools marked 
 
 crush (no ACP, no machine-readable output) and aider (text-only, no session resume, stalled upstream) are not supported.
 
+### Custom ACP tools
+
+Any ACP-speaking CLI can be registered as a harness tool: click "Add custom ACP tool" at the bottom of the left sidebar and fill in a display name, the command, and its arguments (one per line, e.g. `my-agent` + `acp`). Custom tools are full peers of the built-ins (workspaces / topics / approvals / resume) and can be deleted any time. You author the command line yourself — the same trust boundary as MCP stdio servers.
+
 ## Workflow
 
 1. Select a tool whose state is "Ready" (or "Auto-installable") on the left.
 2. Click "Add workspace" and register a directory via the folder picker or the AIO project list.
-3. Create a topic and send a message. The tool's progress (text, thinking, tool calls, file diffs) streams into the message area.
+3. Create a topic and send a message. The tool's progress (text, thinking, tool calls, file diffs) streams into the message area; when the tool pushes an execution plan, a collapsible task list appears under the status bar; while you are on other pages, running tools show up in the chat status-bar background-task menu.
 4. When the turn finishes, the reply is persisted locally in AIO; reopen the topic any time to review the full record.
 
 ### Permission approvals

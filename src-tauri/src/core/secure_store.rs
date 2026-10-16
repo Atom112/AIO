@@ -422,6 +422,12 @@ pub mod accounts {
         format!("mcp-server-{}-env-{}", server_id, env_key)
     }
 
+    /// Harness tool API key (injected as the tool's provider env var at spawn):
+    /// ${KEYRING:harness-tool-{tool_id}-api-key}
+    pub fn harness_tool_key(tool_id: &str) -> String {
+        format!("harness-tool-{}-api-key", tool_id)
+    }
+
     /// API Key for an activated model (identified by the SHA-256 hash of api_url + model_id,
     /// avoiding writing the URL in plaintext into the keyring account name).
     pub fn activated_model_key(api_url: &str, model_id: &str) -> String {

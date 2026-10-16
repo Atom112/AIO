@@ -66,6 +66,8 @@ import HarnessTopicSidebar from './components/HarnessTopicSidebar';
 import HarnessChatInterface from './components/HarnessChatInterface';
 import HarnessAddWorkspaceModal from './components/HarnessAddWorkspaceModal';
 import HarnessCustomAgentModal from './components/HarnessCustomAgentModal';
+import HarnessToolSettingsModal from './components/HarnessToolSettingsModal';
+import HarnessInstructionModal from './components/HarnessInstructionModal';
 
 const HarnessPage: Component = () => {
   // ===== Panel layout (same persistence/pattern as the chat page) =====
@@ -77,6 +79,16 @@ const HarnessPage: Component = () => {
   const [sending, setSending] = createSignal(false);
   const [showAddWorkspace, setShowAddWorkspace] = createSignal(false);
   const [showCustomAgent, setShowCustomAgent] = createSignal(false);
+  const [toolSettings, setToolSettings] = createSignal<{
+    toolId: string;
+    toolName: string;
+  } | null>(null);
+  const [instructionTarget, setInstructionTarget] = createSignal<{
+    toolId: string;
+    toolName: string;
+    workspacePath: string;
+    workspaceName: string;
+  } | null>(null);
   let pageRef: HTMLDivElement | undefined;
 
   const { isResizing, leftDragWidth, leftRevealMinPx, startLeftResize, startResizeRight } =
@@ -368,6 +380,19 @@ const HarnessPage: Component = () => {
               .catch(console.error);
           }
         }}
+        onToolSettings={(toolId, toolName) => setToolSettings({ toolId, toolName })}
+        onEditInstruction={(workspaceId) => {
+          const ws = harnessWorkspaces().find((w) => w.id === workspaceId);
+          const tool = harnessTools().find((x) => x.id === ws?.toolId);
+          if (ws && tool) {
+            setInstructionTarget({
+              toolId: tool.id,
+              toolName: tool.name,
+              workspacePath: ws.path,
+              workspaceName: ws.name,
+            });
+          }
+        }}
       />
 
       <div class="flex-1 flex flex-col min-w-0 min-h-0">
@@ -408,6 +433,28 @@ const HarnessPage: Component = () => {
             onAdd={(path, name) =>
               void handleAddWorkspace(path, name).then(() => setShowAddWorkspace(false))
             }
+          />
+        </Portal>
+      </Show>
+
+      <Show when={toolSettings()}>
+        <Portal>
+          <HarnessToolSettingsModal
+            toolId={toolSettings()!.toolId}
+            toolName={toolSettings()!.toolName}
+            onClose={() => setToolSettings(null)}
+          />
+        </Portal>
+      </Show>
+
+      <Show when={instructionTarget()}>
+        <Portal>
+          <HarnessInstructionModal
+            toolId={instructionTarget()!.toolId}
+            toolName={instructionTarget()!.toolName}
+            workspacePath={instructionTarget()!.workspacePath}
+            workspaceName={instructionTarget()!.workspaceName}
+            onClose={() => setInstructionTarget(null)}
           />
         </Portal>
       </Show>

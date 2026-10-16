@@ -65,8 +65,33 @@ Codex（原生接入）没有审批交互——无头 exec 模式固定不询问
 除协议内选项外，个别工具还有 CLI flag 形态的开关——AIO 将其映射为「spawn 期选项」下拉（修改后自动重启会话生效）：
 
 - **Oh My Pi：审批模式**——逐次确认（默认）/ 受限修改（写操作需确认）/ 完全权限（全部自动批准），对应 omp 的 `--approval-mode`（always-ask | write | yolo）。ACP 通道本身不暴露此面，AIO 在会话启动时注入对应 flag。
+- **Gemini CLI / Qwen Code：审批模式**——默认（逐次确认）/ 自动编辑 / 完全权限 / 计划模式，对应 `--approval-mode`（default | auto_edit | yolo | plan）。
+- **goose：权限模式**——完全自主（默认）/ 手动批准 / 智能批准 / 仅聊天，对应 `GOOSE_MODE` 环境变量（auto | approve | smart_approve | chat）。
+- **Codex：沙箱**——工具默认 / 只读 / 工作区可写 / 完全访问，对应 `codex exec -s`（read-only | workspace-write | danger-full-access），每回合生效。
 
 偏好（原生适配器的模型/思考强度、spawn 期选项）按工具持久化保存在本地，重启 AIO 后保持。
+
+### 工具设置（认证与 API Key）
+
+悬停左侧工具行的齿轮图标打开该工具的设置弹窗：
+
+- **认证状态**：AIO 探测该工具自身的配置目录（如 `~/.claude/.credentials.json`、`~/.codex/auth.json`），显示是否已完成官方登录/配置。
+- **API Key**（Claude Code / Codex / Gemini CLI / Qwen Code）：可填对应供应商的 API Key——保存在系统钥匙串（不写入工具自己的文件），仅在启动该工具的会话进程时注入为对应环境变量（`ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `GEMINI_API_KEY` / `DASHSCOPE_API_KEY`），对新会话生效。
+- **官方文档**：一键打开该工具的认证/配置指南。
+
+Oh My Pi / OpenCode / goose / DSH 使用各自的登录或配置体系（无 API Key 注入项），弹窗提供状态检测与文档入口。
+
+### 工作区指令（CLAUDE.md / AGENTS.md 等）
+
+每个 CLI 工具会读取工作区根目录下的约定指令文件。悬停工作区行的编辑图标即可在 AIO 内直接查看/编辑该文件（不存在时保存即创建）：
+
+| 工具                                           | 指令文件      |
+| ---------------------------------------------- | ------------- |
+| Claude Code                                    | `CLAUDE.md`   |
+| Codex / OpenCode / Oh My Pi / DSH / 自定义工具 | `AGENTS.md`   |
+| Gemini CLI                                     | `GEMINI.md`   |
+| Qwen Code                                      | `QWEN.md`     |
+| goose                                          | `.goosehints` |
 
 ### 停止与恢复
 

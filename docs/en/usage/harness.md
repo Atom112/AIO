@@ -65,8 +65,33 @@ The input bar's bottom-left shows the selected tool's config controls (only thos
 Beyond protocol options, some tools carry CLI-flag-only switches — AIO maps them as "spawn-time option" dropdowns (changing one restarts the session to apply):
 
 - **Oh My Pi: Approval mode** — Always ask (default) / Write-gated (writes need confirmation) / Full access (auto-approve everything), backed by omp's `--approval-mode` flag (always-ask | write | yolo). The ACP channel does not expose this surface; AIO injects the flag at session start.
+- **Gemini CLI / Qwen Code: Approval mode** — Default (always ask) / Auto-edit / Full auto / Plan, backed by `--approval-mode` (default | auto_edit | yolo | plan).
+- **goose: Permission mode** — Autonomous (default) / Manual approval / Smart approval / Chat only, backed by the `GOOSE_MODE` environment variable (auto | approve | smart_approve | chat).
+- **Codex: Sandbox** — Tool default / Read-only / Workspace write / Full access, backed by `codex exec -s` (read-only | workspace-write | danger-full-access), applied per turn.
 
 Preferences (native-adapter model / thinking level, spawn-time options) persist per tool across AIO restarts.
+
+### Tool setup (auth and API keys)
+
+Hover a tool row's gear icon to open its settings modal:
+
+- **Auth status**: AIO probes the tool's own config directory (e.g. `~/.claude/.credentials.json`, `~/.codex/auth.json`) and shows whether the official login/setup is done.
+- **API key** (Claude Code / Codex / Gemini CLI / Qwen Code): set the provider's API key — stored in the OS keychain (never written into the tool's own files) and injected as the matching environment variable (`ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `GEMINI_API_KEY` / `DASHSCOPE_API_KEY`) when AIO spawns a session for that tool; applies to new sessions.
+- **Official docs**: one click opens the tool's auth/configuration guide.
+
+Oh My Pi / OpenCode / goose / DSH use their own login or configuration systems (no API-key injection); the modal shows detection status and the docs link.
+
+### Workspace instructions (CLAUDE.md / AGENTS.md / ...)
+
+Each CLI tool reads a convention instruction file at the workspace root. Hover a workspace row's edit icon to view/edit that file without leaving AIO (saving creates it when absent):
+
+| Tool                                             | Instruction file |
+| ------------------------------------------------ | ---------------- |
+| Claude Code                                      | `CLAUDE.md`      |
+| Codex / OpenCode / Oh My Pi / DSH / custom tools | `AGENTS.md`      |
+| Gemini CLI                                       | `GEMINI.md`      |
+| Qwen Code                                        | `QWEN.md`        |
+| goose                                            | `.goosehints`    |
 
 ### Stop and resume
 

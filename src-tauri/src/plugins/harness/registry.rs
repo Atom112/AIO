@@ -36,33 +36,66 @@ pub enum HarnessToolKind {
     },
 }
 
-/// One value of a spawn-time option (CLI-flag-backed).
+/// One value of a spawn-time option (CLI-flag/env-backed).
 #[derive(Clone, Debug)]
 pub struct SpawnOptionValueSpec {
     /// Value id shown to the GUI / persisted as the preference key.
     pub id: String,
-    /// Display label (registry-declared, English; the GUI may i18n known ids).
+    /// Display label (registry-declared, English; the GUI i18n's known ids).
     pub name: String,
     /// false = the tool's default behavior — inject nothing for this value.
     pub inject: bool,
 }
 
-/// A CLI-flag-backed option a tool supports but does NOT expose over its wire
-/// protocol (e.g. omp's `--approval-mode`: its ACP config options cover
-/// mode/model/thinking, but the approval modes always-ask|write|yolo are
-/// TUI-only flags — verified against omp v17.2.1). Spawn-time only: the
-/// driver injects `{arg}={value}` at process start; changing it respawns the
-/// session (the GUI persists the preference and stops the runtime).
+/// How a chosen spawn-option value reaches the child process.
+#[derive(Clone, Debug)]
+pub enum SpawnOptionInject {
+    /// CLI argv: injected as two entries (`--approval-mode`, `yolo`) — the
+    /// space-separated form every getopt/clap/oclif parser accepts.
+    Flag { arg: String },
+    /// Environment variable set to the value id (e.g. goose GOOSE_MODE).
+    Env { var: String },
+}
+
+/// A process-spawn-level option a tool supports but does NOT expose over its
+/// wire protocol. Families verified so far:
+/// - omp `--approval-mode` (always-ask|write|yolo) — its ACP config options
+///   cover mode/model/thinking, but the approval modes are TUI-only flags
+///   (verified against omp v17.2.1);
+/// - gemini/qwen `--approval-mode` (default|auto_edit|yolo|plan),
+///   codex `-s/--sandbox` (read-only|workspace-write|danger-full-access),
+///   goose `GOOSE_MODE` env (auto|approve|smart_approve|chat).
+///
+/// Spawn-time only: the driver injects at process start; changing the value
+/// respawns the session (the GUI persists the preference and stops the
+/// runtime). Values whose `inject` is false are the tool default.
 #[derive(Clone, Debug)]
 pub struct SpawnOptionSpec {
     /// Config-option id shown to the GUI (e.g. "approval-mode").
     pub option_id: String,
-    /// Display label (registry-declared, English; the GUI may i18n known ids).
+    /// Display label (registry-declared, English; the GUI i18n's known ids).
     pub name: String,
-    /// CLI flag; the chosen value is injected as `{arg}={id}` when that
-    /// value's `inject` is true.
-    pub arg: String,
+    /// How the chosen value reaches the child process.
+    pub inject: SpawnOptionInject,
     pub values: Vec<SpawnOptionValueSpec>,
+}
+
+/// Setup/auth surface of a tool: how the user authenticates it, which env var
+/// receives an AIO-stored API key at spawn, the workspace instruction file
+/// convention, and the home-relative probe paths that indicate a completed
+/// setup (drives the tool-settings modal).
+#[derive(Clone, Debug, Default)]
+pub struct ToolSetupSpec {
+    /// Env var that receives the AIO-stored API key at spawn (None = the tool
+    /// uses only its own auth flow / config file).
+    pub api_key_env: Option<String>,
+    /// Official auth/setup docs URL (opened from the tool settings modal).
+    pub auth_docs_url: String,
+    /// Workspace instruction file convention (CLAUDE.md / AGENTS.md / ...).
+    pub instruction_file: String,
+    /// Probe paths indicating a completed auth setup: `~/…` resolves to the
+    /// home directory, `%APPDATA%/…` to the roaming app-data dir (Windows).
+    pub auth_probe_paths: Vec<String>,
 }
 
 /// One registered harness tool.
@@ -77,6 +110,8 @@ pub struct HarnessToolSpec {
     /// CLI-flag-backed options the tool supports outside its wire protocol
     /// (empty for most tools).
     pub spawn_options: Vec<SpawnOptionSpec>,
+    /// Auth/provider/instruction setup surface (tool settings modal).
+    pub setup: ToolSetupSpec,
 }
 
 /// Availability detection result for the frontend tool list.
@@ -96,11 +131,36 @@ pub struct HarnessToolStatus {
     pub custom: bool,
 }
 
+/// Shared `--approval-mode` flag option (gemini / qwen family).
+fn approval_mode_flag(values: &[(&str, &str, bool)]) -> SpawnOptionSpec {
+    SpawnOptionSpec {
+        option_id: "approval-mode".to_string(),
+        name: "Approval Mode".to_string(),
+        inject: SpawnOptionInject::Flag {
+            arg: "--approval-mode".to_string(),
+        },
+        values: values
+            .iter()
+            .map(|(id, name, inject)| SpawnOptionValueSpec {
+                id: id.to_string(),
+                name: name.to_string(),
+                inject: *inject,
+            })
+            .collect(),
+    }
+}
+
 /// Built-in registry (order = sidebar order).
 pub fn builtin_tools() -> Vec<HarnessToolSpec> {
     vec![
         HarnessToolSpec {
             id: "claude".to_string(),
+            setup: ToolSetupSpec {
+                api_key_env: Some("ANTHROPIC_API_KEY".to_string()),
+                auth_docs_url: "https://code.claude.com/docs/en/setup".to_string(),
+                instruction_file: "CLAUDE.md".to_string(),
+                auth_probe_paths: vec!["~/.claude/.credentials.json".to_string()],
+            },
             name: "Claude Code".to_string(),
             spawn_options: vec![],
             kind: HarnessToolKind::ClaudeNative {
@@ -112,8 +172,45 @@ pub fn builtin_tools() -> Vec<HarnessToolSpec> {
         },
         HarnessToolSpec {
             id: "codex".to_string(),
+            setup: ToolSetupSpec {
+                api_key_env: Some("OPENAI_API_KEY".to_string()),
+                auth_docs_url: "https://developers.openai.com/codex/cli/".to_string(),
+                instruction_file: "AGENTS.md".to_string(),
+                auth_probe_paths: vec!["~/.codex/auth.json".to_string()],
+            },
             name: "Codex".to_string(),
-            spawn_options: vec![],
+            // Codex exec: `-s/--sandbox` picks the sandbox policy per turn
+            // (read-only|workspace-write|danger-full-access — codex exec
+            // --help verified). "default" leaves the tool's own config.toml.
+            spawn_options: vec![SpawnOptionSpec {
+                option_id: "sandbox".to_string(),
+                name: "Sandbox".to_string(),
+                inject: SpawnOptionInject::Flag {
+                    arg: "-s".to_string(),
+                },
+                values: vec![
+                    SpawnOptionValueSpec {
+                        id: "default".to_string(),
+                        name: "Default".to_string(),
+                        inject: false,
+                    },
+                    SpawnOptionValueSpec {
+                        id: "read-only".to_string(),
+                        name: "Read-only".to_string(),
+                        inject: true,
+                    },
+                    SpawnOptionValueSpec {
+                        id: "workspace-write".to_string(),
+                        name: "Workspace write".to_string(),
+                        inject: true,
+                    },
+                    SpawnOptionValueSpec {
+                        id: "danger-full-access".to_string(),
+                        name: "Full access".to_string(),
+                        inject: true,
+                    },
+                ],
+            }],
             kind: HarnessToolKind::CodexExec {
                 fallback: AcpCommand::Npx {
                     package: "@agentclientprotocol/codex-acp".to_string(),
@@ -123,6 +220,12 @@ pub fn builtin_tools() -> Vec<HarnessToolSpec> {
         },
         HarnessToolSpec {
             id: "opencode".to_string(),
+            setup: ToolSetupSpec {
+                api_key_env: None,
+                auth_docs_url: "https://opencode.ai/docs/".to_string(),
+                instruction_file: "AGENTS.md".to_string(),
+                auth_probe_paths: vec!["~/.local/share/opencode/auth.json".to_string()],
+            },
             name: "OpenCode".to_string(),
             spawn_options: vec![],
             kind: HarnessToolKind::Acp {
@@ -134,6 +237,12 @@ pub fn builtin_tools() -> Vec<HarnessToolSpec> {
         },
         HarnessToolSpec {
             id: "omp".to_string(),
+            setup: ToolSetupSpec {
+                api_key_env: None,
+                auth_docs_url: "https://omp.sh".to_string(),
+                instruction_file: "AGENTS.md".to_string(),
+                auth_probe_paths: vec!["~/.omp/agent/config.yml".to_string()],
+            },
             name: "Oh My Pi".to_string(),
             // omp's ACP surface covers mode/model/thinking, but the approval
             // modes (always-ask|write|yolo) are TUI-only flags — inject them
@@ -142,7 +251,9 @@ pub fn builtin_tools() -> Vec<HarnessToolSpec> {
             spawn_options: vec![SpawnOptionSpec {
                 option_id: "approval-mode".to_string(),
                 name: "Approval Mode".to_string(),
-                arg: "--approval-mode".to_string(),
+                inject: SpawnOptionInject::Flag {
+                    arg: "--approval-mode".to_string(),
+                },
                 values: vec![
                     SpawnOptionValueSpec {
                         id: "always-ask".to_string(),
@@ -170,8 +281,21 @@ pub fn builtin_tools() -> Vec<HarnessToolSpec> {
         },
         HarnessToolSpec {
             id: "gemini".to_string(),
+            setup: ToolSetupSpec {
+                api_key_env: Some("GEMINI_API_KEY".to_string()),
+                auth_docs_url: "https://geminicli.com/docs/".to_string(),
+                instruction_file: "GEMINI.md".to_string(),
+                auth_probe_paths: vec!["~/.gemini/oauth_creds.json".to_string()],
+            },
             name: "Gemini CLI".to_string(),
-            spawn_options: vec![],
+            // gemini's ACP surface doesn't expose approval modes; the CLI flag
+            // does (default|auto_edit|yolo|plan, per the official cli docs).
+            spawn_options: vec![approval_mode_flag(&[
+                ("default", "Default", false),
+                ("auto_edit", "Auto edit", true),
+                ("yolo", "YOLO", true),
+                ("plan", "Plan", true),
+            ])],
             kind: HarnessToolKind::Acp {
                 command: AcpCommand::Bare {
                     command: "gemini".to_string(),
@@ -181,8 +305,22 @@ pub fn builtin_tools() -> Vec<HarnessToolSpec> {
         },
         HarnessToolSpec {
             id: "qwen".to_string(),
+            setup: ToolSetupSpec {
+                api_key_env: Some("DASHSCOPE_API_KEY".to_string()),
+                auth_docs_url:
+                    "https://qwenlm.github.io/qwen-code-docs/en/users/configuration/auth/"
+                        .to_string(),
+                instruction_file: "QWEN.md".to_string(),
+                auth_probe_paths: vec!["~/.qwen/oauth_creds.json".to_string()],
+            },
             name: "Qwen Code".to_string(),
-            spawn_options: vec![],
+            // Qwen Code is a gemini-cli fork — same --approval-mode surface.
+            spawn_options: vec![approval_mode_flag(&[
+                ("default", "Default", false),
+                ("auto_edit", "Auto edit", true),
+                ("yolo", "YOLO", true),
+                ("plan", "Plan", true),
+            ])],
             kind: HarnessToolKind::Acp {
                 command: AcpCommand::Bare {
                     command: "qwen".to_string(),
@@ -192,8 +330,48 @@ pub fn builtin_tools() -> Vec<HarnessToolSpec> {
         },
         HarnessToolSpec {
             id: "goose".to_string(),
+            setup: ToolSetupSpec {
+                api_key_env: None,
+                auth_docs_url: "https://block.github.io/goose/docs/getting-started/providers"
+                    .to_string(),
+                instruction_file: ".goosehints".to_string(),
+                auth_probe_paths: vec![
+                    "~/.config/goose/config.yaml".to_string(),
+                    "%APPDATA%/Block/goose/config/config.yaml".to_string(),
+                ],
+            },
             name: "goose".to_string(),
-            spawn_options: vec![],
+            // goose modes are configured via the GOOSE_MODE env var (no CLI
+            // flag): auto|approve|smart_approve|chat (per the goose docs).
+            spawn_options: vec![SpawnOptionSpec {
+                option_id: "goose-mode".to_string(),
+                name: "Permission Mode".to_string(),
+                inject: SpawnOptionInject::Env {
+                    var: "GOOSE_MODE".to_string(),
+                },
+                values: vec![
+                    SpawnOptionValueSpec {
+                        id: "auto".to_string(),
+                        name: "Autonomous".to_string(),
+                        inject: false,
+                    },
+                    SpawnOptionValueSpec {
+                        id: "approve".to_string(),
+                        name: "Manual approval".to_string(),
+                        inject: true,
+                    },
+                    SpawnOptionValueSpec {
+                        id: "smart_approve".to_string(),
+                        name: "Smart approval".to_string(),
+                        inject: true,
+                    },
+                    SpawnOptionValueSpec {
+                        id: "chat".to_string(),
+                        name: "Chat only".to_string(),
+                        inject: true,
+                    },
+                ],
+            }],
             kind: HarnessToolKind::Acp {
                 command: AcpCommand::Bare {
                     command: "goose".to_string(),
@@ -203,6 +381,12 @@ pub fn builtin_tools() -> Vec<HarnessToolSpec> {
         },
         HarnessToolSpec {
             id: "dsh".to_string(),
+            setup: ToolSetupSpec {
+                api_key_env: None,
+                auth_docs_url: "https://deepseek-ai.github.io/dsh/".to_string(),
+                instruction_file: "AGENTS.md".to_string(),
+                auth_probe_paths: vec!["~/.dsh".to_string()],
+            },
             name: "DSH".to_string(),
             spawn_options: vec![],
             kind: HarnessToolKind::Acp {
@@ -232,6 +416,10 @@ pub fn lookup_any(app: &tauri::AppHandle, tool_id: &str) -> Option<HarnessToolSp
         id: agent.id,
         name: agent.name,
         spawn_options: vec![],
+        setup: ToolSetupSpec {
+            instruction_file: "AGENTS.md".to_string(),
+            ..Default::default()
+        },
         kind: HarnessToolKind::Acp {
             command: AcpCommand::Bare {
                 command: agent.command,
@@ -257,6 +445,10 @@ pub fn detect_tools(app: &tauri::AppHandle) -> Vec<HarnessToolStatus> {
         for agent in agents {
             let spec = HarnessToolSpec {
                 id: agent.id,
+                setup: ToolSetupSpec {
+                    instruction_file: "AGENTS.md".to_string(),
+                    ..Default::default()
+                },
                 name: agent.name,
                 spawn_options: vec![],
                 kind: HarnessToolKind::Acp {

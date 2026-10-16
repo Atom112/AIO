@@ -52,19 +52,56 @@ interface HarnessConfigControlsProps {
  * the agent/registry name, then a category default. */
 const placeholderFor = (option: HarnessConfigOption) => {
   if (option.optionId === 'approval-mode') return t('harness.config.approvalMode');
+  if (option.optionId === 'goose-mode') return t('harness.config.permissionMode');
+  if (option.optionId === 'sandbox') return t('harness.config.sandbox');
   return (
     option.name ??
     (option.category === 'thought_level' ? t('harness.config.thinking') : t('harness.config.model'))
   );
 };
 
-/** Display label for one option value: provider-prefixed for `provider/model`
- * ids (omp's catalog), i18n for known spawn-option values, else the name/id. */
+/** i18n label for a known spawn-option value id (null → fall back to the
+ * registry/agent-provided name). Value ids are the tools' own vocabulary
+ * (omp/gemini/qwen flags, goose env modes, codex sandbox policies). */
+const spawnValueLabel = (id: string): string | null => {
+  switch (id) {
+    case 'always-ask':
+      return t('harness.spawnValue.ask');
+    case 'default':
+      return t('harness.spawnValue.default');
+    case 'write':
+      return t('harness.spawnValue.write');
+    case 'auto_edit':
+      return t('harness.spawnValue.autoEdit');
+    case 'yolo':
+      return t('harness.spawnValue.yolo');
+    case 'plan':
+      return t('harness.spawnValue.plan');
+    case 'auto':
+      return t('harness.spawnValue.auto');
+    case 'approve':
+      return t('harness.spawnValue.approve');
+    case 'smart_approve':
+      return t('harness.spawnValue.smartApprove');
+    case 'chat':
+      return t('harness.spawnValue.chat');
+    case 'read-only':
+      return t('harness.spawnValue.readOnly');
+    case 'workspace-write':
+      return t('harness.spawnValue.workspaceWrite');
+    case 'danger-full-access':
+      return t('harness.spawnValue.fullAccess');
+    default:
+      return null;
+  }
+};
+
+/** Display label for one option value: i18n for known spawn-option values,
+ * provider-prefixed for `provider/model` ids (omp's catalog), else name/id. */
 const valueLabel = (option: HarnessConfigOption, id: string, name?: string) => {
-  if (option.optionId === 'approval-mode') {
-    if (id === 'always-ask') return t('harness.config.approvalMode.always-ask');
-    if (id === 'write') return t('harness.config.approvalMode.write');
-    if (id === 'yolo') return t('harness.config.approvalMode.yolo');
+  if (option.category === 'spawn') {
+    const localized = spawnValueLabel(id);
+    if (localized) return localized;
   }
   const slash = id.indexOf('/');
   if (slash > 0) return `${id.slice(0, slash)} · ${name || id.slice(slash + 1)}`;

@@ -17,12 +17,14 @@
 //! completed} / turn.{completed,failed} / error.
 
 use crate::plugins::harness::adapter::{
-    spawn_harness_child, DriverCtx, DriverHandle, DriverSpawn, HarnessAdapter, HarnessCommand,
+    spawn_harness_child_env, DriverCtx, DriverHandle, DriverSpawn, HarnessAdapter, HarnessCommand,
 };
 use crate::plugins::harness::model::{
     HarnessEvent, HarnessFileChange, HarnessPlanEntry, HarnessUsage,
 };
+use crate::plugins::harness::registry::SpawnOptionSpec;
 use serde_json::Value;
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -56,6 +58,11 @@ struct CodexDriver {
     runtime_model: parking_lot::Mutex<Option<String>>,
     /// Per-turn reasoning effort (-c model_reasoning_effort=...).
     runtime_effort: parking_lot::Mutex<Option<String>>,
+    /// Registry-declared spawn options (sandbox etc.) — injected per turn.
+    spawn_option_specs: Vec<SpawnOptionSpec>,
+    runtime_spawn_values: parking_lot::Mutex<HashMap<String, String>>,
+    /// Extra env for each per-turn child (the tool's AIO-stored API key var).
+    extra_env: Vec<(String, String)>,
 }
 
 impl CodexDriver {
@@ -78,16 +85,17 @@ impl CodexDriver {
             turn_child: Arc::new(tokio::sync::Mutex::new(None)),
             runtime_model: parking_lot::Mutex::new(spawn.initial_model),
             runtime_effort: parking_lot::Mutex::new(spawn.initial_thinking),
+            spawn_option_specs: spawn.spec.spawn_options.clone(),
+            runtime_spawn_values: parking_lot::Mutex::new(spawn.spawn_option_values.clone()),
+            extra_env: spawn.extra_env.clone(),
         });
         driver.ctx.emit_state("idle", None);
         // Synthesized config options: model selector (preset list — exec mode
-        // has no dynamic model/list) + effort selector; changes via
-        // SetConfigOption store for the next per-turn spawn.
+        // has no dynamic model/list) + effort selector + registry-declared
+        // spawn options (sandbox); changes via SetConfigOption store for the
+        // next per-turn spawn.
         driver.ctx.emit_event(HarnessEvent::ConfigOptions {
-            options: codex_config_options(
-                driver.runtime_model.lock().clone(),
-                driver.runtime_effort.lock().clone(),
-            ),
+            options: driver.merged_config_options(),
         });
         let d = driver.clone();
         tokio::spawn(async move {
@@ -165,22 +173,31 @@ impl CodexDriver {
                     let Some(val) = value.as_str() else {
                         continue;
                     };
-                    match config_id.as_str() {
-                        "model" => *self.runtime_model.lock() = Some(val.to_string()),
-                        "effort" => *self.runtime_effort.lock() = Some(val.to_string()),
-                        _ => {
-                            tracing::debug!(
-                                "[harness:{}] 忽略未知 config 选项 {config_id}",
-                                self.tool_label
-                            );
-                            continue;
+                    if self
+                        .spawn_option_specs
+                        .iter()
+                        .any(|s| s.option_id == config_id)
+                    {
+                        // Registry-declared spawn option (sandbox etc.): stored,
+                        // injected at the next per-turn spawn.
+                        self.runtime_spawn_values
+                            .lock()
+                            .insert(config_id, val.to_string());
+                    } else {
+                        match config_id.as_str() {
+                            "model" => *self.runtime_model.lock() = Some(val.to_string()),
+                            "effort" => *self.runtime_effort.lock() = Some(val.to_string()),
+                            _ => {
+                                tracing::debug!(
+                                    "[harness:{}] 忽略未知 config 选项 {config_id}",
+                                    self.tool_label
+                                );
+                                continue;
+                            }
                         }
                     }
                     self.ctx.emit_event(HarnessEvent::ConfigOptions {
-                        options: codex_config_options(
-                            self.runtime_model.lock().clone(),
-                            self.runtime_effort.lock().clone(),
-                        ),
+                        options: self.merged_config_options(),
                     });
                 }
             }
@@ -210,13 +227,22 @@ impl CodexDriver {
             args.push("-c".to_string());
             args.push(format!("model_reasoning_effort={effort}"));
         }
+        // Registry-declared spawn options (sandbox etc.): injected per turn
+        // from the runtime values.
+        let (opt_args, opt_env) = crate::plugins::harness::acp::spawn_option_injections(
+            &self.spawn_option_specs,
+            &self.runtime_spawn_values.lock(),
+        );
+        args.extend(opt_args);
+        let mut env = self.extra_env.clone();
+        env.extend(opt_env);
         args.push("-C".to_string());
         args.push(self.workspace_path.clone());
         // `-` forces the prompt to be read from stdin: user content never
         // rides argv (BatBadBut surface eliminated for .cmd shim forms).
         args.push("-".to_string());
 
-        let mut child = match spawn_harness_child("codex", &args, &self.workspace_path) {
+        let mut child = match spawn_harness_child_env("codex", &args, &self.workspace_path, &env) {
             Ok(c) => c,
             Err(e) => {
                 self.ctx.emit_event(HarnessEvent::Error { message: e });
@@ -353,6 +379,23 @@ impl CodexDriver {
         } else {
             close_turn("error".to_string(), Some("codex 进程提前退出".to_string()));
         }
+    }
+
+    /// The config-option set for the GUI: the synthesized native presets
+    /// (model + effort) followed by registry-declared spawn options (sandbox).
+    fn merged_config_options(&self) -> Vec<crate::plugins::harness::model::HarnessConfigOption> {
+        let mut options = codex_config_options(
+            self.runtime_model.lock().clone(),
+            self.runtime_effort.lock().clone(),
+        );
+        let values = self.runtime_spawn_values.lock();
+        for spec in &self.spawn_option_specs {
+            options.push(crate::plugins::harness::acp::synth_spawn_option(
+                spec,
+                values.get(&spec.option_id),
+            ));
+        }
+        options
     }
 }
 
@@ -813,6 +856,7 @@ mod live_tests {
                 initial_model: None,
                 initial_thinking: None,
                 spawn_option_values: Default::default(),
+                extra_env: vec![],
             },
             cmd_rx,
         )

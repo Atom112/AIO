@@ -12,7 +12,7 @@ The harness workbench turns AIO into a GUI compatibility layer for CLI coding ag
 
 The page mirrors the chat page; enter via the terminal icon in the navigation bar:
 
-- **Left two-level sidebar**: level 1 lists the detected CLI tools (state dot: green = ready, yellow = auto-installable, grey = not installed); level 2 lists the workspace directories registered under the selected tool.
+- **Left two-level sidebar**: level 1 lists the detected CLI tools (each with its brand logo and a state dot: green = ready, yellow = auto-installable, grey = not installed; hover a tool row to fold/unfold its workspace list, add a workspace, or delete a custom tool); level 2 lists the workspace directories registered under each tool — every tool's workspace list folds/unfolds independently like the chat page's child topics, the fold state survives restarts, and adding a workspace auto-unfolds its tool.
 - **Center column**: the status bar shows tool / workspace, run state (connecting / running / idle / error) and token readouts; message bubbles reuse the chat page components (Markdown, thinking block, agent process block, diff view).
 - **Right sidebar**: the topic list of the current (tool × workspace) with create / rename / delete.
 

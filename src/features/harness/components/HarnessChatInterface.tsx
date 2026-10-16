@@ -32,6 +32,7 @@ import {
 } from '../../../core/store/harness';
 import { formatNumber, t } from '../../../core/i18n';
 import { harnessSetPermissionMode } from '../../../core/api/harness';
+import { getHarnessLogo } from '../utils/harnessLogos';
 import HarnessMessageList from './HarnessMessageList';
 import HarnessApprovalBubble from './HarnessApprovalBubble';
 import HarnessPlanStrip from './HarnessPlanStrip';
@@ -75,6 +76,9 @@ const HarnessChatInterface: Component<HarnessChatInterfaceProps> = (props) => {
     }
   };
 
+  /** Brand logo of the selected tool (custom tools → null → terminal icon). */
+  const logoUrl = () => (tool() ? getHarnessLogo(tool()!.id) : null);
+
   /** Token/cost readout from the live draft usage (or the last assistant message). */
   const usage = () => currentHarnessDraft()?.usage;
   const lastAssistant = () => {
@@ -105,14 +109,33 @@ const HarnessChatInterface: Component<HarnessChatInterfaceProps> = (props) => {
 
   return (
     <div class="flex flex-col flex-grow items-stretch rounded-[12px] box-border overflow-hidden p-[15px] pb-5 relative h-full min-w-0">
-      {/* ===== Top action bar (chat page style: single-line title) ===== */}
+      {/* ===== Top action bar (chat page style: logo + single-line title) ===== */}
       <div class="flex items-center justify-between px-1 pb-3 shrink-0">
-        <span
-          class="text-sm font-medium truncate"
-          style={{ color: 'rgba(var(--text-base-rgb),0.7)' }}
-          title={titleParts().join(' / ')}
-        >
-          {titleParts().join(' / ') || t('harness.chat.noTool')}
+        <span class="flex items-center gap-1.5 min-w-0">
+          <Show
+            when={logoUrl()}
+            fallback={
+              <Icon
+                name="terminal"
+                size={14}
+                class="shrink-0"
+                style={{ color: 'rgba(var(--text-base-rgb),0.6)' }}
+              />
+            }
+          >
+            <img
+              src={logoUrl()!}
+              alt={tool()?.name ?? ''}
+              class="w-4 h-4 shrink-0 object-contain rounded-[3px]"
+            />
+          </Show>
+          <span
+            class="text-sm font-medium truncate"
+            style={{ color: 'rgba(var(--text-base-rgb),0.7)' }}
+            title={titleParts().join(' / ')}
+          >
+            {titleParts().join(' / ') || t('harness.chat.noTool')}
+          </span>
         </span>
       </div>
 

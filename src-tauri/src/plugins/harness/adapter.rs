@@ -193,6 +193,9 @@ pub struct DriverSpawn {
     /// Initial thinking/effort level preference (native adapters' spawn flags:
     /// claude --effort / codex -c model_reasoning_effort).
     pub initial_thinking: Option<String>,
+    /// Registry-declared spawn-option values keyed by option id (e.g.
+    /// {"approval-mode": "yolo"} → the driver injects the matching CLI flag).
+    pub spawn_option_values: std::collections::HashMap<String, String>,
 }
 
 /// Frontend-stored preferences applied to a freshly spawned runtime (native
@@ -204,6 +207,9 @@ pub struct DriverSpawnPrefs {
     pub permission_mode: Option<String>,
     pub model: Option<String>,
     pub thinking_level: Option<String>,
+    /// Registry-declared spawn-option values keyed by option id.
+    #[serde(default)]
+    pub spawn_option_values: std::collections::HashMap<String, String>,
 }
 
 /// One CLI harness adapter. Implementations own the whole native protocol for

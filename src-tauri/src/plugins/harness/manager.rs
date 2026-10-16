@@ -144,6 +144,7 @@ impl HarnessManager {
                         kind: HarnessToolKind::Acp {
                             command: fallback.clone(),
                         },
+                        spawn_options: spec.spawn_options.clone(),
                     };
                     Arc::new(crate::plugins::harness::acp::AcpAdapter)
                 }
@@ -158,6 +159,7 @@ impl HarnessManager {
                         kind: HarnessToolKind::Acp {
                             command: fallback.clone(),
                         },
+                        spawn_options: spec.spawn_options.clone(),
                     };
                     Arc::new(crate::plugins::harness::acp::AcpAdapter)
                 }
@@ -175,6 +177,7 @@ impl HarnessManager {
                     permission_mode: prefs.permission_mode,
                     initial_model: prefs.model,
                     initial_thinking: prefs.thinking_level,
+                    spawn_option_values: prefs.spawn_option_values,
                 },
                 cmd_rx,
             )

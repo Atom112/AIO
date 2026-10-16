@@ -279,7 +279,7 @@ const HarnessChatInterface: Component<HarnessChatInterfaceProps> = (props) => {
               class="flex items-center justify-between border-t pt-2"
               style={{ 'border-color': 'var(--border-dim)' }}
             >
-              <div class="flex items-center gap-2">
+              <div class="flex items-center gap-2 flex-wrap">
                 {/* Session config controls (model / thinking level) — the
                     AgentModeSelector slot; rendered from the agent-reported
                     option set, so controls appear only when the tool exposes

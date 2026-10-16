@@ -315,7 +315,14 @@ pub async fn harness_tool_config_options(
                 Vec::new()
             }
         }
-        HarnessToolKind::Acp { .. } => Vec::new(),
+        // ACP agents own their option lists (reported in session/new), but
+        // registry-declared spawn options (e.g. omp --approval-mode) are
+        // synthesized here so they render even before the first spawn.
+        HarnessToolKind::Acp { .. } => spec
+            .spawn_options
+            .iter()
+            .map(|s| crate::plugins::harness::acp::synth_spawn_option(s, None))
+            .collect(),
     };
     Ok(options)
 }

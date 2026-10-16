@@ -18,14 +18,16 @@ use crate::plugins::harness::adapter::{
     HarnessCommand,
 };
 use crate::plugins::harness::model::{
-    HarnessApprovalOption, HarnessApprovalRequest, HarnessEvent, HarnessFileChange,
-    HarnessPlanEntry, HarnessUsage,
+    HarnessApprovalOption, HarnessApprovalRequest, HarnessConfigOption, HarnessConfigValue,
+    HarnessEvent, HarnessFileChange, HarnessPlanEntry, HarnessUsage,
 };
+use crate::plugins::harness::registry::SpawnOptionSpec;
 use crate::utils::jsonrpc::{PendingMap, WaitError};
 use agent_client_protocol::schema::v1::{
     RequestPermissionRequest, SessionNotification, SessionUpdate,
 };
 use serde_json::{json, Value};
+use std::collections::HashMap;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -63,6 +65,14 @@ pub(super) struct AcpDriver {
     pending: Arc<PendingMap<Value>>,
     session_id: Arc<parking_lot::Mutex<Option<String>>>,
     prompt_running: Arc<AtomicBool>,
+    /// Registry-declared CLI-flag-backed options (e.g. omp --approval-mode):
+    /// injected as spawn args, synthesized into the config-option set, and
+    /// handled locally on SetConfigOption (never forwarded to the agent).
+    spawn_option_specs: Vec<SpawnOptionSpec>,
+    spawn_option_values: Arc<parking_lot::Mutex<HashMap<String, String>>>,
+    /// Last agent-reported config-option set (merged with the synthesized
+    /// spawn options on every emission).
+    agent_config_options: Arc<parking_lot::Mutex<Vec<HarnessConfigOption>>>,
 }
 
 impl AcpDriver {
@@ -73,8 +83,14 @@ impl AcpDriver {
         cmd_rx: mpsc::UnboundedReceiver<HarnessCommand>,
     ) -> Result<DriverHandle, String> {
         let tool_label = spawn.spec.name.to_string();
-        let (program, args) =
+        let (program, mut args) =
             resolve_acp_command(&spawn.spec).map_err(|e| format!("[{tool_label}] {e}"))?;
+        // Registry-declared CLI-flag-backed options (omp --approval-mode etc.):
+        // inject the chosen value's flag at process start.
+        args.extend(spawn_option_args(
+            &spawn.spec.spawn_options,
+            &spawn.spawn_option_values,
+        ));
         let mut child = spawn_harness_child(&program, &args, &spawn.workspace_path)?;
         let stdout = child
             .stdout
@@ -96,7 +112,19 @@ impl AcpDriver {
             pending: pending.clone(),
             session_id: Arc::new(parking_lot::Mutex::new(None)),
             prompt_running: Arc::new(AtomicBool::new(false)),
+            spawn_option_specs: spawn.spec.spawn_options.clone(),
+            spawn_option_values: Arc::new(parking_lot::Mutex::new(
+                spawn.spawn_option_values.clone(),
+            )),
+            agent_config_options: Arc::new(parking_lot::Mutex::new(Vec::new())),
         });
+        // Tools with declared spawn options show them immediately (the
+        // agent-reported options merge in once session/new completes).
+        if !driver.spawn_option_specs.is_empty() {
+            ctx.emit_event(HarnessEvent::ConfigOptions {
+                options: driver.merged_config_options(),
+            });
+        }
 
         // stderr → debug log (agents write startup/config noise here)
         if let Some(stderr) = stderr {
@@ -205,12 +233,17 @@ impl AcpDriver {
             model: None,
         });
         // Config options (model / thought-level selectors): the session/new (or
-        // resume) result carries the agent's full option set; emit it so the GUI
-        // can render the dropdowns. Agents that expose nothing → empty list.
+        // resume) result carries the agent's full option set; store it and emit
+        // the merged set (agent options + synthesized spawn options).
         if let Some(resp) = &session_resp {
             if let Some(options) = parse_acp_config_options(resp) {
-                ctx.emit_event(HarnessEvent::ConfigOptions { options });
+                *driver.agent_config_options.lock() = options;
             }
+        }
+        if !driver.agent_config_options.lock().is_empty() || !driver.spawn_option_specs.is_empty() {
+            ctx.emit_event(HarnessEvent::ConfigOptions {
+                options: driver.merged_config_options(),
+            });
         }
         ctx.emit_state("idle", None);
 
@@ -373,6 +406,15 @@ impl AcpDriver {
         match serde_json::from_value::<SessionNotification>(params.clone()) {
             Ok(note) => {
                 for event in map_session_update(&self.tool_label, note.update) {
+                    // Agent-reported config options: store the set and emit the
+                    // merged view (agent options + synthesized spawn options).
+                    if let HarnessEvent::ConfigOptions { options } = event {
+                        *self.agent_config_options.lock() = options;
+                        self.ctx.emit_event(HarnessEvent::ConfigOptions {
+                            options: self.merged_config_options(),
+                        });
+                        continue;
+                    }
                     self.ctx.emit_event(event);
                 }
             }
@@ -545,13 +587,31 @@ impl AcpDriver {
         });
     }
 
-    /// Set a session config option (model / thought level / boolean toggle):
-    /// sends `session/set_config_option` and awaits the response (the agent's
-    /// `config_option_update` session update carries the new current state).
-    /// Wire shapes verified from the ACP v1 schema:
-    ///   select: `{sessionId, configId, value: "model-id"}`
-    ///   boolean: `{sessionId, configId, type: "boolean", value: true}`
+    /// Set a session config option. Registry-declared spawn options are
+    /// handled locally (stored for the next spawn; never forwarded — the
+    /// agent doesn't know them). Agent options go through
+    /// `session/set_config_option` and the response's option set is stored +
+    /// merged into the emitted view. Wire shapes verified from the ACP v1
+    /// schema: select → `{sessionId, configId, value: "model-id"}`; boolean →
+    /// `{sessionId, configId, type: "boolean", value: true}`.
     async fn handle_set_config_option(&self, config_id: String, value: Value) {
+        // Spawn options: local state update + merged re-emit (the actual flag
+        // applies at the next spawn; the GUI persists + stops the session).
+        if self
+            .spawn_option_specs
+            .iter()
+            .any(|s| s.option_id == config_id)
+        {
+            if let Some(v) = value.as_str() {
+                self.spawn_option_values
+                    .lock()
+                    .insert(config_id, v.to_string());
+                self.ctx.emit_event(HarnessEvent::ConfigOptions {
+                    options: self.merged_config_options(),
+                });
+            }
+            return;
+        }
         let Some(sid) = self.session_id.lock().clone() else {
             return;
         };
@@ -577,9 +637,24 @@ impl AcpDriver {
         // notification re-emits the new state; on error we surface it.
         if let Ok(resp) = self.wait_request(id, rx, SESSION_SETUP_TIMEOUT_SECS).await {
             if let Some(options) = parse_acp_config_options(&resp) {
-                self.ctx.emit_event(HarnessEvent::ConfigOptions { options });
+                *self.agent_config_options.lock() = options;
+                self.ctx.emit_event(HarnessEvent::ConfigOptions {
+                    options: self.merged_config_options(),
+                });
             }
         }
+    }
+
+    /// The config-option set for the GUI: agent-reported options followed by
+    /// the registry-declared spawn options (synthesized with their current
+    /// preference value, defaulting to the first value).
+    fn merged_config_options(&self) -> Vec<HarnessConfigOption> {
+        let mut options = self.agent_config_options.lock().clone();
+        let values = self.spawn_option_values.lock();
+        for spec in &self.spawn_option_specs {
+            options.push(synth_spawn_option(spec, values.get(&spec.option_id)));
+        }
+        options
     }
 
     /// Turn-end waiter: resolves the pending session/prompt response into
@@ -871,6 +946,51 @@ fn notice_event(w: &Value) -> Option<HarnessEvent> {
     Some(HarnessEvent::Notice { message })
 }
 
+/// Compute the CLI args injected for the chosen spawn-option values
+/// (`{arg}={value}` for values marked `inject`; unknown ids are ignored).
+fn spawn_option_args(specs: &[SpawnOptionSpec], values: &HashMap<String, String>) -> Vec<String> {
+    let mut out = Vec::new();
+    for spec in specs {
+        let Some(chosen) = values.get(&spec.option_id) else {
+            continue;
+        };
+        if let Some(v) = spec.values.iter().find(|v| &v.id == chosen) {
+            if v.inject {
+                out.push(format!("{}={}", spec.arg, v.id));
+            }
+        }
+    }
+    out
+}
+
+/// Synthesize one registry-declared spawn option into the normalized
+/// config-option shape (category "spawn" marks it as spawn-time-only for the
+/// GUI: persist + respawn instead of a live protocol change). Also used by the
+/// `harness_tool_config_options` command for pre-spawn dropdown data.
+pub(crate) fn synth_spawn_option(
+    spec: &SpawnOptionSpec,
+    current: Option<&String>,
+) -> HarnessConfigOption {
+    HarnessConfigOption {
+        option_id: spec.option_id.clone(),
+        name: Some(spec.name.clone()),
+        kind: "select".to_string(),
+        category: Some("spawn".to_string()),
+        current: current
+            .cloned()
+            .or_else(|| spec.values.first().map(|v| v.id.clone())),
+        values: spec
+            .values
+            .iter()
+            .map(|v| HarnessConfigValue {
+                id: v.id.clone(),
+                name: Some(v.name.clone()),
+            })
+            .collect(),
+        boolean_value: None,
+    }
+}
+
 /// Parse the ACP `configOptions` array (session/new result or
 /// config_option_update payload) into the normalized config-option model.
 /// Returns None when the agent exposes nothing.
@@ -1123,6 +1243,62 @@ mod tests {
             }
             other => panic!("expected one ConfigOptions event, got {other:?}"),
         }
+    }
+
+    /// Spawn options (CLI-flag-backed): chosen injectable values become
+    /// `{arg}={value}` args; the default value and unknown ids inject nothing;
+    /// synthesis marks the category "spawn" with the chosen (or first) current.
+    #[test]
+    fn spawn_option_args_and_synthesis() {
+        use crate::plugins::harness::registry::{SpawnOptionSpec, SpawnOptionValueSpec};
+        let spec = SpawnOptionSpec {
+            option_id: "approval-mode".to_string(),
+            name: "Approval Mode".to_string(),
+            arg: "--approval-mode".to_string(),
+            values: vec![
+                SpawnOptionValueSpec {
+                    id: "always-ask".to_string(),
+                    name: "Always ask".to_string(),
+                    inject: false,
+                },
+                SpawnOptionValueSpec {
+                    id: "write".to_string(),
+                    name: "Write".to_string(),
+                    inject: true,
+                },
+                SpawnOptionValueSpec {
+                    id: "yolo".to_string(),
+                    name: "YOLO".to_string(),
+                    inject: true,
+                },
+            ],
+        };
+        let specs = vec![spec.clone()];
+
+        // Default value (inject=false) → no args.
+        let mut values = HashMap::from([("approval-mode".to_string(), "always-ask".to_string())]);
+        assert!(spawn_option_args(&specs, &values).is_empty());
+        // Injectable values → {arg}={id}.
+        values.insert("approval-mode".to_string(), "yolo".to_string());
+        assert_eq!(spawn_option_args(&specs, &values), ["--approval-mode=yolo"]);
+        values.insert("approval-mode".to_string(), "write".to_string());
+        assert_eq!(
+            spawn_option_args(&specs, &values),
+            ["--approval-mode=write"]
+        );
+        // Unknown value id → ignored.
+        values.insert("approval-mode".to_string(), "bogus".to_string());
+        assert!(spawn_option_args(&specs, &values).is_empty());
+
+        // Synthesis: current = chosen value, category "spawn", full value list.
+        let opt = synth_spawn_option(&spec, values.get("approval-mode"));
+        assert_eq!(opt.option_id, "approval-mode");
+        assert_eq!(opt.category.as_deref(), Some("spawn"));
+        assert_eq!(opt.current.as_deref(), Some("bogus"));
+        assert_eq!(opt.values.len(), 3);
+        // Synthesis without a preference falls back to the first value.
+        let opt = synth_spawn_option(&spec, None);
+        assert_eq!(opt.current.as_deref(), Some("always-ask"));
     }
 
     /// Literal wire examples from the ACP v1 spec/research: the mapping must
@@ -1403,6 +1579,7 @@ mod live_tests {
                 permission_mode: None,
                 initial_model: None,
                 initial_thinking: None,
+                spawn_option_values: Default::default(),
             },
             cmd_rx,
         )

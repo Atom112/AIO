@@ -46,6 +46,7 @@ import {
   harnessWorkspaces,
   harnessNativeModel,
   harnessNativeThinking,
+  harnessSpawnPrefs,
   restoreHarnessSelection,
   selectHarnessTool,
   selectHarnessTopic,
@@ -204,6 +205,7 @@ const HarnessPage: Component = () => {
         permissionMode: adapter === 'claude-native' ? harnessClaudeMode() : undefined,
         model: native ? harnessNativeModel(toolId) : undefined,
         thinkingLevel: native ? harnessNativeThinking(toolId) : undefined,
+        spawnOptionValues: harnessSpawnPrefs()[toolId],
       });
     } catch (e) {
       setHarnessTurnErrors({ ...harnessTurnErrors(), [topicId]: String(e) });
@@ -246,6 +248,7 @@ const HarnessPage: Component = () => {
       permissionMode: mode,
       model: native && toolId ? harnessNativeModel(toolId) : undefined,
       thinkingLevel: native && toolId ? harnessNativeThinking(toolId) : undefined,
+      spawnOptionValues: toolId ? harnessSpawnPrefs()[toolId] : undefined,
     };
     setSending(true);
     setInputMessage('');

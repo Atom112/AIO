@@ -58,11 +58,15 @@ Codex (native integration) has no approval interaction — headless exec mode ne
 
 The input bar's bottom-left shows the selected tool's config controls (only those the tool actually exposes are rendered; a tool you have used before shows its last reported options immediately, native Claude Code / Codex show presets even on first use, and an ACP tool that has never run on this machine reveals its options after its first session):
 
-- **ACP tools** (OpenCode / Oh My Pi / Gemini CLI / Qwen Code / goose / DSH / custom ACP tools, plus Claude Code / Codex in their ACP-fallback mode): the dropdowns come from the options the tool itself reports at session setup (model selector, reasoning-effort selector, ...); picking one dispatches to the tool immediately — per the protocol, changes take effect from the next turn.
+- **ACP tools** (OpenCode / Oh My Pi / Gemini CLI / Qwen Code / goose / DSH / custom ACP tools, plus Claude Code / Codex in their ACP-fallback mode): the dropdowns come from the options the tool itself reports at session setup; picking one dispatches to the tool immediately — per the protocol, changes take effect from the next turn. Probe-verified for Oh My Pi: it reports **Mode** (default / plan — read-only planning), **Model** (hundreds of catalog entries, labeled `provider · model` in the dropdown so the source is visible), and **Thinking** (off / auto / high).
 - **Claude Code (native)**: the model dropdown switches live (the `set_model` control frame); the thinking level is a spawn flag (`--effort`) — changing it restarts the session process and resumes the conversation on the next send.
 - **Codex (native)**: model and thinking level apply per turn (every send is a fresh `codex exec` process with `-m` / `-c model_reasoning_effort=`); the model list is a preset of common models.
 
-Native-adapter preferences (model / thinking level) persist per tool across AIO restarts.
+Beyond protocol options, some tools carry CLI-flag-only switches — AIO maps them as "spawn-time option" dropdowns (changing one restarts the session to apply):
+
+- **Oh My Pi: Approval mode** — Always ask (default) / Write-gated (writes need confirmation) / Full access (auto-approve everything), backed by omp's `--approval-mode` flag (always-ask | write | yolo). The ACP channel does not expose this surface; AIO injects the flag at session start.
+
+Preferences (native-adapter model / thinking level, spawn-time options) persist per tool across AIO restarts.
 
 ### Stop and resume
 

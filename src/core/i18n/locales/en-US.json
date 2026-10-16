@@ -1032,6 +1032,8 @@
   "subagent.noToolsAvailable": "No tools available — connect a server in MCP settings first",
   "subagent.systemPromptPlaceholder": "You are {{name}}, please complete the task.",
   "harness.sidebar.collapse": "Collapse sidebar",
+  "harness.sidebar.expand": "Expand sidebar",
+  "harness.sidebar.toolsSection": "CLI tools",
   "harness.sidebar.addWorkspace": "Add workspace",
   "harness.sidebar.removeWorkspace": "Remove workspace",
   "harness.sidebar.removeConfirm": "Remove workspace \"{{name}}\"? All its topics will be deleted.",

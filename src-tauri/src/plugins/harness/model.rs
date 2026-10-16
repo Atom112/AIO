@@ -53,6 +53,36 @@ pub struct HarnessUsage {
     pub cost_usd: Option<f64>,
 }
 
+/// One selectable value of a session-config option (model / thought level ...).
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct HarnessConfigValue {
+    pub id: String,
+    pub name: Option<String>,
+}
+
+/// A session-config option exposed for the GUI: model selector, thought-level
+/// selector, or boolean toggle. ACP agents report these in session/new and
+/// `config_option_update`; native adapters synthesize them from their own
+/// surfaces (claude set_model/--effort, codex -m/-c per turn).
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct HarnessConfigOption {
+    pub option_id: String,
+    pub name: Option<String>,
+    /// select | boolean
+    pub kind: String,
+    /// Semantic category hint (model | thought_level | model_config | mode | other) —
+    /// ACP passes the agent's category through; native adapters synthesize it.
+    pub category: Option<String>,
+    /// select: currently selected value id
+    pub current: Option<String>,
+    /// select: available values
+    pub values: Vec<HarnessConfigValue>,
+    /// boolean: current on/off state
+    pub boolean_value: Option<bool>,
+}
+
 /// The normalized harness event stream. `kind` tag values are snake_case; variant
 /// fields are camelCase.
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -64,6 +94,10 @@ pub enum HarnessEvent {
         harness_session_id: Option<String>,
         model: Option<String>,
     },
+    /// Session config options (model / thought-level selectors, toggles) —
+    /// the full current set, replacing any previous report.
+    #[serde(rename_all = "camelCase")]
+    ConfigOptions { options: Vec<HarnessConfigOption> },
     /// A user prompt was accepted and the agent started a new turn.
     #[serde(rename_all = "camelCase")]
     TurnStarted,

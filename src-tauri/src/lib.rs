@@ -300,6 +300,7 @@ pub fn run() {
             commands::harness::harness_respond_approval,
             commands::harness::harness_list_running,
             commands::harness::harness_set_permission_mode,
+            commands::harness::harness_set_config_option,
             commands::harness::harness_list_custom_agents,
             commands::harness::harness_save_custom_agent,
             commands::harness::harness_delete_custom_agent,

@@ -62,14 +62,21 @@ export const harnessLoadMessages = (sessionRowId: string): Promise<Message[]> =>
 export const harnessAppendMessage = (sessionRowId: string, message: Message): Promise<void> =>
   invoke<void>('harness_append_message', { sessionRowId, message });
 
-/** Send a user prompt (persisted + submitted to the harness agent); returns the stored user message.
- * `permissionMode` applies to a freshly spawned Claude Code native agent (ignored otherwise). */
+/** Frontend-stored native-adapter preferences applied to a freshly spawned
+ * harness runtime (permission mode / model / thinking level); ACP agents own
+ * their state and ignore them. */
+export interface HarnessSpawnPrefs {
+  permissionMode?: string;
+  model?: string;
+  thinkingLevel?: string;
+}
+
+/** Send a user prompt (persisted + submitted to the harness agent); returns the stored user message. */
 export const harnessSendMessage = (
   sessionRowId: string,
   text: string,
-  permissionMode?: string,
-): Promise<Message> =>
-  invoke<Message>('harness_send_message', { sessionRowId, text, permissionMode });
+  prefs?: HarnessSpawnPrefs,
+): Promise<Message> => invoke<Message>('harness_send_message', { sessionRowId, text, prefs });
 
 /** Stop the running turn of a topic. */
 export const harnessStopSession = (sessionRowId: string): Promise<void> =>
@@ -85,6 +92,13 @@ export const harnessListRunning = (): Promise<string[]> => invoke<string[]>('har
 /** Switch the permission mode of a running session (Claude Code native; no-op otherwise). */
 export const harnessSetPermissionMode = (sessionRowId: string, mode: string): Promise<void> =>
   invoke<void>('harness_set_permission_mode', { sessionRowId, mode });
+
+/** Set a session config option (model / thought level / boolean) on a running session. */
+export const harnessSetConfigOption = (
+  sessionRowId: string,
+  configId: string,
+  value: string | boolean,
+): Promise<void> => invoke<void>('harness_set_config_option', { sessionRowId, configId, value });
 
 /** List user-registered custom ACP agents. */
 export const harnessListCustomAgents = (): Promise<HarnessCustomAgent[]> =>

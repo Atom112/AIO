@@ -30,10 +30,35 @@ export interface HarnessUsage {
   costUsd?: number;
 }
 
+/** One selectable value of a session-config option (model / thought level ...). */
+export interface HarnessConfigValue {
+  id: string;
+  name?: string;
+}
+
+/** A session-config option exposed for the GUI (model selector, thought-level
+ * selector, or boolean toggle). ACP agents report these in session/new;
+ * native adapters synthesize them from their own surfaces. */
+export interface HarnessConfigOption {
+  optionId: string;
+  name?: string;
+  /** select | boolean */
+  kind: string;
+  /** Semantic category hint (model | thought_level | model_config | mode | other). */
+  category?: string;
+  /** select: currently selected value id */
+  current?: string;
+  /** select: available values */
+  values: HarnessConfigValue[];
+  /** boolean: current on/off state */
+  booleanValue?: boolean;
+}
+
 /** Normalized harness event (`harness-event` payload `event` field). */
 export interface HarnessEvent {
   kind:
     | 'session_info'
+    | 'config_options'
     | 'turn_started'
     | 'text_delta'
     | 'thinking_delta'
@@ -64,6 +89,8 @@ export interface HarnessEvent {
   usage?: HarnessUsage;
   stopReason?: string;
   message?: string;
+  /** config_options: the agent's full current option set */
+  options?: HarnessConfigOption[];
 }
 
 /** `harness-event` payload. */

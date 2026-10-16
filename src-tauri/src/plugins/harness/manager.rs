@@ -73,7 +73,7 @@ impl HarnessManager {
         session_row_id: &str,
         workspace_path: &str,
         harness_session_id: Option<String>,
-        permission_mode: Option<String>,
+        prefs: crate::plugins::harness::adapter::DriverSpawnPrefs,
     ) -> Result<Arc<SessionRuntime>, String> {
         let key: HarnessSessionKey = (tool_id.to_string(), session_row_id.to_string());
         if let Some(rt) = self.sessions.get(&key) {
@@ -172,7 +172,9 @@ impl HarnessManager {
                     spec,
                     workspace_path: workspace_path.to_string(),
                     harness_session_id,
-                    permission_mode,
+                    permission_mode: prefs.permission_mode,
+                    initial_model: prefs.model,
+                    initial_thinking: prefs.thinking_level,
                 },
                 cmd_rx,
             )
@@ -238,6 +240,26 @@ impl HarnessManager {
                     .send(HarnessCommand::SetPermissionMode {
                         mode: mode.to_string(),
                     });
+                return;
+            }
+        }
+    }
+
+    /// Set a session config option on a RUNNING session (model selector /
+    /// thought level / boolean toggle). Silent no-op when the session is not
+    /// live — the frontend persists the choice for the next spawn instead.
+    pub fn set_config_option(
+        &self,
+        session_row_id: &str,
+        config_id: &str,
+        value: serde_json::Value,
+    ) {
+        for entry in self.sessions.iter() {
+            if entry.key().1 == session_row_id {
+                let _ = entry.value().cmd_tx.send(HarnessCommand::SetConfigOption {
+                    config_id: config_id.to_string(),
+                    value,
+                });
                 return;
             }
         }

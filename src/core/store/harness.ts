@@ -9,6 +9,7 @@ import { createSignal } from 'solid-js';
 import type { Message, AgentStep } from './types';
 import type {
   HarnessApprovalRequest,
+  HarnessConfigOption,
   HarnessPlanEntry,
   HarnessToolStatus,
   HarnessTopic,
@@ -18,6 +19,7 @@ import type {
 
 export type {
   HarnessApprovalRequest,
+  HarnessConfigOption,
   HarnessPlanEntry,
   HarnessToolStatus,
   HarnessTopic,
@@ -62,6 +64,42 @@ const [harnessTurnErrors, setHarnessTurnErrors] = createSignal<HarnessTurnErrors
 const [harnessDrafts, setHarnessDrafts] = createSignal<Record<string, HarnessDraft>>({});
 const [harnessApprovals, setHarnessApprovals] = createSignal<PendingHarnessApproval[]>([]);
 const [harnessPlan, setHarnessPlan] = createSignal<Record<string, HarnessPlanEntry[]>>({});
+const [harnessConfig, setHarnessConfig] = createSignal<Record<string, HarnessConfigOption[]>>({});
+
+// ===== Native-adapter preferences (model / thinking level per tool, persisted) =====
+
+interface NativePrefs {
+  model?: string;
+  thinking?: string;
+}
+
+const NATIVE_PREFS_KEY = 'aio-harness-native-prefs-v1';
+
+function loadNativePrefs(): Record<string, NativePrefs> {
+  try {
+    const raw = localStorage.getItem(NATIVE_PREFS_KEY);
+    if (raw) return JSON.parse(raw);
+  } catch {
+    /* corrupted entry — fall through */
+  }
+  return {};
+}
+
+const [harnessNativePrefs, setHarnessNativePrefs] =
+  createSignal<Record<string, NativePrefs>>(loadNativePrefs());
+
+/** Set + persist one preference field for a tool. */
+const saveHarnessNativePref = (toolId: string, key: 'model' | 'thinking', value: string) => {
+  setHarnessNativePrefs((prev) => {
+    const next = { ...prev, [toolId]: { ...prev[toolId], [key]: value } };
+    try {
+      localStorage.setItem(NATIVE_PREFS_KEY, JSON.stringify(next));
+    } catch {
+      /* restricted storage — session-only */
+    }
+    return next;
+  });
+};
 
 const [currentHarnessToolId, setCurrentHarnessToolId] = createSignal<string | null>(null);
 const [currentHarnessWorkspaceId, setCurrentHarnessWorkspaceId] = createSignal<string | null>(null);
@@ -146,6 +184,15 @@ const currentHarnessApprovals = () => {
   return harnessApprovals().filter((a) => a.sessionRowId === topicId);
 };
 
+/** Config options reported by the agent for the current topic. */
+const currentHarnessConfigOptions = () => harnessConfig()[currentHarnessTopicId() ?? ''] ?? [];
+
+/** Persisted model preference for a tool. */
+const harnessNativeModel = (toolId: string) => harnessNativePrefs()[toolId]?.model;
+
+/** Persisted thinking-level preference for a tool. */
+const harnessNativeThinking = (toolId: string) => harnessNativePrefs()[toolId]?.thinking;
+
 // ===== Mutators (used by the event listeners + page actions) =====
 
 const selectHarnessTool = (id: string | null) => {
@@ -188,6 +235,8 @@ export {
   setHarnessApprovals,
   harnessPlan,
   setHarnessPlan,
+  harnessConfig,
+  setHarnessConfig,
   currentHarnessToolId,
   selectHarnessTool,
   currentHarnessWorkspaceId,
@@ -199,6 +248,11 @@ export {
   currentHarnessDraft,
   currentHarnessTurnError,
   currentHarnessApprovals,
+  currentHarnessConfigOptions,
+  harnessNativePrefs,
+  saveHarnessNativePref,
+  harnessNativeModel,
+  harnessNativeThinking,
   restoreHarnessSelection,
   harnessClaudeMode,
   saveHarnessClaudeMode,

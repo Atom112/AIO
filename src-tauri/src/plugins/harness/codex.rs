@@ -52,6 +52,10 @@ struct CodexDriver {
     prompt_running: AtomicBool,
     /// The current turn's process (None between turns); cancel kills the tree.
     turn_child: Arc<tokio::sync::Mutex<Option<Child>>>,
+    /// Per-turn model (-m flag; initial value from the spawn preference).
+    runtime_model: parking_lot::Mutex<Option<String>>,
+    /// Per-turn reasoning effort (-c model_reasoning_effort=...).
+    runtime_effort: parking_lot::Mutex<Option<String>>,
 }
 
 impl CodexDriver {
@@ -72,8 +76,16 @@ impl CodexDriver {
             thread_id: parking_lot::Mutex::new(spawn.harness_session_id),
             prompt_running: AtomicBool::new(false),
             turn_child: Arc::new(tokio::sync::Mutex::new(None)),
+            runtime_model: parking_lot::Mutex::new(spawn.initial_model),
+            runtime_effort: parking_lot::Mutex::new(spawn.initial_thinking),
         });
         driver.ctx.emit_state("idle", None);
+        // Synthesized config options: model selector (preset list — exec mode
+        // has no dynamic model/list) + effort selector; changes via
+        // SetConfigOption store for the next per-turn spawn.
+        driver.ctx.emit_event(HarnessEvent::ConfigOptions {
+            options: codex_config_options(&driver),
+        });
         let d = driver.clone();
         tokio::spawn(async move {
             d.command_loop(cmd_rx).await;
@@ -146,6 +158,25 @@ impl CodexDriver {
                         self.tool_label
                     );
                 }
+                HarnessCommand::SetConfigOption { config_id, value } => {
+                    let Some(val) = value.as_str() else {
+                        continue;
+                    };
+                    match config_id.as_str() {
+                        "model" => *self.runtime_model.lock() = Some(val.to_string()),
+                        "effort" => *self.runtime_effort.lock() = Some(val.to_string()),
+                        _ => {
+                            tracing::debug!(
+                                "[harness:{}] 忽略未知 config 选项 {config_id}",
+                                self.tool_label
+                            );
+                            continue;
+                        }
+                    }
+                    self.ctx.emit_event(HarnessEvent::ConfigOptions {
+                        options: codex_config_options(&self),
+                    });
+                }
             }
         }
     }
@@ -163,6 +194,15 @@ impl CodexDriver {
         if let Some(tid) = self.thread_id.lock().clone() {
             args.push("resume".to_string());
             args.push(tid);
+        }
+        // Per-turn model & effort (SetConfigOption-stored runtime preferences).
+        if let Some(model) = self.runtime_model.lock().clone() {
+            args.push("-m".to_string());
+            args.push(model);
+        }
+        if let Some(effort) = self.runtime_effort.lock().clone() {
+            args.push("-c".to_string());
+            args.push(format!("model_reasoning_effort={effort}"));
         }
         args.push("-C".to_string());
         args.push(self.workspace_path.clone());
@@ -308,6 +348,68 @@ impl CodexDriver {
             close_turn("error".to_string(), Some("codex 进程提前退出".to_string()));
         }
     }
+}
+
+/// Synthesize the config-option set for the Codex native driver: a model
+/// selector (preset list — exec mode has no dynamic model/list surface; the
+/// app-server-only model/list method is deliberately avoided) and an effort
+/// selector mapping to the `-c model_reasoning_effort=` per-turn override.
+fn codex_config_options(
+    d: &CodexDriver,
+) -> Vec<crate::plugins::harness::model::HarnessConfigOption> {
+    use crate::plugins::harness::model::{HarnessConfigOption, HarnessConfigValue};
+    let model_values = vec![
+        HarnessConfigValue {
+            id: "gpt-5.2-codex".into(),
+            name: Some("GPT-5.2 Codex".into()),
+        },
+        HarnessConfigValue {
+            id: "gpt-5.2".into(),
+            name: Some("GPT-5.2".into()),
+        },
+        HarnessConfigValue {
+            id: "o4-mini".into(),
+            name: Some("o4-mini".into()),
+        },
+    ];
+    let effort_values = vec![
+        HarnessConfigValue {
+            id: "minimal".into(),
+            name: None,
+        },
+        HarnessConfigValue {
+            id: "low".into(),
+            name: None,
+        },
+        HarnessConfigValue {
+            id: "medium".into(),
+            name: None,
+        },
+        HarnessConfigValue {
+            id: "high".into(),
+            name: None,
+        },
+    ];
+    vec![
+        HarnessConfigOption {
+            option_id: "model".into(),
+            name: Some("Model".into()),
+            kind: "select".into(),
+            category: Some("model".into()),
+            current: d.runtime_model.lock().clone(),
+            values: model_values,
+            boolean_value: None,
+        },
+        HarnessConfigOption {
+            option_id: "effort".into(),
+            name: Some("Effort".into()),
+            kind: "select".into(),
+            category: Some("thought_level".into()),
+            current: d.runtime_effort.lock().clone(),
+            values: effort_values,
+            boolean_value: None,
+        },
+    ]
 }
 
 /// `turn.completed.usage` → normalized usage snapshot.
@@ -701,6 +803,8 @@ mod live_tests {
                 workspace_path: workspace_path.clone(),
                 harness_session_id: None,
                 permission_mode: None,
+                initial_model: None,
+                initial_thinking: None,
             },
             cmd_rx,
         )

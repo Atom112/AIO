@@ -43,6 +43,8 @@ import {
   harnessTools,
   harnessTurnErrors,
   harnessWorkspaces,
+  harnessNativeModel,
+  harnessNativeThinking,
   restoreHarnessSelection,
   selectHarnessTool,
   selectHarnessTopic,
@@ -206,15 +208,25 @@ const HarnessPage: Component = () => {
     if (!text || !topicId || isBusy()) return;
     const topic = harnessTopics().find((t) => t.id === topicId);
     const firstTurn = !topic?.harnessSessionId;
+    // Native adapters (claude-native / codex-native): apply the stored model +
+    // thinking-level preferences at spawn time (ACP agents own their state).
+    const toolId = currentHarnessToolId();
+    const adapter = harnessTools().find((x) => x.id === toolId)?.adapter;
+    const native = adapter === 'claude-native' || adapter === 'codex-native';
     // Claude Code native: apply the stored permission mode at spawn time.
     const mode =
       harnessTools().find((x) => x.id === 'claude')?.adapter === 'claude-native'
         ? harnessClaudeMode()
         : undefined;
+    const prefs = {
+      permissionMode: mode,
+      model: native && toolId ? harnessNativeModel(toolId) : undefined,
+      thinkingLevel: native && toolId ? harnessNativeThinking(toolId) : undefined,
+    };
     setSending(true);
     setInputMessage('');
     try {
-      const stored = await harnessSendMessage(topicId, text, mode);
+      const stored = await harnessSendMessage(topicId, text, prefs);
       setHarnessMessages([...harnessMessages(), stored]);
       if (firstTurn) {
         const title = text.slice(0, 24);

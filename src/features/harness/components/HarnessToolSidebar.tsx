@@ -24,6 +24,8 @@ interface HarnessToolSidebarProps {
   isResizing: boolean;
   onAddWorkspace: () => void;
   onRemoveWorkspace: (workspaceId: string) => void;
+  onAddCustomAgent: () => void;
+  onDeleteCustomAgent: (agentId: string, name: string) => void;
 }
 
 const RAIL_WIDTH_PX = 54;
@@ -104,8 +106,8 @@ const HarnessToolSidebar: Component<HarnessToolSidebarProps> = (props) => {
           <div class="h-full overflow-y-auto pr-1 pt-6">
             <For each={harnessTools()}>
               {(tool) => (
-                <div class="mb-0.5">
-                  <button
+                <div class="mb-0.5 group/tool">
+                  <div
                     class={`w-full flex items-center gap-2 px-2.5 py-2 rounded-lg transition-colors cursor-pointer text-left ${
                       currentHarnessToolId() === tool.id
                         ? 'bg-pri-20 text-white'
@@ -119,10 +121,22 @@ const HarnessToolSidebar: Component<HarnessToolSidebarProps> = (props) => {
                       style={{ background: stateDot(tool.state) }}
                     />
                     <span class="text-[13px] font-medium truncate flex-1">{tool.name}</span>
-                    <Show when={currentHarnessToolId() === tool.id}>
+                    <Show when={tool.custom}>
+                      <button
+                        class="shrink-0 opacity-0 group-hover/tool:opacity-100 text-white/30 hover:text-danger transition-colors"
+                        title={t('harness.sidebar.deleteCustomTool')}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          props.onDeleteCustomAgent(tool.id, tool.name);
+                        }}
+                      >
+                        <Icon name="x" class="w-3 h-3" />
+                      </button>
+                    </Show>
+                    <Show when={currentHarnessToolId() === tool.id && !tool.custom}>
                       <Icon name="chevron-down" class="w-3.5 h-3.5 shrink-0" />
                     </Show>
-                  </button>
+                  </div>
 
                   {/* Workspaces (level 2) */}
                   <Show when={currentHarnessToolId() === tool.id}>
@@ -176,6 +190,16 @@ const HarnessToolSidebar: Component<HarnessToolSidebarProps> = (props) => {
                 </div>
               )}
             </For>
+
+            {/* Divider + custom-agent management */}
+            <div class="my-3 border-t" style={{ 'border-color': 'var(--border-dim)' }} />
+            <button
+              class="w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-white/40 hover:text-white/75 hover:bg-white/[0.06] transition-colors cursor-pointer text-left"
+              onClick={() => props.onAddCustomAgent()}
+            >
+              <Icon name="plus" size={13} class="shrink-0" />
+              <span class="text-xs">{t('harness.sidebar.addCustomTool')}</span>
+            </button>
           </div>
         </div>
       </Show>

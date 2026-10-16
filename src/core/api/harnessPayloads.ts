@@ -116,9 +116,21 @@ export interface HarnessApprovalExpiredPayload {
 /** Tool availability detection row (`harness_detect_tools`). */
 export interface HarnessToolStatus {
   id: string;
+  /** Display name (brand names for built-ins; user-chosen for customs). */
+  name: string;
   state: 'ready' | 'installable' | 'missing';
   /** Which adapter serves this tool: claude-native | acp | acp-fallback. */
   adapter: string;
+  /** True for user-registered custom ACP agents (drives the delete action). */
+  custom?: boolean;
+}
+
+/** User-registered custom ACP agent. */
+export interface HarnessCustomAgent {
+  id: string;
+  name: string;
+  command: string;
+  args: string[];
 }
 
 /** Registered workspace row. */

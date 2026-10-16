@@ -348,3 +348,79 @@ pub fn load_messages(conn: &Connection, session_row_id: &str) -> Result<Vec<Mess
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| e.to_string())
 }
+
+// ===== Custom ACP agents (app-data JSON file; AIO is not the trust boundary —
+// the user authors the command line themselves, same as MCP stdio servers) =====
+
+/// A user-registered ACP-speaking agent (command + argv).
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct HarnessCustomAgent {
+    pub id: String,
+    pub name: String,
+    pub command: String,
+    pub args: Vec<String>,
+}
+
+/// File name of the custom-agent registry inside the app data dir.
+const CUSTOM_AGENTS_FILE: &str = "harness-agents.json";
+
+fn custom_agents_path(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
+    use tauri::Manager;
+    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    Ok(dir.join(CUSTOM_AGENTS_FILE))
+}
+
+/// Load every custom agent (empty list when the file is absent/corrupted — a
+/// corrupted registry must not brick the harness page).
+pub fn list_custom_agents(app: &tauri::AppHandle) -> Result<Vec<HarnessCustomAgent>, String> {
+    let path = custom_agents_path(app)?;
+    let Ok(raw) = std::fs::read_to_string(&path) else {
+        return Ok(Vec::new());
+    };
+    serde_json::from_str(&raw).map_err(|e| e.to_string())
+}
+
+/// Insert or update one custom agent (id upsert; the id is generated when empty).
+pub fn save_custom_agent(
+    app: &tauri::AppHandle,
+    mut agent: HarnessCustomAgent,
+) -> Result<HarnessCustomAgent, String> {
+    if agent.name.trim().is_empty() {
+        return Err(ierr!("名称不能为空", "Name must not be empty"));
+    }
+    if agent.command.trim().is_empty() {
+        return Err(ierr!("命令不能为空", "Command must not be empty"));
+    }
+    if agent.id.trim().is_empty() {
+        agent.id = uuid::Uuid::new_v4().to_string();
+    }
+    let mut agents = list_custom_agents(app)?;
+    if let Some(existing) = agents.iter_mut().find(|a| a.id == agent.id) {
+        *existing = agent.clone();
+    } else {
+        agents.push(agent.clone());
+    }
+    write_custom_agents(app, &agents)?;
+    Ok(agent)
+}
+
+/// Delete one custom agent by id (missing id is a no-op).
+pub fn delete_custom_agent(app: &tauri::AppHandle, id: &str) -> Result<(), String> {
+    let mut agents = list_custom_agents(app)?;
+    let before = agents.len();
+    agents.retain(|a| a.id != id);
+    if agents.len() != before {
+        write_custom_agents(app, &agents)?;
+    }
+    Ok(())
+}
+
+fn write_custom_agents(
+    app: &tauri::AppHandle,
+    agents: &[HarnessCustomAgent],
+) -> Result<(), String> {
+    let path = custom_agents_path(app)?;
+    let raw = serde_json::to_string_pretty(agents).map_err(|e| e.to_string())?;
+    crate::core::fs_util::atomic_write(&path, raw.as_bytes()).map_err(|e| e.to_string())
+}

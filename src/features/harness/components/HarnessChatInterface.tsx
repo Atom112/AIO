@@ -26,6 +26,7 @@ import { formatNumber, t } from '../../../core/i18n';
 import { harnessSetPermissionMode } from '../../../core/api/harness';
 import HarnessMessageList from './HarnessMessageList';
 import HarnessApprovalBubble from './HarnessApprovalBubble';
+import HarnessPlanStrip from './HarnessPlanStrip';
 
 interface HarnessChatInterfaceProps {
   inputMessage: string;
@@ -177,6 +178,9 @@ const HarnessChatInterface: Component<HarnessChatInterfaceProps> = (props) => {
           </Show>
         </div>
       </div>
+
+      {/* ===== Plan strip (agent task board) ===== */}
+      <HarnessPlanStrip />
 
       {/* ===== Error strip ===== */}
       <Show when={currentHarnessTurnError()}>

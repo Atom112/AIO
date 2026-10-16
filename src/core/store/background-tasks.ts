@@ -17,7 +17,8 @@ export type BackgroundTaskKind =
   | 'code-index'
   | 'model-download'
   | 'gguf-download'
-  | 'shell-command';
+  | 'shell-command'
+  | 'harness';
 
 export type BackgroundTaskStatus = 'running' | 'done' | 'error' | 'paused' | 'cancelled';
 

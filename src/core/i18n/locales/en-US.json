@@ -22,6 +22,7 @@
   "agent.background.kind.model-download": "Model download",
   "agent.background.kind.gguf-download": "Local model download",
   "agent.background.kind.shell-command": "Shell command",
+  "agent.background.kind.harness": "CLI agent run",
   "agent.diff.added": "Added",
   "agent.diff.deleted": "Deleted",
   "agent.diff.files": "{{count}} files",
@@ -1074,5 +1075,14 @@
   "harness.mode.acceptEdits": "Accept edits",
   "harness.mode.plan": "Plan",
   "harness.mode.dontAsk": "Don't ask",
-  "harness.mode.bypassPermissions": "Full auto"
+  "harness.mode.bypassPermissions": "Full auto",
+  "harness.sidebar.addCustomTool": "Add custom ACP tool",
+  "harness.sidebar.deleteCustomTool": "Delete custom tool",
+  "harness.sidebar.deleteCustomConfirm": "Delete custom tool \"{{name}}\"?",
+  "harness.customAgent.title": "Add custom ACP tool",
+  "harness.customAgent.namePlaceholder": "Display name",
+  "harness.customAgent.commandPlaceholder": "Command (e.g. my-agent)",
+  "harness.customAgent.argsPlaceholder": "Arguments (one per line, e.g. acp)",
+  "harness.customAgent.save": "Save",
+  "harness.customAgent.required": "Name and command must not be empty"
 }

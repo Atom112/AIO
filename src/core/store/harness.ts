@@ -24,10 +24,8 @@ export type {
   HarnessWorkspace,
 };
 
-/** A harness tool merged from detection + the display-name table. */
-export interface HarnessToolInfo extends HarnessToolStatus {
-  name: string;
-}
+/** A harness tool as detected (name/adapter/state/custom come from the backend). */
+export type HarnessToolInfo = HarnessToolStatus;
 
 /** Pending approval with session attribution merged from the event envelope. */
 export interface PendingHarnessApproval extends HarnessApprovalRequest {

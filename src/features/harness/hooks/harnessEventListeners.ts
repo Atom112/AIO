@@ -28,6 +28,7 @@ import {
   harnessMessages,
   harnessPlan,
   harnessRunStates,
+  harnessTools,
   harnessTopics,
   harnessTurnErrors,
   setHarnessApprovals,
@@ -38,6 +39,7 @@ import {
   setHarnessTopics,
   setHarnessTurnErrors,
 } from '../../../core/store/harness';
+import { finishBackgroundTask, startBackgroundTask } from '../../../core/store/background-tasks';
 
 /** Stream batch per session row id (content + reasoning deltas, 80ms flush). */
 interface StreamBatch {
@@ -323,12 +325,24 @@ export function registerHarnessEventListeners(): Promise<UnlistenFn>[] {
     handleHarnessEvent(e.payload),
   );
   const pState = listen<HarnessStatePayload>(EVENTS.harnessState, (e) => {
-    const { session_row_id: sid, state, error } = e.payload;
+    const { tool_id: toolId, session_row_id: sid, state, error } = e.payload;
     const next = { ...harnessRunStates() };
     next[sid] = { state, error };
     setHarnessRunStates(next);
     if (state === 'error' && error) {
       setHarnessTurnErrors({ ...harnessTurnErrors(), [sid]: error });
+    }
+    // Background-task menu linkage: a running CLI agent is an app background
+    // job visible from any page (same registry as downloads/index jobs).
+    const toolName = harnessTools().find((x) => x.id === toolId)?.name ?? toolId;
+    const topicTitle = harnessTopics().find((x) => x.id === sid)?.title ?? sid;
+    const scope = `${toolName}/${topicTitle}`;
+    if (state === 'running') {
+      startBackgroundTask('harness', scope, topicTitle);
+    } else if (state === 'error') {
+      finishBackgroundTask('harness', scope, 'error', error);
+    } else if (state === 'idle') {
+      finishBackgroundTask('harness', scope, 'done');
     }
   });
   const pApproval = listen<HarnessApprovalRequestedPayload>(

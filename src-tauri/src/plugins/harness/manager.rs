@@ -16,7 +16,7 @@ use crate::plugins::harness::adapter::{
     kill_child_tree, DriverHandle, DriverSpawn, HarnessAdapter, HarnessCommand,
 };
 use crate::plugins::harness::model::{ApprovalDecision, DriverEvent, HarnessSessionKey};
-use crate::plugins::harness::registry::{lookup, HarnessToolKind, HarnessToolSpec};
+use crate::plugins::harness::registry::{lookup_any, HarnessToolKind, HarnessToolSpec};
 use dashmap::DashMap;
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager};
@@ -77,7 +77,7 @@ impl HarnessManager {
         if let Some(rt) = self.sessions.get(&key) {
             return Ok(rt.clone());
         }
-        let mut spec = lookup(tool_id).ok_or_else(|| {
+        let mut spec = lookup_any(app, tool_id).ok_or_else(|| {
             ierr!(
                 "未知的 harness 工具: {tool_id}",
                 "Unknown harness tool: {tool_id}"

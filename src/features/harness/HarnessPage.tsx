@@ -17,8 +17,8 @@ import {
 } from '../../core/store/layout';
 import { usePanelResize } from '../chat/hooks/usePanelResize';
 import {
-  HARNESS_TOOL_NAMES,
   harnessAddWorkspace,
+  harnessDeleteCustomAgent,
   harnessDeleteSession,
   harnessDetectTools,
   harnessListSessions,
@@ -61,6 +61,7 @@ import HarnessToolSidebar from './components/HarnessToolSidebar';
 import HarnessTopicSidebar from './components/HarnessTopicSidebar';
 import HarnessChatInterface from './components/HarnessChatInterface';
 import HarnessAddWorkspaceModal from './components/HarnessAddWorkspaceModal';
+import HarnessCustomAgentModal from './components/HarnessCustomAgentModal';
 
 const HarnessPage: Component = () => {
   // ===== Panel layout (same persistence/pattern as the chat page) =====
@@ -71,6 +72,7 @@ const HarnessPage: Component = () => {
   const [inputMessage, setInputMessage] = createSignal('');
   const [sending, setSending] = createSignal(false);
   const [showAddWorkspace, setShowAddWorkspace] = createSignal(false);
+  const [showCustomAgent, setShowCustomAgent] = createSignal(false);
   let pageRef: HTMLDivElement | undefined;
 
   const { isResizing, leftDragWidth, leftRevealMinPx, startLeftResize, startResizeRight } =
@@ -108,13 +110,23 @@ const HarnessPage: Component = () => {
     }
   };
 
+  /** Reload the tool availability list (built-ins + custom agents). */
+  const reloadTools = async () => {
+    try {
+      const statuses = await harnessDetectTools();
+      setHarnessTools(statuses);
+    } catch (e) {
+      console.error('[harness] reload tools failed:', e);
+    }
+  };
+
   onMount(async () => {
     try {
       const [statuses, workspaces] = await Promise.all([
         harnessDetectTools(),
         harnessListWorkspaces(),
       ]);
-      setHarnessTools(statuses.map((s) => ({ ...s, name: HARNESS_TOOL_NAMES[s.id] ?? s.id })));
+      setHarnessTools(statuses);
       setHarnessWorkspaces(workspaces);
     } catch (e) {
       console.error('[harness] initial load failed:', e);
@@ -303,6 +315,14 @@ const HarnessPage: Component = () => {
         isResizing={isResizing()}
         onAddWorkspace={() => setShowAddWorkspace(true)}
         onRemoveWorkspace={handleRemoveWorkspace}
+        onAddCustomAgent={() => setShowCustomAgent(true)}
+        onDeleteCustomAgent={(id, name) => {
+          if (confirm(t('harness.sidebar.deleteCustomConfirm', { name }))) {
+            void harnessDeleteCustomAgent(id)
+              .then(() => reloadTools())
+              .catch(console.error);
+          }
+        }}
       />
 
       <div class="flex-1 flex flex-col min-w-0 min-h-0">
@@ -343,6 +363,18 @@ const HarnessPage: Component = () => {
             onAdd={(path, name) =>
               void handleAddWorkspace(path, name).then(() => setShowAddWorkspace(false))
             }
+          />
+        </Portal>
+      </Show>
+
+      <Show when={showCustomAgent()}>
+        <Portal>
+          <HarnessCustomAgentModal
+            onClose={() => setShowCustomAgent(false)}
+            onSaved={(agent) => {
+              setShowCustomAgent(false);
+              void reloadTools().then(() => selectHarnessTool(agent.id));
+            }}
           />
         </Portal>
       </Show>

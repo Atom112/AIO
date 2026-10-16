@@ -5,13 +5,38 @@ use crate::core::state::DbState;
 use crate::ierr;
 use crate::plugins::harness::manager::{list_running_harness_sessions, HarnessManager};
 use crate::plugins::harness::registry::{self, HarnessToolStatus};
-use crate::plugins::harness::store::{self, HarnessSessionRow, HarnessWorkspaceRow};
+use crate::plugins::harness::store::{
+    self, HarnessCustomAgent, HarnessSessionRow, HarnessWorkspaceRow,
+};
 use tauri::{AppHandle, State};
 
-/// Detect every built-in harness tool's availability (ready / installable / missing).
+/// Detect every harness tool's availability (ready / installable / missing),
+/// covering built-ins and user-registered custom ACP agents.
 #[tauri::command]
-pub async fn harness_detect_tools() -> Result<Vec<HarnessToolStatus>, String> {
-    Ok(registry::detect_tools())
+pub async fn harness_detect_tools(app: AppHandle) -> Result<Vec<HarnessToolStatus>, String> {
+    Ok(registry::detect_tools(&app))
+}
+
+/// List user-registered custom ACP agents.
+#[tauri::command]
+pub async fn harness_list_custom_agents(app: AppHandle) -> Result<Vec<HarnessCustomAgent>, String> {
+    store::list_custom_agents(&app)
+}
+
+/// Insert or update a custom ACP agent (id generated when empty; command must
+/// resolve to an ACP-speaking CLI — the user authors the command line themselves).
+#[tauri::command]
+pub async fn harness_save_custom_agent(
+    app: AppHandle,
+    agent: HarnessCustomAgent,
+) -> Result<HarnessCustomAgent, String> {
+    store::save_custom_agent(&app, agent)
+}
+
+/// Delete a custom ACP agent by id.
+#[tauri::command]
+pub async fn harness_delete_custom_agent(app: AppHandle, id: String) -> Result<(), String> {
+    store::delete_custom_agent(&app, &id)
 }
 
 /// List every registered harness workspace.

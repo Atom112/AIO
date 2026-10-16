@@ -22,6 +22,7 @@
   "agent.background.kind.model-download": "模型下载",
   "agent.background.kind.gguf-download": "本地模型下载",
   "agent.background.kind.shell-command": "命令执行",
+  "agent.background.kind.harness": "CLI 工具运行",
   "agent.diff.added": "新增",
   "agent.diff.deleted": "删除",
   "agent.diff.files": "{{count}} 个文件",
@@ -1074,5 +1075,14 @@
   "harness.mode.acceptEdits": "自动接受编辑",
   "harness.mode.plan": "计划模式",
   "harness.mode.dontAsk": "不再询问",
-  "harness.mode.bypassPermissions": "完全放手"
+  "harness.mode.bypassPermissions": "完全放手",
+  "harness.sidebar.addCustomTool": "添加自定义 ACP 工具",
+  "harness.sidebar.deleteCustomTool": "删除自定义工具",
+  "harness.sidebar.deleteCustomConfirm": "确定删除自定义工具「{{name}}」？",
+  "harness.customAgent.title": "添加自定义 ACP 工具",
+  "harness.customAgent.namePlaceholder": "显示名称",
+  "harness.customAgent.commandPlaceholder": "命令（如 my-agent）",
+  "harness.customAgent.argsPlaceholder": "参数（每行一个，如 acp）",
+  "harness.customAgent.save": "保存",
+  "harness.customAgent.required": "名称与命令不能为空"
 }

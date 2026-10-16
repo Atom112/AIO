@@ -22,16 +22,16 @@ Topics start as "New topic" and auto-rename to the head of the first message; ma
 
 Node.js 20+ (`npx` on PATH) is required for everything except DSH. Tools marked "auto-installable" fetch their adapter via `npx -y` inside AIO on first use — the first launch may take tens of seconds to download.
 
-| Tool        | Integration                      | Install command (run in a terminal)                                                                                      |
-| ----------- | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| Claude Code | official ACP adapter (npm)       | `npm i -g @agentclientprotocol/claude-agent-acp` (Node 22+; complete `claude` login or set `ANTHROPIC_API_KEY` yourself) |
-| Codex       | official ACP adapter (npm)       | `npm i -g @agentclientprotocol/codex-acp` (complete `codex` login yourself)                                              |
-| OpenCode    | native ACP (`opencode acp`)      | `npm i -g opencode-ai` or `curl -fsSL https://opencode.ai/install \| bash`                                               |
-| Oh My Pi    | native ACP (`omp acp`)           | `irm https://omp.sh/install.ps1 \| iex`                                                                                  |
-| Gemini CLI  | native ACP (`gemini --acp`)      | `npm i -g @google/gemini-cli`                                                                                            |
-| Qwen Code   | native ACP (`qwen --acp`)        | `npm i -g @qwen-code/qwen-code`                                                                                          |
-| goose       | native ACP (`goose acp`)         | see the goose install docs                                                                                               |
-| DSH         | native ACP (`dsh --profile acp`) | `npm i -g @deepseek-ai/dsh`                                                                                              |
+| Tool        | Integration                                                                       | Install command (run in a terminal)                                                                                                                                                                                                              |
+| ----------- | --------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Claude Code | native driver first (native binary); falls back to the official ACP adapter (npm) | Recommended: `irm https://claude.ai/install.ps1 \| iex` (native build, fullest features); or `npm i -g @agentclientprotocol/claude-agent-acp` (Node 22+, feature subset). Both need `claude` login or `ANTHROPIC_API_KEY` configured by yourself |
+| Codex       | official ACP adapter (npm)                                                        | `npm i -g @agentclientprotocol/codex-acp` (complete `codex` login yourself)                                                                                                                                                                      |
+| OpenCode    | native ACP (`opencode acp`)                                                       | `npm i -g opencode-ai` or `curl -fsSL https://opencode.ai/install \| bash`                                                                                                                                                                       |
+| Oh My Pi    | native ACP (`omp acp`)                                                            | `irm https://omp.sh/install.ps1 \| iex`                                                                                                                                                                                                          |
+| Gemini CLI  | native ACP (`gemini --acp`)                                                       | `npm i -g @google/gemini-cli`                                                                                                                                                                                                                    |
+| Qwen Code   | native ACP (`qwen --acp`)                                                         | `npm i -g @qwen-code/qwen-code`                                                                                                                                                                                                                  |
+| goose       | native ACP (`goose acp`)                                                          | see the goose install docs                                                                                                                                                                                                                       |
+| DSH         | native ACP (`dsh --profile acp`)                                                  | `npm i -g @deepseek-ai/dsh`                                                                                                                                                                                                                      |
 
 crush (no ACP, no machine-readable output) and aider (text-only, no session resume, stalled upstream) are not supported.
 
@@ -45,6 +45,8 @@ crush (no ACP, no machine-readable output) and aider (text-only, no session resu
 ### Permission approvals
 
 When the selected tool asks to run a sensitive action, an approval bubble appears above the input: tool name, argument preview, a diff preview of the affected file, and the options the tool offered (typically "Allow once / Always allow / Reject / Always reject"). Approvals have no timeout — the tool waits for your decision; navigating away does not interrupt the wait.
+
+Claude Code (native integration) offers "Allow once / Reject" (its protocol has no always tier); the status bar additionally provides a permission-mode dropdown: Default (ask) / Accept edits / Plan / Don't ask / Full auto. The mode switches live for a running session and becomes the default for the next new session.
 
 ### Stop and resume
 

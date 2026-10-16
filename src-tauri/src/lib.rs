@@ -299,6 +299,7 @@ pub fn run() {
             commands::harness::harness_stop_session,
             commands::harness::harness_respond_approval,
             commands::harness::harness_list_running,
+            commands::harness::harness_set_permission_mode,
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::Destroyed = event {

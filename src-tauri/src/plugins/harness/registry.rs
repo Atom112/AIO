@@ -21,8 +21,15 @@ pub enum AcpCommand {
 /// The adapter family a registered tool dispatches to.
 #[derive(Clone, Debug)]
 pub enum HarnessToolKind {
-    Acp { command: AcpCommand },
-    // (PR2) ClaudeNative, (PR4) CodexExec — reserved.
+    Acp {
+        command: AcpCommand,
+    },
+    /// Claude Code native stream-json driver when a real `claude.exe`/`claude`
+    /// binary exists; falls back to the bundled ACP command otherwise.
+    ClaudeNative {
+        fallback: AcpCommand,
+    },
+    // (PR4) CodexExec — reserved.
 }
 
 /// One registered harness tool.
@@ -42,6 +49,9 @@ pub struct HarnessToolStatus {
     pub id: String,
     /// ready | installable | missing
     pub state: String,
+    /// Which adapter serves this tool as detected: claude-native | acp |
+    /// acp-fallback (drives UI affordances like the permission-mode selector).
+    pub adapter: String,
 }
 
 /// Built-in registry (order = sidebar order).
@@ -50,8 +60,8 @@ pub fn builtin_tools() -> Vec<HarnessToolSpec> {
         HarnessToolSpec {
             id: "claude",
             name: "Claude Code",
-            kind: HarnessToolKind::Acp {
-                command: AcpCommand::Npx {
+            kind: HarnessToolKind::ClaudeNative {
+                fallback: AcpCommand::Npx {
                     package: "@agentclientprotocol/claude-agent-acp".to_string(),
                     args: vec![],
                 },
@@ -139,32 +149,48 @@ pub fn lookup(tool_id: &str) -> Option<HarnessToolSpec> {
 /// - `Bare`: the CLI resolves on PATH → ready, else missing.
 /// - `Npx`: `npx` itself resolves → installable (the adapter fetches on first
 ///   spawn, so presence of the package does not change the UX); npx missing → missing.
+/// - `ClaudeNative`: a real native binary (never a .cmd/.ps1 shim) → ready with
+///   the claude-native adapter; otherwise npx → installable over the ACP fallback.
 pub fn detect_tools() -> Vec<HarnessToolStatus> {
     let npx_available = crate::utils::exec_resolve::resolve_executable("npx").is_some();
     builtin_tools()
         .into_iter()
         .map(|spec| {
-            let state = match &spec.kind {
-                HarnessToolKind::Acp { command } => match command {
-                    AcpCommand::Bare { command, .. } => {
-                        if crate::utils::exec_resolve::resolve_executable(command).is_some() {
-                            "ready"
-                        } else {
-                            "missing"
+            let (state, adapter): (&str, &str) = match &spec.kind {
+                HarnessToolKind::Acp { command } => {
+                    let adapter = "acp";
+                    let state = match command {
+                        AcpCommand::Bare { command, .. } => {
+                            if crate::utils::exec_resolve::resolve_executable(command).is_some() {
+                                "ready"
+                            } else {
+                                "missing"
+                            }
                         }
-                    }
-                    AcpCommand::Npx { .. } => {
-                        if npx_available {
-                            "installable"
-                        } else {
-                            "missing"
+                        AcpCommand::Npx { .. } => {
+                            if npx_available {
+                                "installable"
+                            } else {
+                                "missing"
+                            }
                         }
+                    };
+                    (state, adapter)
+                }
+                HarnessToolKind::ClaudeNative { .. } => {
+                    if crate::plugins::harness::claude::detect_native_binary().is_some() {
+                        ("ready", "claude-native")
+                    } else if npx_available {
+                        ("installable", "acp-fallback")
+                    } else {
+                        ("missing", "acp-fallback")
                     }
-                },
+                }
             };
             HarnessToolStatus {
                 id: spec.id.to_string(),
                 state: state.to_string(),
+                adapter: adapter.to_string(),
             }
         })
         .collect()

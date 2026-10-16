@@ -120,6 +120,9 @@ pub async fn harness_append_message(
 /// agent runtime (spawning + native handshake, resume via the stored harness
 /// session id when the runtime is not live), and submits the prompt. Returns the
 /// persisted user message for the frontend to render.
+///
+/// `permission_mode` (Claude Code native only) sets the initial permission mode
+/// of a freshly spawned agent; live runtimes switch via `harness_set_permission_mode`.
 #[tauri::command]
 pub async fn harness_send_message(
     app: AppHandle,
@@ -127,6 +130,7 @@ pub async fn harness_send_message(
     manager: State<'_, HarnessManager>,
     session_row_id: String,
     text: String,
+    permission_mode: Option<String>,
 ) -> Result<Message, String> {
     let text = text.trim().to_string();
     if text.is_empty() {
@@ -152,6 +156,7 @@ pub async fn harness_send_message(
             &session_row_id,
             &row.workspace_path,
             row.harness_session_id.clone(),
+            permission_mode,
         )
         .await?
         .cmd_tx
@@ -197,4 +202,17 @@ pub async fn harness_respond_approval(
 #[tauri::command]
 pub async fn harness_list_running(app: AppHandle) -> Result<Vec<String>, String> {
     Ok(list_running_harness_sessions(&app))
+}
+
+/// Switch the permission mode of a running harness session (Claude Code native:
+/// set_permission_mode control frame; other adapters ignore it). No-op when
+/// the session is not live — the caller applies the choice at next spawn.
+#[tauri::command]
+pub async fn harness_set_permission_mode(
+    manager: State<'_, HarnessManager>,
+    session_row_id: String,
+    mode: String,
+) -> Result<(), String> {
+    manager.set_permission_mode(&session_row_id, &mode);
+    Ok(())
 }

@@ -1069,5 +1069,10 @@
   "harness.addWorkspace.fromProjects": "Quick-add from AIO projects",
   "harness.addWorkspace.confirm": "Add",
   "harness.addWorkspace.pathRequired": "Choose or enter a workspace path",
-  "harness.usage.context": "Context tokens"
+  "harness.usage.context": "Context tokens",
+  "harness.mode.default": "Default (ask)",
+  "harness.mode.acceptEdits": "Accept edits",
+  "harness.mode.plan": "Plan",
+  "harness.mode.dontAsk": "Don't ask",
+  "harness.mode.bypassPermissions": "Full auto"
 }

@@ -290,6 +290,11 @@ const handleHarnessEvent = (payload: HarnessEventPayload) => {
     case 'plan_update':
       setHarnessPlan({ ...harnessPlan(), [sid]: event.entries ?? [] });
       break;
+    case 'subagent_delta':
+      upsertDraft(sid, (draft) =>
+        pushContentStep(draft, `${event.name ? `[${event.name}] ` : ''}${event.text ?? ''}`),
+      );
+      break;
     case 'usage_update':
       upsertDraft(sid, (draft) => {
         if (event.usage) draft.usage = { ...draft.usage, ...event.usage };

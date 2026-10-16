@@ -36,9 +36,11 @@ import {
   currentHarnessToolId,
   currentHarnessWorkspace,
   currentHarnessWorkspaceId,
+  harnessClaudeMode,
   harnessMessages,
   harnessRunStates,
   harnessTopics,
+  harnessTools,
   harnessTurnErrors,
   harnessWorkspaces,
   restoreHarnessSelection,
@@ -192,10 +194,15 @@ const HarnessPage: Component = () => {
     if (!text || !topicId || isBusy()) return;
     const topic = harnessTopics().find((t) => t.id === topicId);
     const firstTurn = !topic?.harnessSessionId;
+    // Claude Code native: apply the stored permission mode at spawn time.
+    const mode =
+      harnessTools().find((x) => x.id === 'claude')?.adapter === 'claude-native'
+        ? harnessClaudeMode()
+        : undefined;
     setSending(true);
     setInputMessage('');
     try {
-      const stored = await harnessSendMessage(topicId, text);
+      const stored = await harnessSendMessage(topicId, text, mode);
       setHarnessMessages([...harnessMessages(), stored]);
       if (firstTurn) {
         const title = text.slice(0, 24);

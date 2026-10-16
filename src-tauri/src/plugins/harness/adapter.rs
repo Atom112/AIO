@@ -29,6 +29,9 @@ pub enum HarnessCommand {
     Prompt { text: String },
     /// Request graceful cancellation of the current turn (protocol-level).
     CancelTurn,
+    /// Switch the harness agent's permission mode (Claude Code native:
+    /// set_permission_mode control frame; other adapters ignore it).
+    SetPermissionMode { mode: String },
 }
 
 /// What a driver hands back on start: the child handles the manager needs for
@@ -170,6 +173,9 @@ pub struct DriverSpawn {
     pub spec: HarnessToolSpec,
     pub workspace_path: String,
     pub harness_session_id: Option<String>,
+    /// Initial permission mode (Claude Code native: --permission-mode spawn flag;
+    /// other adapters ignore it).
+    pub permission_mode: Option<String>,
 }
 
 /// One CLI harness adapter. Implementations own the whole native protocol for
@@ -298,8 +304,13 @@ pub async fn kill_child_tree(child: &tokio::sync::Mutex<Child>) {
 /// Resolve the concrete (program, args) for an ACP tool spec. `Bare` entries are
 /// PATH-resolved via the shared SEC-06 resolver; `Npx` entries run through
 /// `npx -y <package>` so the adapter is fetched on first use when not installed.
+/// ClaudeNative specs never reach the ACP adapter directly — the manager rewrites
+/// them to the ACP fallback kind first (arm kept exhaustive for safety).
 pub fn resolve_acp_command(spec: &HarnessToolSpec) -> Result<(String, Vec<String>), String> {
     match &spec.kind {
+        HarnessToolKind::ClaudeNative { .. } => {
+            Err("ClaudeNative 工具不能直接走 ACP 命令（应先回退到 Acp kind）".to_string())
+        }
         HarnessToolKind::Acp { command } => match command {
             AcpCommand::Bare { command, args } => Ok((command.clone(), args.clone())),
             AcpCommand::Npx { package, args } => {

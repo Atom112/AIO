@@ -456,6 +456,14 @@ impl AcpDriver {
             };
             match cmd {
                 HarnessCommand::Prompt { text } => self.handle_prompt(text).await,
+                HarnessCommand::SetPermissionMode { .. } => {
+                    // ACP v1 has no permission-mode surface (mode methods are
+                    // deprecated config options); only native adapters act on it.
+                    tracing::debug!(
+                        "[harness:{}] 忽略 SetPermissionMode（ACP 无此界面）",
+                        self.tool_label
+                    );
+                }
                 HarnessCommand::CancelTurn => {
                     let Some(sid) = self.session_id.lock().clone() else {
                         continue;
@@ -1114,6 +1122,7 @@ mod live_tests {
                 spec,
                 workspace_path: workspace_path.clone(),
                 harness_session_id: None,
+                permission_mode: None,
             },
             cmd_rx,
         )

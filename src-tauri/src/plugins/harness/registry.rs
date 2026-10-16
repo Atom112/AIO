@@ -29,7 +29,11 @@ pub enum HarnessToolKind {
     ClaudeNative {
         fallback: AcpCommand,
     },
-    // (PR4) CodexExec — reserved.
+    /// OpenAI Codex native `exec --json` driver when a `codex` CLI exists;
+    /// falls back to the bundled ACP command otherwise.
+    CodexExec {
+        fallback: AcpCommand,
+    },
 }
 
 /// One registered harness tool.
@@ -76,8 +80,8 @@ pub fn builtin_tools() -> Vec<HarnessToolSpec> {
         HarnessToolSpec {
             id: "codex".to_string(),
             name: "Codex".to_string(),
-            kind: HarnessToolKind::Acp {
-                command: AcpCommand::Npx {
+            kind: HarnessToolKind::CodexExec {
+                fallback: AcpCommand::Npx {
                     package: "@agentclientprotocol/codex-acp".to_string(),
                     args: vec![],
                 },
@@ -227,6 +231,15 @@ fn detect_status(spec: HarnessToolSpec, npx_available: bool, custom: bool) -> Ha
         HarnessToolKind::ClaudeNative { .. } => {
             if crate::plugins::harness::claude::detect_native_binary().is_some() {
                 ("ready", "claude-native")
+            } else if npx_available {
+                ("installable", "acp-fallback")
+            } else {
+                ("missing", "acp-fallback")
+            }
+        }
+        HarnessToolKind::CodexExec { .. } => {
+            if crate::utils::exec_resolve::resolve_executable("codex").is_some() {
+                ("ready", "codex-native")
             } else if npx_available {
                 ("installable", "acp-fallback")
             } else {

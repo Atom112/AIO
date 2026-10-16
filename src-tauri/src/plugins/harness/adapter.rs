@@ -34,11 +34,14 @@ pub enum HarnessCommand {
     SetPermissionMode { mode: String },
 }
 
-/// What a driver hands back on start: the child handles the manager needs for
+/// What a driver hands back on start: the child handle the manager needs for
 /// hard-stop escalation. The command channel's sender half stays with the
 /// manager (it constructs the channel and passes the receiver into `start`).
+/// `child` is None for exec-per-turn adapters (Codex `exec --json`): the driver
+/// tracks its current-turn process internally and reaps it on cancel; the
+/// manager's token cancel plus the driver's own cleanup cover the stop path.
 pub struct DriverHandle {
-    pub child: Arc<tokio::sync::Mutex<Child>>,
+    pub child: Option<Arc<tokio::sync::Mutex<Child>>>,
 }
 
 /// Everything a driver task may do: emit normalized events / state, persist the
@@ -304,12 +307,13 @@ pub async fn kill_child_tree(child: &tokio::sync::Mutex<Child>) {
 /// Resolve the concrete (program, args) for an ACP tool spec. `Bare` entries are
 /// PATH-resolved via the shared SEC-06 resolver; `Npx` entries run through
 /// `npx -y <package>` so the adapter is fetched on first use when not installed.
-/// ClaudeNative specs never reach the ACP adapter directly — the manager rewrites
-/// them to the ACP fallback kind first (arm kept exhaustive for safety).
+/// Native-kind specs (ClaudeNative / CodexExec) never reach the ACP adapter
+/// directly — the manager rewrites them to the ACP fallback kind first (arms
+/// kept exhaustive for safety).
 pub fn resolve_acp_command(spec: &HarnessToolSpec) -> Result<(String, Vec<String>), String> {
     match &spec.kind {
-        HarnessToolKind::ClaudeNative { .. } => {
-            Err("ClaudeNative 工具不能直接走 ACP 命令（应先回退到 Acp kind）".to_string())
+        HarnessToolKind::ClaudeNative { .. } | HarnessToolKind::CodexExec { .. } => {
+            Err("原生适配器工具不能直接走 ACP 命令（应先回退到 Acp kind）".to_string())
         }
         HarnessToolKind::Acp { command } => match command {
             AcpCommand::Bare { command, args } => Ok((command.clone(), args.clone())),

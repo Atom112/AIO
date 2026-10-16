@@ -190,7 +190,7 @@ impl ClaudeDriver {
             });
         }
 
-        Ok(DriverHandle { child })
+        Ok(DriverHandle { child: Some(child) })
     }
 
     async fn write_line(&self, line: &str) -> Result<(), String> {
@@ -859,7 +859,9 @@ mod live_tests {
         .await;
 
         token.cancel();
-        crate::plugins::harness::adapter::kill_child_tree(&handle.child).await;
+        if let Some(child) = &handle.child {
+            crate::plugins::harness::adapter::kill_child_tree(child).await;
+        }
         let _ = std::fs::remove_dir_all(&ws);
 
         assert!(ended.is_ok(), "240s 内未收到 TurnEnded");

@@ -25,7 +25,7 @@ Harness 工作台让 AIO 作为各类 CLI 编码智能体（Claude Code、Codex�
 | 工具        | 接入方式                                                           | 安装命令（终端执行）                                                                                                                                                                                         |
 | ----------- | ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Claude Code | 原生驱动优先（原生二进制）；未装原生版时回退官方 ACP 适配器（npm） | 推荐：`irm https://claude.ai/install.ps1 \| iex`（原生版，功能最全）；或 `npm i -g @agentclientprotocol/claude-agent-acp`（需 Node 22+，功能子集）。两者都需自行完成 `claude` 登录或配置 `ANTHROPIC_API_KEY` |
-| Codex       | 官方 ACP 适配器（npm）                                             | `npm i -g @agentclientprotocol/codex-acp`（并自行完成 `codex` 登录）                                                                                                                                         |
+| Codex       | 原生驱动优先（`codex` CLI）；未装时回退官方 ACP 适配器（npm）      | `npm i -g @openai/codex`（或 winget `OpenAI.Codex`），并在终端完成 `codex` 登录；或 `npm i -g @agentclientprotocol/codex-acp`（并完成 `codex` 登录）                                                         |
 | OpenCode    | 原生 ACP（`opencode acp`）                                         | `npm i -g opencode-ai` 或 `curl -fsSL https://opencode.ai/install \| bash`                                                                                                                                   |
 | Oh My Pi    | 原生 ACP（`omp acp`）                                              | `irm https://omp.sh/install.ps1 \| iex`                                                                                                                                                                      |
 | Gemini CLI  | 原生 ACP（`gemini --acp`）                                         | `npm i -g @google/gemini-cli`                                                                                                                                                                                |
@@ -51,6 +51,8 @@ Harness 工作台让 AIO 作为各类 CLI 编码智能体（Claude Code、Codex�
 所选 CLI 工具请求执行敏感操作时，消息区底部会弹出审批气泡：工具名、参数预览、涉及文件的 Diff 预览，以及工具提供的选项（通常为「允许一次 / 总是允许 / 拒绝一次 / 总是拒绝」）。审批没有超时——工具会一直等待你的决定；切换页面不会打断等待。
 
 Claude Code（原生接入）的审批选项为「允许一次 / 拒绝」（其协议不提供 always 档）；此外状态栏提供权限模式下拉：默认（逐次确认）/ 自动接受编辑 / 计划模式 / 不再询问 / 完全放手。模式在会话运行时即时切换，同时作为下一次新会话的默认模式。
+
+Codex（原生接入）没有审批交互——无头 exec 模式固定不询问，沙箱与审批策略由 `~/.codex/config.toml` 决定（如 `approval_policy` / `sandbox_mode`）。该页面不会为 Codex 弹出审批气泡。
 
 ### 停止与恢复
 

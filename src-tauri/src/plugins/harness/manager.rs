@@ -27,7 +27,9 @@ use tokio_util::sync::CancellationToken;
 /// One live harness session runtime.
 pub struct SessionRuntime {
     pub cmd_tx: mpsc::UnboundedSender<HarnessCommand>,
-    pub child: Arc<tokio::sync::Mutex<Child>>,
+    /// Session-owned child (ACP / claude); None for exec-per-turn adapters
+    /// (codex tracks its current-turn process internally).
+    pub child: Option<Arc<tokio::sync::Mutex<Child>>>,
     pub token: CancellationToken,
 }
 
@@ -127,14 +129,28 @@ impl HarnessManager {
             });
         }
 
-        // Dispatch to the adapter family. Claude Code prefers its native driver
-        // when a real binary exists; without one the bundled ACP fallback serves
-        // the tool (registry rewrites the spec for the ACP adapter).
+        // Dispatch to the adapter family. Native adapters take priority when
+        // their binary exists; without one the bundled ACP fallback serves the
+        // tool (the spec is rewritten for the ACP adapter at dispatch).
         let adapter: Arc<dyn HarnessAdapter> = match &spec.kind {
             HarnessToolKind::Acp { .. } => Arc::new(crate::plugins::harness::acp::AcpAdapter),
             HarnessToolKind::ClaudeNative { fallback } => {
                 if crate::plugins::harness::claude::detect_native_binary().is_some() {
                     Arc::new(crate::plugins::harness::claude::ClaudeAdapter)
+                } else {
+                    spec = HarnessToolSpec {
+                        id: spec.id,
+                        name: spec.name,
+                        kind: HarnessToolKind::Acp {
+                            command: fallback.clone(),
+                        },
+                    };
+                    Arc::new(crate::plugins::harness::acp::AcpAdapter)
+                }
+            }
+            HarnessToolKind::CodexExec { fallback } => {
+                if crate::utils::exec_resolve::resolve_executable("codex").is_some() {
+                    Arc::new(crate::plugins::harness::codex::CodexAdapter)
                 } else {
                     spec = HarnessToolSpec {
                         id: spec.id,
@@ -202,7 +218,9 @@ impl HarnessManager {
         // stopReason=cancelled and emits TurnEnded itself.
         tokio::time::sleep(std::time::Duration::from_secs(3)).await;
         runtime.token.cancel();
-        kill_child_tree(&runtime.child).await;
+        if let Some(child) = &runtime.child {
+            kill_child_tree(child).await;
+        }
         self.sessions.remove(&key);
         Ok(())
     }
@@ -232,10 +250,12 @@ impl HarnessManager {
         for key in keys {
             if let Some((_, runtime)) = self.sessions.remove(&key) {
                 runtime.token.cancel();
-                let child = runtime.child.clone();
-                tokio::spawn(async move {
-                    kill_child_tree(&child).await;
-                });
+                if let Some(child) = &runtime.child {
+                    let child = child.clone();
+                    tokio::spawn(async move {
+                        kill_child_tree(&child).await;
+                    });
+                }
             }
         }
     }

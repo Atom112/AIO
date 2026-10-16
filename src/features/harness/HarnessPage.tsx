@@ -22,6 +22,7 @@ import {
   harnessDeleteSession,
   harnessDetectTools,
   harnessListSessions,
+  harnessConnectTopic,
   harnessListRunning,
   harnessListWorkspaces,
   harnessLoadMessages,
@@ -186,7 +187,28 @@ const HarnessPage: Component = () => {
     })();
   });
 
-  // ===== Message load on topic switch =====
+  // ===== Message load + eager connect on topic switch =====
+  // Selecting a topic connects its agent immediately (spawn + handshake, no
+  // prompt) so the live state and config controls appear at once instead of
+  // on first send. 300ms debounce: skimming the topic list doesn't spawn
+  // runtimes for topics merely passed through.
+  let connectTimer: ReturnType<typeof setTimeout> | undefined;
+  const connectTopic = async (topicId: string) => {
+    const toolId = currentHarnessToolId();
+    const tool = harnessTools().find((x) => x.id === toolId);
+    if (!tool || tool.state === 'missing' || !toolId) return;
+    const adapter = tool.adapter;
+    const native = adapter === 'claude-native' || adapter === 'codex-native';
+    try {
+      await harnessConnectTopic(topicId, {
+        permissionMode: adapter === 'claude-native' ? harnessClaudeMode() : undefined,
+        model: native ? harnessNativeModel(toolId) : undefined,
+        thinkingLevel: native ? harnessNativeThinking(toolId) : undefined,
+      });
+    } catch (e) {
+      setHarnessTurnErrors({ ...harnessTurnErrors(), [topicId]: String(e) });
+    }
+  };
   createEffect(() => {
     const id = currentHarnessTopicId();
     if (!id) {
@@ -194,6 +216,8 @@ const HarnessPage: Component = () => {
       return;
     }
     void loadMessages(id);
+    if (connectTimer) clearTimeout(connectTimer);
+    connectTimer = setTimeout(() => void connectTopic(id), 300);
   });
 
   // ===== Actions =====

@@ -296,6 +296,7 @@ pub fn run() {
             commands::harness::harness_load_messages,
             commands::harness::harness_append_message,
             commands::harness::harness_send_message,
+            commands::harness::harness_connect_topic,
             commands::harness::harness_stop_session,
             commands::harness::harness_respond_approval,
             commands::harness::harness_list_running,

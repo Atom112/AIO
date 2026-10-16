@@ -83,6 +83,13 @@ export const harnessSendMessage = (
 export const harnessStopSession = (sessionRowId: string): Promise<void> =>
   invoke<void>('harness_stop_session', { sessionRowId });
 
+/** Eagerly connect a topic: spawn the agent runtime without a prompt so the
+ * live state and config controls appear on selection. Idempotent. */
+export const harnessConnectTopic = (
+  sessionRowId: string,
+  prefs?: HarnessSpawnPrefs,
+): Promise<void> => invoke<void>('harness_connect_topic', { sessionRowId, prefs });
+
 /** Answer a pending harness approval. */
 export const harnessRespondApproval = (requestId: string, optionId: string): Promise<void> =>
   invoke<void>('harness_respond_approval', { requestId, optionId });

@@ -43,7 +43,7 @@ Any ACP-speaking CLI can be registered as a harness tool: click "Add custom ACP 
 
 1. Select a tool whose state is "Ready" (or "Auto-installable") on the left.
 2. Click "Add workspace" and register a directory via the folder picker or the AIO project list.
-3. Create a topic and send a message. The tool's progress (text, thinking, tool calls, file diffs) streams into the message area; when the tool pushes an execution plan, a collapsible task list appears under the status bar; while you are on other pages, running tools show up in the chat status-bar background-task menu.
+3. Create a topic — selecting it connects to the CLI tool immediately (process spawn + protocol handshake, no message needed), and its config controls appear in the input bar right away. Send a message. The tool's progress (text, thinking, tool calls, file diffs) streams into the message area; when the tool pushes an execution plan, a collapsible task list appears under the status bar; while you are on other pages, running tools show up in the chat status-bar background-task menu.
 4. When the turn finishes, the reply is persisted locally in AIO; reopen the topic any time to review the full record.
 
 ### Permission approvals

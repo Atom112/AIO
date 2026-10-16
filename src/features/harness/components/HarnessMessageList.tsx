@@ -67,7 +67,7 @@ const HarnessMessageList: Component = () => {
     const msg = () => props.msg;
     return (
       <div
-        class={`flex gap-3 w-full ${msg().role === 'assistant' ? 'justify-start items-start' : 'justify-end items-start pr-[10px]'}`}
+        class={`flex gap-3 w-full mb-3 ${msg().role === 'assistant' ? 'justify-start items-start' : 'justify-end items-start pr-[10px]'}`}
       >
         <div
           class={`flex flex-col max-w-[75%] ${msg().role === 'assistant' ? 'items-start' : 'items-end'}`}
@@ -120,7 +120,7 @@ const HarnessMessageList: Component = () => {
   return (
     <div
       ref={scrollRef}
-      class="flex-1 min-h-0 overflow-y-auto px-4 py-4 flex flex-col gap-4"
+      class="flex-grow overflow-y-auto pb-[15px] z-[1] min-h-0"
       onWheel={handleWheel}
       onScroll={handleScroll}
     >

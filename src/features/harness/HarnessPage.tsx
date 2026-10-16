@@ -310,6 +310,12 @@ const HarnessPage: Component = () => {
           const next = !isLeftCollapsed();
           setIsLeftCollapsed(next);
           savePanelCollapsed('left', next);
+          // Chat-page parity: expanding a panel whose remembered width collapsed
+          // below the valid range restores the default instead of a sliver.
+          if (!next && leftPanelWidth() < 5) {
+            setLeftPanelWidth(18);
+            savePanelWidth('left', 18);
+          }
         }}
         onResize={(e) => startLeftResize(e)}
         isResizing={isResizing()}

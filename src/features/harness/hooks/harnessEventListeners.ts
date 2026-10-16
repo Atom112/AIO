@@ -32,6 +32,7 @@ import {
   harnessTopics,
   harnessTurnErrors,
   setHarnessApprovals,
+  setHarnessConfig,
   setHarnessDrafts,
   setHarnessMessages,
   setHarnessPlan,
@@ -228,6 +229,12 @@ const handleHarnessEvent = (payload: HarnessEventPayload) => {
             : t,
         ),
       );
+      break;
+    }
+    case 'config_options': {
+      // The agent's full current config-option set (model / thought-level
+      // selectors, toggles) — replaces any previous report.
+      setHarnessConfig((prev) => ({ ...prev, [sid]: event.options ?? [] }));
       break;
     }
     case 'turn_started':

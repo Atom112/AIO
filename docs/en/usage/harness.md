@@ -54,6 +54,16 @@ Claude Code (native integration) offers "Allow once / Reject" (its protocol has 
 
 Codex (native integration) has no approval interaction — headless exec mode never asks; sandbox and approval behavior come from `~/.codex/config.toml` (`approval_policy` / `sandbox_mode`). No approval bubbles appear for Codex on this page.
 
+### Model and thinking level
+
+The input bar's bottom-left shows the selected tool's config controls (only those the tool actually exposes are rendered):
+
+- **ACP tools** (OpenCode / Oh My Pi / Gemini CLI / Qwen Code / goose / DSH / custom ACP tools, plus Claude Code / Codex in their ACP-fallback mode): the dropdowns come from the options the tool itself reports at session setup (model selector, reasoning-effort selector, ...); picking one dispatches to the tool immediately — per the protocol, changes take effect from the next turn.
+- **Claude Code (native)**: the model dropdown switches live (the `set_model` control frame); the thinking level is a spawn flag (`--effort`) — changing it restarts the session process and resumes the conversation on the next send.
+- **Codex (native)**: model and thinking level apply per turn (every send is a fresh `codex exec` process with `-m` / `-c model_reasoning_effort=`); the model list is a preset of common models.
+
+Native-adapter preferences (model / thinking level) persist per tool across AIO restarts.
+
 ### Stop and resume
 
 - While running, "Stop" (status bar or input area) issues a protocol-level cancel, escalating to a hard process-tree kill after a grace window.

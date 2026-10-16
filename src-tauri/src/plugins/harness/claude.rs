@@ -159,6 +159,10 @@ struct ClaudeDriver {
     req_counter: AtomicU64,
     /// Approval correlation: our approval uuid → the CLI's control request id.
     permits: parking_lot::Mutex<HashMap<String, String>>,
+    /// Current model (from init frame / set_model; reported in config options).
+    current_model: parking_lot::Mutex<Option<String>>,
+    /// Current effort level (spawn-time flag; report-only — changes apply on respawn).
+    thinking_level: parking_lot::Mutex<Option<String>>,
 }
 
 impl ClaudeDriver {
@@ -187,6 +191,13 @@ impl ClaudeDriver {
         if let Some(mode) = &spawn.permission_mode {
             args.push(format!("--permission-mode={mode}"));
         }
+        // Model & effort preferences (frontend-stored, applied at spawn).
+        if let Some(model) = &spawn.initial_model {
+            args.push(format!("--model={model}"));
+        }
+        if let Some(effort) = &spawn.initial_thinking {
+            args.push(format!("--effort={effort}"));
+        }
         if let Some(sid) = &spawn.harness_session_id {
             args.push(format!("--resume={sid}"));
         }
@@ -213,6 +224,8 @@ impl ClaudeDriver {
             interrupt_requested: AtomicBool::new(false),
             req_counter: AtomicU64::new(1),
             permits: parking_lot::Mutex::new(HashMap::new()),
+            current_model: parking_lot::Mutex::new(spawn.initial_model.clone()),
+            thinking_level: parking_lot::Mutex::new(spawn.initial_thinking.clone()),
         });
 
         if let Some(stderr) = stderr {
@@ -245,6 +258,14 @@ impl ClaudeDriver {
         // No response correlation is needed to proceed — stream-json sessions
         // accept prompts as soon as stdin is live; system/init will follow.
         ctx.emit_state("idle", None);
+        // Synthesized config options: the model selector (live via set_model)
+        // and effort/thinking selector (spawn-time --effort flag; the current
+        // value here reports the spawn-time setting until a respawn applies a
+        // new one). The system/init frame's model field corrects the current
+        // model once it arrives.
+        ctx.emit_event(HarnessEvent::ConfigOptions {
+            options: claude_config_options(&driver),
+        });
 
         {
             let d = driver.clone();
@@ -362,9 +383,18 @@ impl ClaudeDriver {
                     *self.session_id.lock() = Some(sid.clone());
                     self.ctx.set_harness_session_id(sid);
                 }
+                // The init frame reports the CLI's actual model — update our
+                // config-option state (the spawn preference may be an alias
+                // like "sonnet" while init reports the resolved full id).
+                if let Some(m) = &model {
+                    *self.current_model.lock() = Some(m.clone());
+                }
                 self.ctx.emit_event(HarnessEvent::SessionInfo {
                     harness_session_id: sid,
                     model,
+                });
+                self.ctx.emit_event(HarnessEvent::ConfigOptions {
+                    options: claude_config_options(self),
                 });
             }
             Some("compact_boundary") => {
@@ -578,12 +608,118 @@ impl ClaudeDriver {
                         );
                     }
                 }
+                HarnessCommand::SetConfigOption { config_id, value } => {
+                    self.handle_set_config_option(config_id, value).await;
+                }
+            }
+        }
+    }
+
+    /// Set a config option: "model" → live set_model control frame;
+    /// "effort" → report-only (the --effort spawn flag applies on respawn;
+    /// the frontend persists the preference and stops the session to apply).
+    async fn handle_set_config_option(&self, config_id: String, value: Value) {
+        let Some(val) = value.as_str() else {
+            return;
+        };
+        match config_id.as_str() {
+            "model" => {
+                let id = format!(
+                    "aio_model_{}",
+                    self.req_counter.fetch_add(1, Ordering::SeqCst)
+                );
+                if let Err(e) = self
+                    .send_control_request(&id, json!({ "subtype": "set_model", "model": val }))
+                    .await
+                {
+                    tracing::debug!("[harness:{}] set_model 发送失败: {e}", self.tool_label);
+                    return;
+                }
+                // Optimistic update: the set_model control response confirms
+                // (fire-and-forget); the next assistant frame's message.model
+                // field reflects the CLI's actual model.
+                *self.current_model.lock() = Some(val.to_string());
+                self.ctx.emit_event(HarnessEvent::ConfigOptions {
+                    options: claude_config_options(self),
+                });
+            }
+            "effort" => {
+                // Report-only: the actual --effort flag applies at the next
+                // spawn (the frontend persists the preference and stops the
+                // session runtime so the next prompt respawns with it).
+                *self.thinking_level.lock() = Some(val.to_string());
+                self.ctx.emit_event(HarnessEvent::ConfigOptions {
+                    options: claude_config_options(self),
+                });
+            }
+            _ => {
+                tracing::debug!(
+                    "[harness:{}] 忽略未知 config 选项 {config_id}",
+                    self.tool_label
+                );
             }
         }
     }
 }
 
 // ===== frame → event mapping (pure, unit-tested) =====
+
+/// Synthesize the config-option set for the Claude native driver: a model
+/// selector (stable aliases + the CLI's resolved current model) and an
+/// effort/thinking selector (spawn-time --effort flag values).
+fn claude_config_options(
+    d: &ClaudeDriver,
+) -> Vec<crate::plugins::harness::model::HarnessConfigOption> {
+    use crate::plugins::harness::model::{HarnessConfigOption, HarnessConfigValue};
+    let model_values = vec![
+        HarnessConfigValue {
+            id: "sonnet".into(),
+            name: Some("Sonnet".into()),
+        },
+        HarnessConfigValue {
+            id: "opus".into(),
+            name: Some("Opus".into()),
+        },
+        HarnessConfigValue {
+            id: "haiku".into(),
+            name: Some("Haiku".into()),
+        },
+    ];
+    let effort_values = vec![
+        HarnessConfigValue {
+            id: "low".into(),
+            name: None,
+        },
+        HarnessConfigValue {
+            id: "medium".into(),
+            name: None,
+        },
+        HarnessConfigValue {
+            id: "high".into(),
+            name: None,
+        },
+    ];
+    vec![
+        HarnessConfigOption {
+            option_id: "model".into(),
+            name: Some("Model".into()),
+            kind: "select".into(),
+            category: Some("model".into()),
+            current: d.current_model.lock().clone(),
+            values: model_values,
+            boolean_value: None,
+        },
+        HarnessConfigOption {
+            option_id: "effort".into(),
+            name: Some("Effort".into()),
+            kind: "select".into(),
+            category: Some("thought_level".into()),
+            current: d.thinking_level.lock().clone(),
+            values: effort_values,
+            boolean_value: None,
+        },
+    ]
+}
 
 /// tool_use content block → ToolCallStart.
 fn tool_use_start(block: &Value) -> Option<HarnessEvent> {
@@ -927,6 +1063,8 @@ mod live_tests {
                 workspace_path: workspace_path.clone(),
                 harness_session_id: None,
                 permission_mode: None,
+                initial_model: None,
+                initial_thinking: None,
             },
             cmd_rx,
         )

@@ -144,6 +144,7 @@ impl AcpDriver {
         // history) with fallback to a fresh session/new when the agent never saw
         // the id or lacks the resume capability.
         let mut harness_sid: Option<String> = None;
+        let mut session_resp: Option<Value> = None;
         if let Some(rid) = spawn.harness_session_id.clone() {
             let Ok((resume_id, resume_rx)) = driver
                 .send_request(
@@ -160,7 +161,10 @@ impl AcpDriver {
                 .wait_request(resume_id, resume_rx, SESSION_SETUP_TIMEOUT_SECS)
                 .await
             {
-                Ok(_) => harness_sid = Some(rid),
+                Ok(v) => {
+                    harness_sid = Some(rid);
+                    session_resp = Some(v);
+                }
                 Err(e) => {
                     tracing::info!("[harness:{tool_label}] resume {rid} 失败（回退新会话）: {e}");
                 }
@@ -185,6 +189,7 @@ impl AcpDriver {
                 .or_else(|| resp.get("sessionId"))
                 .and_then(Value::as_str)
                 .map(str::to_string);
+            session_resp = Some(resp);
         }
 
         if let Some(sid) = &harness_sid {
@@ -199,6 +204,14 @@ impl AcpDriver {
             harness_session_id: harness_sid,
             model: None,
         });
+        // Config options (model / thought-level selectors): the session/new (or
+        // resume) result carries the agent's full option set; emit it so the GUI
+        // can render the dropdowns. Agents that expose nothing → empty list.
+        if let Some(resp) = &session_resp {
+            if let Some(options) = parse_acp_config_options(resp) {
+                ctx.emit_event(HarnessEvent::ConfigOptions { options });
+            }
+        }
         ctx.emit_state("idle", None);
 
         // Command loop
@@ -467,6 +480,9 @@ impl AcpDriver {
                         self.tool_label
                     );
                 }
+                HarnessCommand::SetConfigOption { config_id, value } => {
+                    self.handle_set_config_option(config_id, value).await;
+                }
                 HarnessCommand::CancelTurn => {
                     let Some(sid) = self.session_id.lock().clone() else {
                         continue;
@@ -527,6 +543,43 @@ impl AcpDriver {
         tauri::async_runtime::spawn(async move {
             d.wait_turn(id, rx).await;
         });
+    }
+
+    /// Set a session config option (model / thought level / boolean toggle):
+    /// sends `session/set_config_option` and awaits the response (the agent's
+    /// `config_option_update` session update carries the new current state).
+    /// Wire shapes verified from the ACP v1 schema:
+    ///   select: `{sessionId, configId, value: "model-id"}`
+    ///   boolean: `{sessionId, configId, type: "boolean", value: true}`
+    async fn handle_set_config_option(&self, config_id: String, value: Value) {
+        let Some(sid) = self.session_id.lock().clone() else {
+            return;
+        };
+        let params = if let Some(b) = value.as_bool() {
+            json!({
+                "sessionId": sid,
+                "configId": config_id,
+                "type": "boolean",
+                "value": b
+            })
+        } else {
+            json!({
+                "sessionId": sid,
+                "configId": config_id,
+                "value": value
+            })
+        };
+        let Ok((id, rx)) = self.send_request("session/set_config_option", params).await else {
+            tracing::debug!("[harness:{}] set_config_option 发送失败", self.tool_label);
+            return;
+        };
+        // Await the response: on success the agent's config_option_update
+        // notification re-emits the new state; on error we surface it.
+        if let Ok(resp) = self.wait_request(id, rx, SESSION_SETUP_TIMEOUT_SECS).await {
+            if let Some(options) = parse_acp_config_options(&resp) {
+                self.ctx.emit_event(HarnessEvent::ConfigOptions { options });
+            }
+        }
     }
 
     /// Turn-end waiter: resolves the pending session/prompt response into
@@ -629,10 +682,19 @@ fn map_session_update(tool: &str, update: SessionUpdate) -> Vec<HarnessEvent> {
             .and_then(|w| notice_event(&w))
             .map(|e| vec![e])
             .unwrap_or_default(),
+        // Config option state changed (agent applied a set_config_option, or its
+        // option set evolved): re-emit the full current set for the GUI.
+        SessionUpdate::ConfigOptionUpdate(c) => {
+            let wire = serde_json::to_value(&c).ok();
+            wire.and_then(|w| {
+                parse_acp_config_options(&w)
+                    .map(|options| vec![HarnessEvent::ConfigOptions { options }])
+            })
+            .unwrap_or_default()
+        }
         // Not consumed by the PR1 UI (reserved for later PRs).
         SessionUpdate::AvailableCommandsUpdate(_)
         | SessionUpdate::CurrentModeUpdate(_)
-        | SessionUpdate::ConfigOptionUpdate(_)
         | SessionUpdate::SessionInfoUpdate(_)
         | SessionUpdate::CompactionUpdate(_)
         | SessionUpdate::CompactionSummaryChunk(_) => Vec::new(),
@@ -809,6 +871,112 @@ fn notice_event(w: &Value) -> Option<HarnessEvent> {
     Some(HarnessEvent::Notice { message })
 }
 
+/// Parse the ACP `configOptions` array (session/new result or
+/// config_option_update payload) into the normalized config-option model.
+/// Returns None when the agent exposes nothing.
+fn parse_acp_config_options(
+    v: &Value,
+) -> Option<Vec<crate::plugins::harness::model::HarnessConfigOption>> {
+    // The array lives at /result/configOptions (session/new JSON-RPC response)
+    // or /configOptions (config_option_update notification payload).
+    let arr = v
+        .pointer("/result/configOptions")
+        .or_else(|| v.get("configOptions"))?
+        .as_array()?;
+    if arr.is_empty() {
+        return None;
+    }
+    let options = arr
+        .iter()
+        .filter_map(parse_one_config_option)
+        .collect::<Vec<_>>();
+    (!options.is_empty()).then_some(options)
+}
+
+/// One ACP SessionConfigOption wire item → normalized HarnessConfigOption.
+/// Wire shapes (schema-verified): select → `{id, name, category?, type:"select",
+/// currentValue, options: [{value, name}] | [{name, options: [...]}]}`;
+/// boolean → `{id, name, category?, type:"boolean", currentValue: bool}`.
+fn parse_one_config_option(
+    item: &Value,
+) -> Option<crate::plugins::harness::model::HarnessConfigOption> {
+    use crate::plugins::harness::model::HarnessConfigOption;
+    let option_id = item.get("id")?.as_str()?.to_string();
+    let name = item.get("name").and_then(Value::as_str).map(str::to_string);
+    let category = item
+        .get("category")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    match item.get("type").and_then(Value::as_str) {
+        Some("boolean") => Some(HarnessConfigOption {
+            option_id,
+            name,
+            kind: "boolean".to_string(),
+            category,
+            current: None,
+            values: Vec::new(),
+            boolean_value: item.get("currentValue").and_then(Value::as_bool),
+        }),
+        _ => {
+            // select (the default kind)
+            let current = item
+                .get("currentValue")
+                .and_then(Value::as_str)
+                .map(str::to_string);
+            let values = parse_config_select_values(item.get("options"));
+            Some(HarnessConfigOption {
+                option_id,
+                name,
+                kind: "select".to_string(),
+                category,
+                current,
+                values,
+                boolean_value: None,
+            })
+        }
+    }
+}
+
+/// Parse select-option values; handles both the flat list
+/// (`[{value, name}, ...]`) and the grouped list (`[{name, options: [...]}]`).
+fn parse_config_select_values(
+    options: Option<&Value>,
+) -> Vec<crate::plugins::harness::model::HarnessConfigValue> {
+    use crate::plugins::harness::model::HarnessConfigValue;
+    let Some(arr) = options.and_then(Value::as_array) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for entry in arr {
+        if let Some(value) = entry.get("value").and_then(Value::as_str) {
+            // Flat entry: {value, name}
+            out.push(HarnessConfigValue {
+                id: value.to_string(),
+                name: entry
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .map(str::to_string),
+            });
+        } else if let Some(group) = entry.get("options").and_then(Value::as_array) {
+            // Grouped entry: {name: "Group label", options: [{value, name}, ...]}
+            let group_label = entry.get("name").and_then(Value::as_str);
+            for sub in group {
+                if let Some(value) = sub.get("value").and_then(Value::as_str) {
+                    out.push(HarnessConfigValue {
+                        id: value.to_string(),
+                        name: sub
+                            .get("name")
+                            .and_then(Value::as_str)
+                            .or(group_label)
+                            .map(str::to_string),
+                    });
+                }
+            }
+        }
+    }
+    out
+}
+
 /// First diff entry of a permission toolCall → unified diff preview text.
 fn preview_diff_from_tool_call(wire: &Value) -> Option<String> {
     let arr = wire.pointer("/toolCall/content")?.as_array()?;
@@ -849,6 +1017,113 @@ fn compact_json_string(v: &Value) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Config options: session/new-style response (result.configOptions) and
+    /// config_option_update notification both parse into the normalized model;
+    /// grouped select lists flatten; booleans pass through.
+    #[test]
+    fn parses_config_options_select_and_boolean() {
+        let resp = json!({
+            "jsonrpc": "2.0",
+            "id": 7,
+            "result": {
+                "sessionId": "sess_1",
+                "configOptions": [
+                    {
+                        "id": "model",
+                        "name": "Model",
+                        "category": "model",
+                        "type": "select",
+                        "currentValue": "opus",
+                        "options": [
+                            { "value": "sonnet", "name": "Sonnet" },
+                            { "value": "opus", "name": "Opus" }
+                        ]
+                    },
+                    {
+                        "id": "brave_mode",
+                        "name": "Brave Mode",
+                        "type": "boolean",
+                        "currentValue": true
+                    }
+                ]
+            }
+        });
+        let options = parse_acp_config_options(&resp).expect("options present");
+        assert_eq!(options.len(), 2);
+        assert_eq!(options[0].option_id, "model");
+        assert_eq!(options[0].kind, "select");
+        assert_eq!(options[0].category.as_deref(), Some("model"));
+        assert_eq!(options[0].current.as_deref(), Some("opus"));
+        assert_eq!(options[0].values.len(), 2);
+        assert_eq!(options[0].values[0].id, "sonnet");
+        assert_eq!(options[0].values[1].name.as_deref(), Some("Opus"));
+        assert_eq!(options[1].option_id, "brave_mode");
+        assert_eq!(options[1].kind, "boolean");
+        assert_eq!(options[1].boolean_value, Some(true));
+
+        // config_option_update notification payload (top-level configOptions).
+        let update = json!({
+            "sessionUpdate": "config_option_update",
+            "configOptions": [
+                {
+                    "id": "reasoning_effort",
+                    "name": "Reasoning Effort",
+                    "category": "thought_level",
+                    "type": "select",
+                    "currentValue": "high",
+                    "options": [
+                        { "name": "Provider A", "options": [
+                            { "value": "low", "name": "Low" },
+                            { "value": "high", "name": "High" }
+                        ]}
+                    ]
+                }
+            ]
+        });
+        let options = parse_acp_config_options(&update).expect("options present");
+        assert_eq!(options.len(), 1);
+        assert_eq!(options[0].option_id, "reasoning_effort");
+        assert_eq!(options[0].current.as_deref(), Some("high"));
+        // Grouped list flattened.
+        assert_eq!(options[0].values.len(), 2);
+        assert_eq!(options[0].values[1].id, "high");
+        assert_eq!(options[0].values[1].name.as_deref(), Some("High"));
+
+        // Empty/absent option sets → None.
+        assert!(parse_acp_config_options(&json!({ "result": {} })).is_none());
+        assert!(parse_acp_config_options(&json!({})).is_none());
+    }
+
+    /// The config_option_update SessionUpdate maps to a ConfigOptions event
+    /// end-to-end through map_session_update.
+    #[test]
+    fn maps_config_option_update_event() {
+        let wire = json!({
+            "sessionId": "sess_a",
+            "update": {
+                "sessionUpdate": "config_option_update",
+                "configOptions": [
+                    {
+                        "id": "model",
+                        "name": "Model",
+                        "type": "select",
+                        "currentValue": "m2",
+                        "options": [ { "value": "m1", "name": "M1" }, { "value": "m2", "name": "M2" } ]
+                    }
+                ]
+            }
+        });
+        let note: SessionNotification = serde_json::from_value(wire).unwrap();
+        let events = map_session_update("t", note.update);
+        match &events[..] {
+            [HarnessEvent::ConfigOptions { options }] => {
+                assert_eq!(options[0].option_id, "model");
+                assert_eq!(options[0].current.as_deref(), Some("m2"));
+            }
+            other => panic!("expected one ConfigOptions event, got {other:?}"),
+        }
+    }
 
     /// Literal wire examples from the ACP v1 spec/research: the mapping must
     /// produce exactly the normalized events the frontend expects.
@@ -1126,6 +1401,8 @@ mod live_tests {
                 workspace_path: workspace_path.clone(),
                 harness_session_id: None,
                 permission_mode: None,
+                initial_model: None,
+                initial_thinking: None,
             },
             cmd_rx,
         )

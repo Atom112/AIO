@@ -146,8 +146,9 @@ pub async fn harness_append_message(
 /// session id when the runtime is not live), and submits the prompt. Returns the
 /// persisted user message for the frontend to render.
 ///
-/// `permission_mode` (Claude Code native only) sets the initial permission mode
-/// of a freshly spawned agent; live runtimes switch via `harness_set_permission_mode`.
+/// `prefs` carries the frontend's stored native-adapter preferences (permission
+/// mode / model / thinking level) applied to a freshly spawned runtime; ACP
+/// agents own their state and ignore them.
 #[tauri::command]
 pub async fn harness_send_message(
     app: AppHandle,
@@ -155,7 +156,7 @@ pub async fn harness_send_message(
     manager: State<'_, HarnessManager>,
     session_row_id: String,
     text: String,
-    permission_mode: Option<String>,
+    prefs: Option<crate::plugins::harness::adapter::DriverSpawnPrefs>,
 ) -> Result<Message, String> {
     let text = text.trim().to_string();
     if text.is_empty() {
@@ -181,7 +182,7 @@ pub async fn harness_send_message(
             &session_row_id,
             &row.workspace_path,
             row.harness_session_id.clone(),
-            permission_mode,
+            prefs.unwrap_or_default(),
         )
         .await?
         .cmd_tx
@@ -239,5 +240,21 @@ pub async fn harness_set_permission_mode(
     mode: String,
 ) -> Result<(), String> {
     manager.set_permission_mode(&session_row_id, &mode);
+    Ok(())
+}
+
+/// Set a session config option (model selector / thought level / boolean) on a
+/// running harness session. ACP → session/set_config_option (live); claude
+/// native → set_model control frame (model, live) / effort stored for respawn;
+/// codex native → stored for the next per-turn spawn. No-op when the session
+/// is not live — the caller persists the choice for the next spawn.
+#[tauri::command]
+pub async fn harness_set_config_option(
+    manager: State<'_, HarnessManager>,
+    session_row_id: String,
+    config_id: String,
+    value: serde_json::Value,
+) -> Result<(), String> {
+    manager.set_config_option(&session_row_id, &config_id, value);
     Ok(())
 }

@@ -36,6 +36,7 @@ import { getHarnessLogo } from '../utils/harnessLogos';
 import HarnessMessageList from './HarnessMessageList';
 import HarnessApprovalBubble from './HarnessApprovalBubble';
 import HarnessPlanStrip from './HarnessPlanStrip';
+import HarnessConfigControls from './HarnessConfigControls';
 
 interface HarnessChatInterfaceProps {
   inputMessage: string;
@@ -279,7 +280,12 @@ const HarnessChatInterface: Component<HarnessChatInterfaceProps> = (props) => {
               style={{ 'border-color': 'var(--border-dim)' }}
             >
               <div class="flex items-center gap-2">
-                {/* Claude permission mode (the AgentModeSelector slot) */}
+                {/* Session config controls (model / thinking level) — the
+                    AgentModeSelector slot; rendered from the agent-reported
+                    option set, so controls appear only when the tool exposes
+                    them (ACP agents) or is a native adapter (claude/codex). */}
+                <HarnessConfigControls isBusy={props.isBusy} />
+                {/* Claude permission mode */}
                 <Show when={tool()?.id === 'claude' && tool()?.adapter === 'claude-native'}>
                   <Dropdown
                     variant="ghost"

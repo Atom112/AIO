@@ -32,6 +32,14 @@ pub enum HarnessCommand {
     /// Switch the harness agent's permission mode (Claude Code native:
     /// set_permission_mode control frame; other adapters ignore it).
     SetPermissionMode { mode: String },
+    /// Set a session config option (model selector / thought level / boolean):
+    /// ACP → session/set_config_option; claude native → set_model control frame;
+    /// codex native → stored for the next per-turn spawn.
+    SetConfigOption {
+        config_id: String,
+        /// Select value id (string) or boolean value
+        value: serde_json::Value,
+    },
 }
 
 /// What a driver hands back on start: the child handle the manager needs for
@@ -179,6 +187,23 @@ pub struct DriverSpawn {
     /// Initial permission mode (Claude Code native: --permission-mode spawn flag;
     /// other adapters ignore it).
     pub permission_mode: Option<String>,
+    /// Initial model preference (native adapters: spawn flag / per-turn arg;
+    /// ACP agents own their model state and ignore this).
+    pub initial_model: Option<String>,
+    /// Initial thinking/effort level preference (native adapters' spawn flags:
+    /// claude --effort / codex -c model_reasoning_effort).
+    pub initial_thinking: Option<String>,
+}
+
+/// Frontend-stored preferences applied to a freshly spawned runtime (native
+/// adapters consume them as spawn flags/args; ACP agents own their state and
+/// ignore all three). IPC wire shape: `{permissionMode?, model?, thinkingLevel?}`.
+#[derive(Debug, Default, Clone, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DriverSpawnPrefs {
+    pub permission_mode: Option<String>,
+    pub model: Option<String>,
+    pub thinking_level: Option<String>,
 }
 
 /// One CLI harness adapter. Implementations own the whole native protocol for

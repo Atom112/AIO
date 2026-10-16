@@ -120,6 +120,36 @@ function loadConfigCache(): Record<string, HarnessConfigOption[]> {
 
 const [harnessConfigCache, setHarnessConfigCache] =
   createSignal<Record<string, HarnessConfigOption[]>>(loadConfigCache());
+// ===== Per-tool spawn-option preferences (CLI-flag-backed options like omp's
+// --approval-mode; keyed tool → optionId → valueId, persisted) =====
+
+const SPAWN_PREFS_KEY = 'aio-harness-spawn-prefs-v1';
+
+function loadSpawnPrefs(): Record<string, Record<string, string>> {
+  try {
+    const raw = localStorage.getItem(SPAWN_PREFS_KEY);
+    if (raw) return JSON.parse(raw);
+  } catch {
+    /* corrupted entry — fall through */
+  }
+  return {};
+}
+
+const [harnessSpawnPrefs, setHarnessSpawnPrefs] =
+  createSignal<Record<string, Record<string, string>>>(loadSpawnPrefs());
+
+/** Set + persist one spawn-option preference for a tool. */
+const saveHarnessSpawnPref = (toolId: string, optionId: string, value: string) => {
+  setHarnessSpawnPrefs((prev) => {
+    const next = { ...prev, [toolId]: { ...prev[toolId], [optionId]: value } };
+    try {
+      localStorage.setItem(SPAWN_PREFS_KEY, JSON.stringify(next));
+    } catch {
+      /* restricted storage — session-only */
+    }
+    return next;
+  });
+};
 
 /** Persist the latest config-option set reported for a tool. */
 const saveHarnessConfigCacheEntry = (toolId: string, options: HarnessConfigOption[]) => {
@@ -286,6 +316,8 @@ export {
   saveHarnessNativePref,
   harnessConfigCache,
   saveHarnessConfigCacheEntry,
+  harnessSpawnPrefs,
+  saveHarnessSpawnPref,
   harnessNativeModel,
   harnessNativeThinking,
   restoreHarnessSelection,

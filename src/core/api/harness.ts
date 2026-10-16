@@ -70,6 +70,8 @@ export interface HarnessSpawnPrefs {
   permissionMode?: string;
   model?: string;
   thinkingLevel?: string;
+  /** Registry-declared spawn-option values keyed by option id (e.g. omp's approval-mode). */
+  spawnOptionValues?: Record<string, string>;
 }
 
 /** Send a user prompt (persisted + submitted to the harness agent); returns the stored user message. */

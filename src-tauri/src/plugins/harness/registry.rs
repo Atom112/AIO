@@ -36,6 +36,35 @@ pub enum HarnessToolKind {
     },
 }
 
+/// One value of a spawn-time option (CLI-flag-backed).
+#[derive(Clone, Debug)]
+pub struct SpawnOptionValueSpec {
+    /// Value id shown to the GUI / persisted as the preference key.
+    pub id: String,
+    /// Display label (registry-declared, English; the GUI may i18n known ids).
+    pub name: String,
+    /// false = the tool's default behavior — inject nothing for this value.
+    pub inject: bool,
+}
+
+/// A CLI-flag-backed option a tool supports but does NOT expose over its wire
+/// protocol (e.g. omp's `--approval-mode`: its ACP config options cover
+/// mode/model/thinking, but the approval modes always-ask|write|yolo are
+/// TUI-only flags — verified against omp v17.2.1). Spawn-time only: the
+/// driver injects `{arg}={value}` at process start; changing it respawns the
+/// session (the GUI persists the preference and stops the runtime).
+#[derive(Clone, Debug)]
+pub struct SpawnOptionSpec {
+    /// Config-option id shown to the GUI (e.g. "approval-mode").
+    pub option_id: String,
+    /// Display label (registry-declared, English; the GUI may i18n known ids).
+    pub name: String,
+    /// CLI flag; the chosen value is injected as `{arg}={id}` when that
+    /// value's `inject` is true.
+    pub arg: String,
+    pub values: Vec<SpawnOptionValueSpec>,
+}
+
 /// One registered harness tool.
 #[derive(Clone, Debug)]
 pub struct HarnessToolSpec {
@@ -45,6 +74,9 @@ pub struct HarnessToolSpec {
     /// Display name (brand names are not localized).
     pub name: String,
     pub kind: HarnessToolKind,
+    /// CLI-flag-backed options the tool supports outside its wire protocol
+    /// (empty for most tools).
+    pub spawn_options: Vec<SpawnOptionSpec>,
 }
 
 /// Availability detection result for the frontend tool list.
@@ -70,6 +102,7 @@ pub fn builtin_tools() -> Vec<HarnessToolSpec> {
         HarnessToolSpec {
             id: "claude".to_string(),
             name: "Claude Code".to_string(),
+            spawn_options: vec![],
             kind: HarnessToolKind::ClaudeNative {
                 fallback: AcpCommand::Npx {
                     package: "@agentclientprotocol/claude-agent-acp".to_string(),
@@ -80,6 +113,7 @@ pub fn builtin_tools() -> Vec<HarnessToolSpec> {
         HarnessToolSpec {
             id: "codex".to_string(),
             name: "Codex".to_string(),
+            spawn_options: vec![],
             kind: HarnessToolKind::CodexExec {
                 fallback: AcpCommand::Npx {
                     package: "@agentclientprotocol/codex-acp".to_string(),
@@ -90,6 +124,7 @@ pub fn builtin_tools() -> Vec<HarnessToolSpec> {
         HarnessToolSpec {
             id: "opencode".to_string(),
             name: "OpenCode".to_string(),
+            spawn_options: vec![],
             kind: HarnessToolKind::Acp {
                 command: AcpCommand::Bare {
                     command: "opencode".to_string(),
@@ -100,6 +135,32 @@ pub fn builtin_tools() -> Vec<HarnessToolSpec> {
         HarnessToolSpec {
             id: "omp".to_string(),
             name: "Oh My Pi".to_string(),
+            // omp's ACP surface covers mode/model/thinking, but the approval
+            // modes (always-ask|write|yolo) are TUI-only flags — inject them
+            // at spawn (probe-verified: `omp acp --approval-mode=yolo` serves
+            // ACP normally, oclif global flag).
+            spawn_options: vec![SpawnOptionSpec {
+                option_id: "approval-mode".to_string(),
+                name: "Approval Mode".to_string(),
+                arg: "--approval-mode".to_string(),
+                values: vec![
+                    SpawnOptionValueSpec {
+                        id: "always-ask".to_string(),
+                        name: "Always ask".to_string(),
+                        inject: false,
+                    },
+                    SpawnOptionValueSpec {
+                        id: "write".to_string(),
+                        name: "Write".to_string(),
+                        inject: true,
+                    },
+                    SpawnOptionValueSpec {
+                        id: "yolo".to_string(),
+                        name: "YOLO".to_string(),
+                        inject: true,
+                    },
+                ],
+            }],
             kind: HarnessToolKind::Acp {
                 command: AcpCommand::Bare {
                     command: "omp".to_string(),
@@ -110,6 +171,7 @@ pub fn builtin_tools() -> Vec<HarnessToolSpec> {
         HarnessToolSpec {
             id: "gemini".to_string(),
             name: "Gemini CLI".to_string(),
+            spawn_options: vec![],
             kind: HarnessToolKind::Acp {
                 command: AcpCommand::Bare {
                     command: "gemini".to_string(),
@@ -120,6 +182,7 @@ pub fn builtin_tools() -> Vec<HarnessToolSpec> {
         HarnessToolSpec {
             id: "qwen".to_string(),
             name: "Qwen Code".to_string(),
+            spawn_options: vec![],
             kind: HarnessToolKind::Acp {
                 command: AcpCommand::Bare {
                     command: "qwen".to_string(),
@@ -130,6 +193,7 @@ pub fn builtin_tools() -> Vec<HarnessToolSpec> {
         HarnessToolSpec {
             id: "goose".to_string(),
             name: "goose".to_string(),
+            spawn_options: vec![],
             kind: HarnessToolKind::Acp {
                 command: AcpCommand::Bare {
                     command: "goose".to_string(),
@@ -140,6 +204,7 @@ pub fn builtin_tools() -> Vec<HarnessToolSpec> {
         HarnessToolSpec {
             id: "dsh".to_string(),
             name: "DSH".to_string(),
+            spawn_options: vec![],
             kind: HarnessToolKind::Acp {
                 command: AcpCommand::Bare {
                     command: "dsh".to_string(),
@@ -166,6 +231,7 @@ pub fn lookup_any(app: &tauri::AppHandle, tool_id: &str) -> Option<HarnessToolSp
     Some(HarnessToolSpec {
         id: agent.id,
         name: agent.name,
+        spawn_options: vec![],
         kind: HarnessToolKind::Acp {
             command: AcpCommand::Bare {
                 command: agent.command,
@@ -192,6 +258,7 @@ pub fn detect_tools(app: &tauri::AppHandle) -> Vec<HarnessToolStatus> {
             let spec = HarnessToolSpec {
                 id: agent.id,
                 name: agent.name,
+                spawn_options: vec![],
                 kind: HarnessToolKind::Acp {
                     command: AcpCommand::Bare {
                         command: agent.command,

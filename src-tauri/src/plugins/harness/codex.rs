@@ -812,6 +812,7 @@ mod live_tests {
                 permission_mode: None,
                 initial_model: None,
                 initial_thinking: None,
+                spawn_option_values: Default::default(),
             },
             cmd_rx,
         )

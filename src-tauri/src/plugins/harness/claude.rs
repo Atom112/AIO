@@ -40,37 +40,76 @@ impl HarnessAdapter for ClaudeAdapter {
     }
 }
 
+/// Minimum plausible size of the real native binary. The npm package ships a
+/// <4KB placeholder stub at `bin/claude.exe` that postinstall replaces with the
+/// actual binary (verified against @anthropic-ai/claude-code@2.1.301's
+/// install.cjs: stub check `size < 4096`, real binary ~500MB). Anything below
+/// this threshold is a stub — a failed postinstall (--omit=optional, download
+/// error) must not be mistaken for a working native claude.
+const REAL_BINARY_MIN_BYTES: u64 = 1_000_000;
+
+/// Whether a candidate path points to the REAL native binary (not the stub).
+/// `fs::metadata` follows symlinks — on Unix the PATH-resolved `claude` is
+/// typically a symlink into the npm package, and the guard reads the target.
+fn is_real_native_binary(p: &std::path::Path) -> bool {
+    match std::fs::metadata(p) {
+        Ok(md) => md.is_file() && md.len() >= REAL_BINARY_MIN_BYTES,
+        Err(_) => false,
+    }
+}
+
+/// Resolve the real native exe inside an npm global install layout:
+/// `<npm_prefix>/node_modules/@anthropic-ai/claude-code/bin/claude(.exe)` —
+/// exactly what install.cjs places (hardlink of the platform-package binary)
+/// and exactly what the PATH shim execs.
+fn npm_package_binary(npm_prefix: &std::path::Path) -> Option<std::path::PathBuf> {
+    let exe = if cfg!(windows) {
+        "claude.exe"
+    } else {
+        "claude"
+    };
+    let candidate = npm_prefix
+        .join("node_modules")
+        .join("@anthropic-ai")
+        .join("claude-code")
+        .join("bin")
+        .join(exe);
+    is_real_native_binary(&candidate).then_some(candidate)
+}
+
 /// Locate a REAL native `claude` binary — never an npm `.cmd`/`.ps1` shim:
 /// shims get rewritten through `cmd.exe` (BatBadBut-class injection surface;
 /// Anthropic's own Python SDK refuses to spawn them too).
+///
+/// Probe order:
+/// 1. Native installer location (`~/.local/bin/claude[.exe]`) — Anthropic's
+///    recommended install, which also auto-updates.
+/// 2. PATH walk (real executables only; the size guard rejects npm's <4KB stub).
+/// 3. npm global install: the PATH shim reveals the npm prefix; the real exe
+///    sits inside the package (`node_modules/@anthropic-ai/claude-code/bin/`).
+///    Both layouts probed: shim beside node_modules (Windows npm default) and
+///    shim in `<prefix>/bin` with modules in `<prefix>/lib/node_modules` (Unix).
+/// 4. Windows default npm prefix (`%APPDATA%\npm`) as a final fallback.
 pub fn detect_native_binary() -> Option<std::path::PathBuf> {
-    #[cfg(windows)]
-    {
-        if let Some(home) = std::env::var_os("USERPROFILE") {
-            let p = std::path::Path::new(&home)
-                .join(".local")
-                .join("bin")
-                .join("claude.exe");
-            if p.is_file() {
-                return Some(p);
-            }
+    let exe_name = if cfg!(windows) {
+        "claude.exe"
+    } else {
+        "claude"
+    };
+    // 1. Native installer.
+    let home_var = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
+    if let Some(home) = std::env::var_os(home_var) {
+        let p = std::path::Path::new(&home)
+            .join(".local")
+            .join("bin")
+            .join(exe_name);
+        if is_real_native_binary(&p) {
+            return Some(p);
         }
     }
-    #[cfg(not(windows))]
-    {
-        if let Some(home) = std::env::var_os("HOME") {
-            let p = std::path::Path::new(&home)
-                .join(".local")
-                .join("bin")
-                .join("claude");
-            if p.is_file() {
-                return Some(p);
-            }
-        }
-    }
-    // PATH walk: on Windows accept only a true .exe (the resolver also finds
-    // .cmd/.ps1 shims, which we reject by extension).
-    crate::utils::exec_resolve::resolve_executable("claude").and_then(|p| {
+    // 2. PATH walk: on Windows accept only a true .exe (the resolver also
+    //    finds .cmd/.ps1 shims, which we reject by extension).
+    if let Some(p) = crate::utils::exec_resolve::resolve_executable("claude") {
         let is_real_exe = if cfg!(windows) {
             p.extension()
                 .map(|e| e.eq_ignore_ascii_case("exe"))
@@ -78,8 +117,32 @@ pub fn detect_native_binary() -> Option<std::path::PathBuf> {
         } else {
             true
         };
-        is_real_exe.then_some(p)
-    })
+        if is_real_exe && is_real_native_binary(&p) {
+            return Some(p);
+        }
+    }
+    // 3. npm global install via the shim's prefix.
+    if let Some(shim) = crate::utils::exec_resolve::resolve_executable("claude") {
+        if let Some(prefix) = shim.parent() {
+            // Windows npm layout: <prefix>\claude.cmd beside <prefix>\node_modules.
+            if let Some(p) = npm_package_binary(prefix) {
+                return Some(p);
+            }
+            // Unix npm layout: <prefix>/bin/claude → <prefix>/lib/node_modules.
+            if let Some(p) = npm_package_binary(&prefix.join("lib")) {
+                return Some(p);
+            }
+        }
+    }
+    // 4. Windows default npm prefix (covers PATH orders that hide the shim).
+    #[cfg(windows)]
+    if let Some(appdata) = std::env::var_os("APPDATA") {
+        let prefix = std::path::Path::new(&appdata).join("npm");
+        if let Some(p) = npm_package_binary(&prefix) {
+            return Some(p);
+        }
+    }
+    None
 }
 
 /// Shared state of one running Claude driver.
@@ -734,6 +797,59 @@ mod tests {
         assert_eq!(tool_result_text(&content).as_deref(), Some("ab"));
         assert_eq!(tool_result_text(&json!("plain")).as_deref(), Some("plain"));
         assert_eq!(tool_result_text(&json!({})), None);
+    }
+
+    /// Temp prefix laid out like an npm global install.
+    fn npm_prefix(tag: &str) -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!("aio-claude-npm-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(d.join("node_modules/@anthropic-ai/claude-code/bin")).unwrap();
+        d
+    }
+
+    /// The npm package's `bin/claude.exe` slot: a real (≥1MB) binary resolves;
+    /// the <4KB placeholder stub a failed postinstall leaves behind does not.
+    #[test]
+    fn npm_package_binary_accepts_real_binary_rejects_stub() {
+        let prefix = npm_prefix("real");
+        let exe = prefix
+            .join("node_modules/@anthropic-ai/claude-code/bin")
+            .join(if cfg!(windows) {
+                "claude.exe"
+            } else {
+                "claude"
+            });
+        // Real binary: over the 1MB threshold.
+        std::fs::write(&exe, vec![0u8; REAL_BINARY_MIN_BYTES as usize + 1]).unwrap();
+        assert_eq!(npm_package_binary(&prefix), Some(exe.clone()));
+
+        // Stub: the shipped placeholder is <4KB — must be rejected.
+        std::fs::write(&exe, vec![0u8; 4095]).unwrap();
+        assert_eq!(npm_package_binary(&prefix), None);
+
+        // Missing slot → None.
+        std::fs::remove_file(&exe).unwrap();
+        assert_eq!(npm_package_binary(&prefix), None);
+        let _ = std::fs::remove_dir_all(&prefix);
+    }
+
+    /// The size guard is the only stub/real discriminator — a 1MB boundary file
+    /// at exactly the threshold is accepted (>= comparison).
+    #[test]
+    fn real_binary_threshold_is_inclusive() {
+        let prefix = npm_prefix("edge");
+        let exe = prefix
+            .join("node_modules/@anthropic-ai/claude-code/bin")
+            .join(if cfg!(windows) {
+                "claude.exe"
+            } else {
+                "claude"
+            });
+        std::fs::write(&exe, vec![0u8; REAL_BINARY_MIN_BYTES as usize]).unwrap();
+        assert_eq!(npm_package_binary(&prefix), Some(exe.clone()));
+        std::fs::write(&exe, vec![0u8; REAL_BINARY_MIN_BYTES as usize - 1]).unwrap();
+        assert_eq!(npm_package_binary(&prefix), None);
+        let _ = std::fs::remove_dir_all(&prefix);
     }
 }
 

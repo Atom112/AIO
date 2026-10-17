@@ -1163,6 +1163,8 @@
   "harness.key.rulePlaceholder": "如 Bash(git *)",
   "harness.key.kvKey": "变量名",
   "harness.key.kvValue": "值",
+  "harness.key.filterPlaceholder": "过滤配置键…",
+  "harness.key.noMatches": "没有匹配的配置键",
   "harness.sidebar.addCustomTool": "添加自定义 ACP 工具",
   "harness.sidebar.deleteCustomTool": "删除自定义工具",
   "harness.sidebar.deleteCustomConfirm": "确定删除自定义工具「{{name}}」？",

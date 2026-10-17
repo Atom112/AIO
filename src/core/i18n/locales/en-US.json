@@ -1163,6 +1163,8 @@
   "harness.key.rulePlaceholder": "e.g. Bash(git *)",
   "harness.key.kvKey": "Name",
   "harness.key.kvValue": "Value",
+  "harness.key.filterPlaceholder": "Filter settings…",
+  "harness.key.noMatches": "No matching settings",
   "harness.sidebar.addCustomTool": "Add custom ACP tool",
   "harness.sidebar.deleteCustomTool": "Delete custom tool",
   "harness.sidebar.deleteCustomConfirm": "Delete custom tool \"{{name}}\"?",

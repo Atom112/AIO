@@ -2,6 +2,36 @@
 
 # Changelog
 
+## [0.8.2] — 2026-10-17
+
+本版本主题：**CLI Harness 图形化兼容层完整成型**——8 个 CLI 编码工具（Claude Code / Codex / OpenCode / Oh My Pi / Gemini CLI / Qwen Code / goose / DSH）在 AIO 内获得接近原生的使用体验：输入栏与对话页同款控件实时切换模型/思考强度/审批模式，设置页提供每工具配置子页（凭据、常用配置表单、带校验的原始配置编辑器、全局指令与技能管理、MCP 服务器管理），会话历史可靠持久化、选中话题即连即用。
+
+### Harness 工作台核心（PR #184–#188）
+
+- **工作台骨架 + ACP 通用驱动（#184）**：/harness 页面与对话页同构（两级工具/工作区侧栏 + 消息区 + 话题栏），`agent-client-protocol` 驱动让任何 ACP 工具接入；归一化事件流渲染消息/思维链/工具调用/审批气泡/任务板；本机 DSH 实测全链路跑通
+- **Claude Code 原生驱动（#185）**：原生二进制直驱 stream-json 协议——`set_permission_mode` 热切换、can_use_tool 审批回路、子代理流、中断；探测四级（官方安装器 → PATH → npm 包内真身 ≥1MB → 回退 ACP）
+- **自定义 ACP 工具 + 后台任务菜单联动（#186）**：任意「说 ACP 协议」的 CLI 注册为工具；运行中的 harness 话题出现在对话页后台任务菜单
+- **Codex 原生驱动（#187）**：`codex exec --json` 逐回合进程模型——prompt 走 stdin 永不进 argv、`resume` 跨重启续聊、完整事件映射；npm 安装检测修复（#188）
+
+### 工作台体验打磨（PR #189–#199）
+
+- **UI 严格复刻对话页（#189/#190/#196/#197）**：侧栏收展把手与宽度拖拽修复、工作区独立折叠持久化、CLI 工具品牌 logo（lobehub icons + 自绘 π）、输入栏控件复用对话页形态（模型图标下拉/思考滑杆/模式菜单）
+- **模型/思考/审批三通道配置（#191–#194）**：ACP configOptions 数据驱动 + claude `set_model` 热切 + codex 每回合 `-m/-c`；spawn 期选项机制覆盖全工具（omp/gemini/qwen `--approval-mode`、goose `GOOSE_MODE`、codex `-s` 沙箱）
+- **供应商凭据（#195）**：API Key 存 OS 钥匙串、spawn 时注入供应商环境变量（ANTHROPIC_API_KEY/OPENAI_API_KEY/GEMINI_API_KEY/DASHSCOPE_API_KEY）
+- **会话体验修复（#193/#198）**：历史消息读取修复（此前从未加载）、选中话题即时连接（不待首条消息）、空闲会话不再被误标「运行中」
+
+### 工具设置页体系（PR #199–#203）
+
+- **设置 → CLI 工具分区（#199）**：8 工具列表 + 每工具二级页；**工具自己的配置文件是唯一事实源**——AIO 直接读写 CLI 读的同一份文件，带格式校验（JSON/JSONC/TOML/YAML）、首次写入前 `.aio-bak` 备份、外部改动陈旧检测、原子写
+- **结构化配置表单（#200/#201）**：高频键 GUI 直改——claude（权限模式/规则/env 等）、gemini/qwen、opencode（JSONC 守卫）、codex（toml_edit 保注释）、goose（YAML 行级手术只动目标行）、**omp 官方通道**（`config list --json` 448 键全目录 + `config set/reset`，与 CLI 完全同源）
+- **指令与技能（#202）**：全局指令文件（CLAUDE.md/AGENTS.md/GEMINI.md/QWEN.md/~/AGENTS.md）+ markdown 集合管理（claude skills、goose 提示词、opencode 命令）——新建/编辑/删除，名称白名单防路径逃逸
+- **MCP 服务器管理（#203）**：5 工具原生形状增删改（claude `~/.claude.json`、gemini/qwen settings、opencode `mcp`、codex `[mcp_servers]` 保注释、goose `extensions`）
+- **omp 路径修正（#204）**：全局指令为 `~/AGENTS.md`（agents-md 发现约定）
+
+### 验证基线
+
+cargo 424 Rust 测试（6 ignored 真机项）、78 前端测试、gates 全过、i18n 双语 1198 键；omp/codex/dsh/claude 本机探针实测（含 omp 448 键目录形状、`omp acp --approval-mode` 注入、DSH ACP 全链路）
+
 ## [Unreleased]
 
 ### 🪜 第十二轮：模式阶梯改名 + 完全权限内置化 + 工作流功能移除（PR #131）

@@ -8,6 +8,9 @@ use crate::plugins::harness::registry::{self, HarnessToolStatus};
 use crate::plugins::harness::store::{
     self, HarnessCustomAgent, HarnessSessionRow, HarnessWorkspaceRow,
 };
+use crate::plugins::harness::toolconf::{
+    ConfigFileContent as ToolConfigContent, ConfigSlotInfo as ToolConfigSlotInfo, DshProfileInfo,
+};
 use tauri::{AppHandle, Manager, State};
 
 /// Detect every harness tool's availability (ready / installable / missing),
@@ -502,4 +505,49 @@ pub async fn harness_instruction_write(
 ) -> Result<(), String> {
     let path = instruction_path(&app, &tool_id, &workspace_path)?;
     crate::core::fs_util::atomic_write(&path, content.as_bytes()).map_err(|e| e.to_string())
+}
+
+// ===== Tool config files (settings pages — the CLI's own files are the
+// source of truth; AIO validates, backs up, and atomically writes them) =====
+
+/// List the tool's user-level config file slots with live file state
+/// (existence / size / mtime / backup presence).
+#[tauri::command]
+pub async fn harness_tool_config_slots(tool_id: String) -> Result<Vec<ToolConfigSlotInfo>, String> {
+    crate::plugins::harness::toolconf::slots(&tool_id)
+}
+
+/// Read one config slot's content (+ the mtime staleness token for the
+/// editor's external-change guard).
+#[tauri::command]
+pub async fn harness_tool_config_read(
+    tool_id: String,
+    slot_id: String,
+) -> Result<ToolConfigContent, String> {
+    crate::plugins::harness::toolconf::read(&tool_id, &slot_id)
+}
+
+/// Write one config slot: format validation → one-time pre-AIO backup →
+/// stale-mtime guard → atomic write. `expected_modified` is the mtime token
+/// captured by harness_tool_config_read.
+#[tauri::command]
+pub async fn harness_tool_config_write(
+    tool_id: String,
+    slot_id: String,
+    content: String,
+    expected_modified: Option<u64>,
+) -> Result<(), String> {
+    crate::plugins::harness::toolconf::write(&tool_id, &slot_id, &content, expected_modified)
+}
+
+/// Restore the pre-AIO backup over the current config file (atomic).
+#[tauri::command]
+pub async fn harness_tool_config_restore(tool_id: String, slot_id: String) -> Result<(), String> {
+    crate::plugins::harness::toolconf::restore_backup(&tool_id, &slot_id)
+}
+
+/// DSH profile stack listing (read-only overview of $DSH_HOME/profiles).
+#[tauri::command]
+pub async fn harness_tool_dsh_profiles() -> Result<Vec<DshProfileInfo>, String> {
+    Ok(crate::plugins::harness::toolconf::dsh_profiles())
 }

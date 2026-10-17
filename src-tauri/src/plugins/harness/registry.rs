@@ -80,6 +80,21 @@ pub struct SpawnOptionSpec {
     pub values: Vec<SpawnOptionValueSpec>,
 }
 
+/// One user-level config file the tool owns (the CLI's own source of truth —
+/// AIO reads/writes it directly for near-native parity).
+#[derive(Clone, Debug)]
+pub struct ConfigFileSlotSpec {
+    /// Stable slot id (UI routing key; also the read/write command's slot id).
+    pub id: String,
+    /// Display label (English; the GUI i18n's known ids).
+    pub label: String,
+    /// Path template: `~/…` → home dir, `%APPDATA%/…` → roaming app-data
+    /// (Windows), `$DSH_HOME/…` → DSH home (falls back to `~/.dsh`).
+    pub path: String,
+    /// json | jsonc | toml | yaml (validation + editor behavior driver).
+    pub format: String,
+}
+
 /// Setup/auth surface of a tool: how the user authenticates it, which env var
 /// receives an AIO-stored API key at spawn, the workspace instruction file
 /// convention, and the home-relative probe paths that indicate a completed
@@ -96,6 +111,8 @@ pub struct ToolSetupSpec {
     /// Probe paths indicating a completed auth setup: `~/…` resolves to the
     /// home directory, `%APPDATA%/…` to the roaming app-data dir (Windows).
     pub auth_probe_paths: Vec<String>,
+    /// User-level config files owned by the tool (settings pages).
+    pub config_files: Vec<ConfigFileSlotSpec>,
 }
 
 /// One registered harness tool.
@@ -160,6 +177,12 @@ pub fn builtin_tools() -> Vec<HarnessToolSpec> {
                 auth_docs_url: "https://code.claude.com/docs/en/setup".to_string(),
                 instruction_file: "CLAUDE.md".to_string(),
                 auth_probe_paths: vec!["~/.claude/.credentials.json".to_string()],
+                config_files: vec![ConfigFileSlotSpec {
+                    id: "settings".to_string(),
+                    label: "User settings".to_string(),
+                    path: "~/.claude/settings.json".to_string(),
+                    format: "json".to_string(),
+                }],
             },
             name: "Claude Code".to_string(),
             spawn_options: vec![],
@@ -177,6 +200,12 @@ pub fn builtin_tools() -> Vec<HarnessToolSpec> {
                 auth_docs_url: "https://developers.openai.com/codex/cli/".to_string(),
                 instruction_file: "AGENTS.md".to_string(),
                 auth_probe_paths: vec!["~/.codex/auth.json".to_string()],
+                config_files: vec![ConfigFileSlotSpec {
+                    id: "config".to_string(),
+                    label: "User config".to_string(),
+                    path: "~/.codex/config.toml".to_string(),
+                    format: "toml".to_string(),
+                }],
             },
             name: "Codex".to_string(),
             // Codex exec: `-s/--sandbox` picks the sandbox policy per turn
@@ -225,6 +254,20 @@ pub fn builtin_tools() -> Vec<HarnessToolSpec> {
                 auth_docs_url: "https://opencode.ai/docs/".to_string(),
                 instruction_file: "AGENTS.md".to_string(),
                 auth_probe_paths: vec!["~/.local/share/opencode/auth.json".to_string()],
+                config_files: vec![
+                    ConfigFileSlotSpec {
+                        id: "global".to_string(),
+                        label: "Global config".to_string(),
+                        path: "~/.config/opencode/opencode.json".to_string(),
+                        format: "json".to_string(),
+                    },
+                    ConfigFileSlotSpec {
+                        id: "global-jsonc".to_string(),
+                        label: "Global config (JSONC)".to_string(),
+                        path: "~/.config/opencode/opencode.jsonc".to_string(),
+                        format: "jsonc".to_string(),
+                    },
+                ],
             },
             name: "OpenCode".to_string(),
             spawn_options: vec![],
@@ -242,6 +285,12 @@ pub fn builtin_tools() -> Vec<HarnessToolSpec> {
                 auth_docs_url: "https://omp.sh".to_string(),
                 instruction_file: "AGENTS.md".to_string(),
                 auth_probe_paths: vec!["~/.omp/agent/config.yml".to_string()],
+                config_files: vec![ConfigFileSlotSpec {
+                    id: "config".to_string(),
+                    label: "Agent config".to_string(),
+                    path: "~/.omp/agent/config.yml".to_string(),
+                    format: "yaml".to_string(),
+                }],
             },
             name: "Oh My Pi".to_string(),
             // omp's ACP surface covers mode/model/thinking, but the approval
@@ -286,6 +335,12 @@ pub fn builtin_tools() -> Vec<HarnessToolSpec> {
                 auth_docs_url: "https://geminicli.com/docs/".to_string(),
                 instruction_file: "GEMINI.md".to_string(),
                 auth_probe_paths: vec!["~/.gemini/oauth_creds.json".to_string()],
+                config_files: vec![ConfigFileSlotSpec {
+                    id: "settings".to_string(),
+                    label: "User settings".to_string(),
+                    path: "~/.gemini/settings.json".to_string(),
+                    format: "json".to_string(),
+                }],
             },
             name: "Gemini CLI".to_string(),
             // gemini's ACP surface doesn't expose approval modes; the CLI flag
@@ -312,6 +367,12 @@ pub fn builtin_tools() -> Vec<HarnessToolSpec> {
                         .to_string(),
                 instruction_file: "QWEN.md".to_string(),
                 auth_probe_paths: vec!["~/.qwen/oauth_creds.json".to_string()],
+                config_files: vec![ConfigFileSlotSpec {
+                    id: "settings".to_string(),
+                    label: "User settings".to_string(),
+                    path: "~/.qwen/settings.json".to_string(),
+                    format: "json".to_string(),
+                }],
             },
             name: "Qwen Code".to_string(),
             // Qwen Code is a gemini-cli fork — same --approval-mode surface.
@@ -339,6 +400,27 @@ pub fn builtin_tools() -> Vec<HarnessToolSpec> {
                     "~/.config/goose/config.yaml".to_string(),
                     "%APPDATA%/Block/goose/config/config.yaml".to_string(),
                 ],
+                config_files: {
+                    let dir = if cfg!(windows) {
+                        "%APPDATA%/Block/goose/config"
+                    } else {
+                        "~/.config/goose"
+                    };
+                    vec![
+                        ConfigFileSlotSpec {
+                            id: "config".to_string(),
+                            label: "Config".to_string(),
+                            path: format!("{dir}/config.yaml"),
+                            format: "yaml".to_string(),
+                        },
+                        ConfigFileSlotSpec {
+                            id: "permission".to_string(),
+                            label: "Permissions".to_string(),
+                            path: format!("{dir}/permission.yaml"),
+                            format: "yaml".to_string(),
+                        },
+                    ]
+                },
             },
             name: "goose".to_string(),
             // goose modes are configured via the GOOSE_MODE env var (no CLI
@@ -386,6 +468,12 @@ pub fn builtin_tools() -> Vec<HarnessToolSpec> {
                 auth_docs_url: "https://deepseek-ai.github.io/dsh/".to_string(),
                 instruction_file: "AGENTS.md".to_string(),
                 auth_probe_paths: vec!["~/.dsh".to_string()],
+                config_files: vec![ConfigFileSlotSpec {
+                    id: "settings".to_string(),
+                    label: "User settings".to_string(),
+                    path: "$DSH_HOME/settings.yaml".to_string(),
+                    format: "yaml".to_string(),
+                }],
             },
             name: "DSH".to_string(),
             spawn_options: vec![],

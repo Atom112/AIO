@@ -29,6 +29,11 @@ tauri-plugin-opener = "2.7"
 tauri-plugin-updater = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# Config-file validation for the harness tool settings pages (codex config.toml,
+# goose/omp/dsh yaml). Value-level parse only — comment-preserving edits use
+# toml_edit when the structured form lands.
+toml = "0.8"
+serde_yaml = "0.9"
 dirs = "6.0"
 reqwest = { version = "0.13", features = ["json", "stream", "blocking"] }
 tokio = { version = "1", features = ["full"] }

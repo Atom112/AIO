@@ -253,6 +253,39 @@ export const harnessToolStructuredSet = (
   value: unknown,
 ): Promise<void> => invoke<void>('harness_tool_structured_set', { toolId, key, value });
 
+// ===== Markdown collections (skills / prompts / commands) =====
+
+/** One markdown collection entry (a skill / prompt / command). */
+export interface HarnessMarkdownEntry {
+  name: string;
+  path: string;
+  /** First markdown heading — one-line preview. */
+  summary: string;
+}
+
+/** List a tool's markdown collection entries. */
+export const harnessToolMdEntries = (
+  toolId: string,
+  kind: string,
+): Promise<HarnessMarkdownEntry[]> =>
+  invoke<HarnessMarkdownEntry[]>('harness_tool_md_entries', { toolId, kind });
+
+/** Read one markdown entry's content (empty when absent). */
+export const harnessToolMdRead = (toolId: string, kind: string, name: string): Promise<string> =>
+  invoke<string>('harness_tool_md_read', { toolId, kind, name });
+
+/** Write (create or overwrite) one markdown entry. */
+export const harnessToolMdWrite = (
+  toolId: string,
+  kind: string,
+  name: string,
+  content: string,
+): Promise<void> => invoke<void>('harness_tool_md_write', { toolId, kind, name, content });
+
+/** Delete one markdown entry. */
+export const harnessToolMdDelete = (toolId: string, kind: string, name: string): Promise<void> =>
+  invoke<void>('harness_tool_md_delete', { toolId, kind, name });
+
 /** List user-registered custom ACP agents. */
 export const harnessListCustomAgents = (): Promise<HarnessCustomAgent[]> =>
   invoke<HarnessCustomAgent[]>('harness_list_custom_agents');

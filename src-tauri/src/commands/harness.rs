@@ -10,7 +10,7 @@ use crate::plugins::harness::store::{
 };
 use crate::plugins::harness::toolconf::{
     ConfigFileContent as ToolConfigContent, ConfigSlotInfo as ToolConfigSlotInfo, DshProfileInfo,
-    StructuredKeyInfo,
+    MarkdownEntryInfo, StructuredKeyInfo,
 };
 use tauri::{AppHandle, Manager, State};
 
@@ -570,4 +570,44 @@ pub async fn harness_tool_structured_set(
     value: serde_json::Value,
 ) -> Result<(), String> {
     crate::plugins::harness::toolconf::structured_set(&tool_id, &key, value)
+}
+/// List a tool's markdown collection entries (skills / prompts / commands).
+#[tauri::command]
+pub async fn harness_tool_md_entries(
+    tool_id: String,
+    kind: String,
+) -> Result<Vec<MarkdownEntryInfo>, String> {
+    crate::plugins::harness::toolconf::markdown_entries(&tool_id, &kind)
+}
+
+/// Read one markdown entry's content (empty when absent).
+#[tauri::command]
+pub async fn harness_tool_md_read(
+    tool_id: String,
+    kind: String,
+    name: String,
+) -> Result<String, String> {
+    crate::plugins::harness::toolconf::markdown_read(&tool_id, &kind, &name)
+}
+
+/// Write (create or overwrite) one markdown entry (skill-dir shapes create
+/// the directory; atomic write + one-time backup).
+#[tauri::command]
+pub async fn harness_tool_md_write(
+    tool_id: String,
+    kind: String,
+    name: String,
+    content: String,
+) -> Result<(), String> {
+    crate::plugins::harness::toolconf::markdown_write(&tool_id, &kind, &name, &content)
+}
+
+/// Delete one markdown entry (skill-dir: the whole skill directory).
+#[tauri::command]
+pub async fn harness_tool_md_delete(
+    tool_id: String,
+    kind: String,
+    name: String,
+) -> Result<(), String> {
+    crate::plugins::harness::toolconf::markdown_delete(&tool_id, &kind, &name)
 }

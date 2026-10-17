@@ -95,6 +95,20 @@ pub struct ConfigFileSlotSpec {
     pub format: String,
 }
 
+/// One markdown-file collection the tool discovers (skills / prompt
+/// templates / custom commands) — the settings page lists, edits, creates and
+/// deletes entries with the same atomic-write + backup pipeline.
+#[derive(Clone, Debug)]
+pub struct MarkdownDirSpec {
+    /// Collection kind id ("skills" | "prompts" | "commands"; command key).
+    pub kind: String,
+    /// Path template (same conventions as ConfigFileSlotSpec::path).
+    pub path: String,
+    /// "flat" — one `<name>.md` per entry (goose prompts, opencode commands);
+    /// "skill-dir" — one `<dir>/SKILL.md` per entry (claude skills).
+    pub shape: String,
+}
+
 /// Setup/auth surface of a tool: how the user authenticates it, which env var
 /// receives an AIO-stored API key at spawn, the workspace instruction file
 /// convention, and the home-relative probe paths that indicate a completed
@@ -113,6 +127,8 @@ pub struct ToolSetupSpec {
     pub auth_probe_paths: Vec<String>,
     /// User-level config files owned by the tool (settings pages).
     pub config_files: Vec<ConfigFileSlotSpec>,
+    /// Markdown collections the tool discovers (skills/prompts/commands).
+    pub markdown_dirs: Vec<MarkdownDirSpec>,
 }
 
 /// One registered harness tool.
@@ -177,11 +193,24 @@ pub fn builtin_tools() -> Vec<HarnessToolSpec> {
                 auth_docs_url: "https://code.claude.com/docs/en/setup".to_string(),
                 instruction_file: "CLAUDE.md".to_string(),
                 auth_probe_paths: vec!["~/.claude/.credentials.json".to_string()],
-                config_files: vec![ConfigFileSlotSpec {
-                    id: "settings".to_string(),
-                    label: "User settings".to_string(),
-                    path: "~/.claude/settings.json".to_string(),
-                    format: "json".to_string(),
+                config_files: vec![
+                    ConfigFileSlotSpec {
+                        id: "settings".to_string(),
+                        label: "User settings".to_string(),
+                        path: "~/.claude/settings.json".to_string(),
+                        format: "json".to_string(),
+                    },
+                    ConfigFileSlotSpec {
+                        id: "global-instruction".to_string(),
+                        label: "Global instructions (CLAUDE.md)".to_string(),
+                        path: "~/.claude/CLAUDE.md".to_string(),
+                        format: "markdown".to_string(),
+                    },
+                ],
+                markdown_dirs: vec![MarkdownDirSpec {
+                    kind: "skills".to_string(),
+                    path: "~/.claude/skills".to_string(),
+                    shape: "skill-dir".to_string(),
                 }],
             },
             name: "Claude Code".to_string(),
@@ -200,12 +229,21 @@ pub fn builtin_tools() -> Vec<HarnessToolSpec> {
                 auth_docs_url: "https://developers.openai.com/codex/cli/".to_string(),
                 instruction_file: "AGENTS.md".to_string(),
                 auth_probe_paths: vec!["~/.codex/auth.json".to_string()],
-                config_files: vec![ConfigFileSlotSpec {
-                    id: "config".to_string(),
-                    label: "User config".to_string(),
-                    path: "~/.codex/config.toml".to_string(),
-                    format: "toml".to_string(),
-                }],
+                config_files: vec![
+                    ConfigFileSlotSpec {
+                        id: "config".to_string(),
+                        label: "User config".to_string(),
+                        path: "~/.codex/config.toml".to_string(),
+                        format: "toml".to_string(),
+                    },
+                    ConfigFileSlotSpec {
+                        id: "global-instruction".to_string(),
+                        label: "Global instructions (AGENTS.md)".to_string(),
+                        path: "~/.codex/AGENTS.md".to_string(),
+                        format: "markdown".to_string(),
+                    },
+                ],
+                markdown_dirs: vec![],
             },
             name: "Codex".to_string(),
             // Codex exec: `-s/--sandbox` picks the sandbox policy per turn
@@ -267,7 +305,18 @@ pub fn builtin_tools() -> Vec<HarnessToolSpec> {
                         path: "~/.config/opencode/opencode.jsonc".to_string(),
                         format: "jsonc".to_string(),
                     },
+                    ConfigFileSlotSpec {
+                        id: "global-instruction".to_string(),
+                        label: "Global instructions (AGENTS.md)".to_string(),
+                        path: "~/.config/opencode/AGENTS.md".to_string(),
+                        format: "markdown".to_string(),
+                    },
                 ],
+                markdown_dirs: vec![MarkdownDirSpec {
+                    kind: "commands".to_string(),
+                    path: "~/.config/opencode/commands".to_string(),
+                    shape: "flat".to_string(),
+                }],
             },
             name: "OpenCode".to_string(),
             spawn_options: vec![],
@@ -285,12 +334,21 @@ pub fn builtin_tools() -> Vec<HarnessToolSpec> {
                 auth_docs_url: "https://omp.sh".to_string(),
                 instruction_file: "AGENTS.md".to_string(),
                 auth_probe_paths: vec!["~/.omp/agent/config.yml".to_string()],
-                config_files: vec![ConfigFileSlotSpec {
-                    id: "config".to_string(),
-                    label: "Agent config".to_string(),
-                    path: "~/.omp/agent/config.yml".to_string(),
-                    format: "yaml".to_string(),
-                }],
+                config_files: vec![
+                    ConfigFileSlotSpec {
+                        id: "config".to_string(),
+                        label: "Agent config".to_string(),
+                        path: "~/.omp/agent/config.yml".to_string(),
+                        format: "yaml".to_string(),
+                    },
+                    ConfigFileSlotSpec {
+                        id: "global-instruction".to_string(),
+                        label: "Global instructions (AGENTS.md)".to_string(),
+                        path: "~/.omp/AGENTS.md".to_string(),
+                        format: "markdown".to_string(),
+                    },
+                ],
+                markdown_dirs: vec![],
             },
             name: "Oh My Pi".to_string(),
             // omp's ACP surface covers mode/model/thinking, but the approval
@@ -335,12 +393,21 @@ pub fn builtin_tools() -> Vec<HarnessToolSpec> {
                 auth_docs_url: "https://geminicli.com/docs/".to_string(),
                 instruction_file: "GEMINI.md".to_string(),
                 auth_probe_paths: vec!["~/.gemini/oauth_creds.json".to_string()],
-                config_files: vec![ConfigFileSlotSpec {
-                    id: "settings".to_string(),
-                    label: "User settings".to_string(),
-                    path: "~/.gemini/settings.json".to_string(),
-                    format: "json".to_string(),
-                }],
+                config_files: vec![
+                    ConfigFileSlotSpec {
+                        id: "settings".to_string(),
+                        label: "User settings".to_string(),
+                        path: "~/.gemini/settings.json".to_string(),
+                        format: "json".to_string(),
+                    },
+                    ConfigFileSlotSpec {
+                        id: "global-instruction".to_string(),
+                        label: "Global context (GEMINI.md)".to_string(),
+                        path: "~/.gemini/GEMINI.md".to_string(),
+                        format: "markdown".to_string(),
+                    },
+                ],
+                markdown_dirs: vec![],
             },
             name: "Gemini CLI".to_string(),
             // gemini's ACP surface doesn't expose approval modes; the CLI flag
@@ -367,12 +434,21 @@ pub fn builtin_tools() -> Vec<HarnessToolSpec> {
                         .to_string(),
                 instruction_file: "QWEN.md".to_string(),
                 auth_probe_paths: vec!["~/.qwen/oauth_creds.json".to_string()],
-                config_files: vec![ConfigFileSlotSpec {
-                    id: "settings".to_string(),
-                    label: "User settings".to_string(),
-                    path: "~/.qwen/settings.json".to_string(),
-                    format: "json".to_string(),
-                }],
+                config_files: vec![
+                    ConfigFileSlotSpec {
+                        id: "settings".to_string(),
+                        label: "User settings".to_string(),
+                        path: "~/.qwen/settings.json".to_string(),
+                        format: "json".to_string(),
+                    },
+                    ConfigFileSlotSpec {
+                        id: "global-instruction".to_string(),
+                        label: "Global context (QWEN.md)".to_string(),
+                        path: "~/.qwen/QWEN.md".to_string(),
+                        format: "markdown".to_string(),
+                    },
+                ],
+                markdown_dirs: vec![],
             },
             name: "Qwen Code".to_string(),
             // Qwen Code is a gemini-cli fork — same --approval-mode surface.
@@ -421,6 +497,18 @@ pub fn builtin_tools() -> Vec<HarnessToolSpec> {
                         },
                     ]
                 },
+                markdown_dirs: vec![MarkdownDirSpec {
+                    kind: "prompts".to_string(),
+                    path: {
+                        let dir = if cfg!(windows) {
+                            "%APPDATA%/Block/goose/config"
+                        } else {
+                            "~/.config/goose"
+                        };
+                        format!("{dir}/prompts")
+                    },
+                    shape: "flat".to_string(),
+                }],
             },
             name: "goose".to_string(),
             // goose modes are configured via the GOOSE_MODE env var (no CLI
@@ -474,6 +562,7 @@ pub fn builtin_tools() -> Vec<HarnessToolSpec> {
                     path: "$DSH_HOME/settings.yaml".to_string(),
                     format: "yaml".to_string(),
                 }],
+                markdown_dirs: vec![],
             },
             name: "DSH".to_string(),
             spawn_options: vec![],

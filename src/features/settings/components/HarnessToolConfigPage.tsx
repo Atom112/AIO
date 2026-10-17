@@ -16,10 +16,18 @@ import {
 } from '../../../core/api/harness';
 import { harnessTools, setHarnessTools } from '../../../core/store/harness';
 import { getHarnessLogo } from '../../harness/utils/harnessLogos';
-import { t } from '../../../core/i18n';
+import { t, type TranslationKey } from '../../../core/i18n';
 import HarnessToolCredentials from './HarnessToolCredentials';
 import HarnessConfigFileEditor from './HarnessConfigFileEditor';
 import HarnessToolStructuredForm from './HarnessToolStructuredForm';
+import HarnessMarkdownCollection from './HarnessMarkdownCollection';
+
+/** Markdown collections declared per tool id (kind, label i18n key). */
+const MARKDOWN_COLLECTIONS: Record<string, [string, TranslationKey][]> = {
+  claude: [['skills', 'harness.md.skills']],
+  opencode: [['commands', 'harness.md.commands']],
+  goose: [['prompts', 'harness.md.prompts']],
+};
 
 const stateLabel = (state: string) =>
   state === 'ready'
@@ -48,6 +56,8 @@ const HarnessToolConfigPage: Component = () => {
   const [slots, setSlots] = createSignal<HarnessToolConfigSlot[]>([]);
   const [dshProfiles, setDshProfiles] = createSignal<DshProfileInfo[]>([]);
   const [notFound, setNotFound] = createSignal(false);
+  const markdownCollections = () =>
+    MARKDOWN_COLLECTIONS[toolId()]?.map(([kind, key]) => [kind, t(key)] as [string, string]) ?? [];
 
   const tool = () => harnessTools().find((x) => x.id === toolId());
   const logo = () => getHarnessLogo(toolId());
@@ -206,6 +216,21 @@ const HarnessToolConfigPage: Component = () => {
             </For>
           </div>
         </Section>
+
+        {/* ===== 指令与技能（markdown 集合） ===== */}
+        <Show when={markdownCollections().length > 0}>
+          <Section title={t('harness.conf.instructions')}>
+            <div class="text-[11px] text-white/35 mb-2">{t('harness.conf.instructionsNote')}</div>
+            <div class="flex flex-col gap-3">
+              <For each={markdownCollections()}>
+                {([kind, label]) => (
+                  <HarnessMarkdownCollection toolId={toolId()} kind={kind} label={label} />
+                )}
+              </For>
+            </div>
+            <div class="text-[11px] text-white/30 mt-2">{t('harness.conf.workspaceHint')}</div>
+          </Section>
+        </Show>
       </div>
     </Show>
   );

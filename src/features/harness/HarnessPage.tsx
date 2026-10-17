@@ -8,6 +8,7 @@
  * it while the user is on any page.
  */
 import { Component, createEffect, createSignal, onMount, Show } from 'solid-js';
+import { useNavigate } from '@solidjs/router';
 import { Portal } from 'solid-js/web';
 import {
   loadPanelCollapsed,
@@ -66,10 +67,10 @@ import HarnessTopicSidebar from './components/HarnessTopicSidebar';
 import HarnessChatInterface from './components/HarnessChatInterface';
 import HarnessAddWorkspaceModal from './components/HarnessAddWorkspaceModal';
 import HarnessCustomAgentModal from './components/HarnessCustomAgentModal';
-import HarnessToolSettingsModal from './components/HarnessToolSettingsModal';
 import HarnessInstructionModal from './components/HarnessInstructionModal';
 
 const HarnessPage: Component = () => {
+  const navigate = useNavigate();
   // ===== Panel layout (same persistence/pattern as the chat page) =====
   const [leftPanelWidth, setLeftPanelWidth] = createSignal(loadPanelWidth('left'));
   const [rightPanelWidth, setRightPanelWidth] = createSignal(loadPanelWidth('right'));
@@ -79,10 +80,7 @@ const HarnessPage: Component = () => {
   const [sending, setSending] = createSignal(false);
   const [showAddWorkspace, setShowAddWorkspace] = createSignal(false);
   const [showCustomAgent, setShowCustomAgent] = createSignal(false);
-  const [toolSettings, setToolSettings] = createSignal<{
-    toolId: string;
-    toolName: string;
-  } | null>(null);
+
   const [instructionTarget, setInstructionTarget] = createSignal<{
     toolId: string;
     toolName: string;
@@ -380,7 +378,7 @@ const HarnessPage: Component = () => {
               .catch(console.error);
           }
         }}
-        onToolSettings={(toolId, toolName) => setToolSettings({ toolId, toolName })}
+        onToolSettings={(toolId) => navigate(`/settings/cli-tools/${toolId}`)}
         onEditInstruction={(workspaceId) => {
           const ws = harnessWorkspaces().find((w) => w.id === workspaceId);
           const tool = harnessTools().find((x) => x.id === ws?.toolId);
@@ -433,16 +431,6 @@ const HarnessPage: Component = () => {
             onAdd={(path, name) =>
               void handleAddWorkspace(path, name).then(() => setShowAddWorkspace(false))
             }
-          />
-        </Portal>
-      </Show>
-
-      <Show when={toolSettings()}>
-        <Portal>
-          <HarnessToolSettingsModal
-            toolId={toolSettings()!.toolId}
-            toolName={toolSettings()!.toolName}
-            onClose={() => setToolSettings(null)}
           />
         </Portal>
       </Show>

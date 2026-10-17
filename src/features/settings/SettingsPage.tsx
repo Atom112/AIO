@@ -14,8 +14,11 @@ import { t } from '../../core/i18n';
 const Settings: Component<{ children?: JSX.Element }> = (props) => {
   const location = useLocation();
 
-  /** Hide the sidebar on detail pages (matching /settings/provider/<id>) */
-  const isProviderDetail = () => /^\/settings\/provider\/[^/]+/.test(location.pathname);
+  /** Hide the sidebar on detail pages (matching /settings/provider/<id> or
+   *  /settings/cli-tools/<id>) */
+  const isProviderDetail = () =>
+    /^\/settings\/provider\/[^/]+/.test(location.pathname) ||
+    /^\/settings\/cli-tools\/[^/]+/.test(location.pathname);
 
   const menuItems = createMemo(
     (): Array<{ id: string; path: string; label: string; icon: JSX.Element }> => [
@@ -60,6 +63,12 @@ const Settings: Component<{ children?: JSX.Element }> = (props) => {
         path: '/settings/local-models',
         label: t('settings.localModels'),
         icon: <Icon name="download" class="w-5 h-5" />,
+      },
+      {
+        id: 'cli-tools',
+        path: '/settings/cli-tools',
+        label: t('settings.cliTools'),
+        icon: <Icon name="terminal" class="w-5 h-5" />,
       },
       {
         id: 'app',

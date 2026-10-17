@@ -73,6 +73,10 @@ const EmbeddingModelSettings = lazy(
   () => import('./features/settings/components/EmbeddingModelSettings'),
 );
 const LocalModelMarket = lazy(() => import('./features/settings/components/LocalModelMarket'));
+const HarnessToolsList = lazy(() => import('./features/settings/components/HarnessToolsList'));
+const HarnessToolConfig = lazy(
+  () => import('./features/settings/components/HarnessToolConfigPage'),
+);
 
 render(
   () => (
@@ -97,6 +101,8 @@ render(
           <Route path="/subagent-models" component={SubagentModelSettings} />
           <Route path="/embedding-models" component={EmbeddingModelSettings} />
           <Route path="/local-models" component={LocalModelMarket} />
+          <Route path="/cli-tools" component={HarnessToolsList} />
+          <Route path="/cli-tools/:toolId" component={HarnessToolConfig} />
         </Route>
       </Router>
     </Suspense>

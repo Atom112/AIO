@@ -99,6 +99,18 @@ Oh My Pi / OpenCode / goose / DSH 使用各自的登录或配置体系（无 API
 - 每个 CLI 工具维护自己的会话；AIO 记录其会话 ID。停止后再次发送会自动恢复原会话（工具支持恢复时）；应用重启后同样如此。个别工具不支持恢复时，重启后首轮会开新会话，AIO 内的历史记录仍然可见。
 - 斜杠命令按所选工具自身的命令体系原样透传。个别工具的交互式命令在无头模式下可能无响应，此时用「停止」结束即可。
 
+## 工具设置页（设置 → CLI 工具）
+
+设置页新增「CLI 工具」分区（列表 + 每工具二级页）。工具配置以**工具自己的配置文件为唯一事实源**——AIO 直接读写 CLI 读取的同一份文件（`~/.claude/settings.json`、`~/.codex/config.toml`、`~/.config/opencode/opencode.json(c)`、`~/.omp/agent/config.yml`、`~/.gemini/settings.json`、`~/.qwen/settings.json`、goose 的 `config.yaml`/`permission.yaml`、DSH 的 `settings.yaml`），在 GUI 改的即 CLI 用的。
+
+每个工具页包含：
+
+- **概览**：安装/认证状态、配置文件探测（路径/是否存在/备份标记）、DSH 的 profile 层叠只读展示；
+- **凭据**：认证探测 + API Key（OS 钥匙串，spawn 时注入）+ 官方文档；
+- **高级配置**：每个配置文件的带校验原始编辑器——保存前按格式重解析校验（JSON/JSONC/TOML/YAML，解析失败拒绝落盘）、**首次写入前自动备份**（`<file>.aio-bak`，可一键还原）、外部修改的陈旧检测（编辑期间文件被外部改动则拒绝覆盖）。
+
+信任边界：只写用户级文件（不碰企业/managed 层与任何凭据文件）；密钥永不写入配置文件。
+
 ## 数据与隐私
 
 - 显示记录保存在 AIO 本地数据库（`harness_*` 表），仅用于回看与话题管理，不会发送到任何远端。

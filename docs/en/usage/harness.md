@@ -99,6 +99,18 @@ Each CLI tool reads a convention instruction file at the workspace root. Hover a
 - Each CLI tool keeps its own session; AIO records its session id. Sending again after a stop resumes the same session (when the tool supports resume); the same applies across app restarts. Tools without resume start a fresh session on the next turn — AIO's local history remains visible either way.
 - Slash commands pass through verbatim to the tool's own command system. Some tools' interactive commands may hang in headless mode — use "Stop" when that happens.
 
+## Tool settings pages (Settings → CLI tools)
+
+A "CLI tools" section is added to the settings page (list + a second-level page per tool). Tool configuration uses **the tool's own config files as the single source of truth** — AIO reads and writes the very files the CLI reads (`~/.claude/settings.json`, `~/.codex/config.toml`, `~/.config/opencode/opencode.json(c)`, `~/.omp/agent/config.yml`, `~/.gemini/settings.json`, `~/.qwen/settings.json`, goose's `config.yaml`/`permission.yaml`, DSH's `settings.yaml`).
+
+Each tool page contains:
+
+- **Overview**: install/auth state, config-file probes (path/exists/backup mark), DSH's read-only profile stack;
+- **Credentials**: auth detection + the API key (OS keychain, injected at spawn) + official docs;
+- **Advanced config**: a validated raw editor per config file — content is re-parsed by format before saving (JSON/JSONC/TOML/YAML; parse failures are refused), the pre-AIO state is **backed up once** (`<file>.aio-bak`, one-click restore), and a staleness guard rejects writes when the file changed externally while editing.
+
+Trust boundary: only user-level files are written (never managed/enterprise layers or credential files); secrets never land in config files.
+
 ## Data and privacy
 
 - The display record is stored in AIO's local database (`harness_*` tables) purely for review and topic management; nothing is sent to any remote.

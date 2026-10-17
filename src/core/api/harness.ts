@@ -157,6 +157,69 @@ export const harnessInstructionWrite = (
   content: string,
 ): Promise<void> => invoke<void>('harness_instruction_write', { toolId, workspacePath, content });
 
+// ===== Tool config files (settings pages) =====
+
+/** One user-level config file slot with live file state. */
+export interface HarnessToolConfigSlot {
+  slotId: string;
+  label: string;
+  /** json | jsonc | toml | yaml */
+  format: string;
+  path: string;
+  exists: boolean;
+  sizeBytes?: number;
+  /** Unix epoch seconds of the last modification (staleness token). */
+  modified?: number;
+  hasBackup: boolean;
+  /** YAML: whole-file rewrites lose comments (the UI warns). */
+  commentsLostOnWrite: boolean;
+}
+
+/** One config file's content + staleness token. */
+export interface HarnessToolConfigContent {
+  content: string;
+  modified?: number;
+}
+
+/** List the tool's config file slots with live state. */
+export const harnessToolConfigSlots = (toolId: string): Promise<HarnessToolConfigSlot[]> =>
+  invoke<HarnessToolConfigSlot[]>('harness_tool_config_slots', { toolId });
+
+/** Read one config slot (content + mtime staleness token). */
+export const harnessToolConfigRead = (
+  toolId: string,
+  slotId: string,
+): Promise<HarnessToolConfigContent> =>
+  invoke<HarnessToolConfigContent>('harness_tool_config_read', { toolId, slotId });
+
+/** Write one config slot (validated; backup; stale-mtime guard; atomic). */
+export const harnessToolConfigWrite = (
+  toolId: string,
+  slotId: string,
+  content: string,
+  expectedModified?: number,
+): Promise<void> =>
+  invoke<void>('harness_tool_config_write', {
+    toolId,
+    slotId,
+    content,
+    expectedModified,
+  });
+
+/** Restore the pre-AIO backup over the current config file. */
+export const harnessToolConfigRestore = (toolId: string, slotId: string): Promise<void> =>
+  invoke<void>('harness_tool_config_restore', { toolId, slotId });
+
+/** DSH profile stack entry (read-only overview). */
+export interface DshProfileInfo {
+  name: string;
+  path: string;
+}
+
+/** DSH profile stack listing. */
+export const harnessToolDshProfiles = (): Promise<DshProfileInfo[]> =>
+  invoke<DshProfileInfo[]>('harness_tool_dsh_profiles');
+
 /** List user-registered custom ACP agents. */
 export const harnessListCustomAgents = (): Promise<HarnessCustomAgent[]> =>
   invoke<HarnessCustomAgent[]>('harness_list_custom_agents');

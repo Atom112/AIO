@@ -41,6 +41,18 @@
 
 服务器连接成功但看不到工具时，检查项目/助手是否绑定该 Server，以及 `enabledTools` 白名单。
 
+## 执行命令或连接 MCP 时终端窗口一闪
+
+安装版在 Agent 执行命令、启动 MCP Server、查询 Git、导入 Skill 时，可能出现终端窗口一闪而过；调试模式下不会出现。
+
+原因：只有安装包（release）才是 GUI 子系统应用，进程自身没有控制台。此时任何 console 子进程（`cmd`/`powershell`/`git`/`npx`/`node`/`reg`/`taskkill` 等）如果不带 `CREATE_NO_WINDOW` 标志，Windows 会为它新建一个控制台窗口；调试模式下子进程继承调试控制台，因此看不到这个窗口。把 stdio 管道化并不能阻止控制台分配。
+
+处理：
+
+- 这是缺陷不是配置错误，请升级到修复版本；
+- 自建版本请确认每个子进程启动点都带隐藏控制台标志（`npm run check:gates` 的 `console-window` 门禁会拦截遗漏）；
+- 如需确认是否真的是该问题，可用 release 构建与 `npm run tauri dev` 分别复现对比。
+
 ## MCP 工具一直等待确认
 
 - 普通 Agent 模式会对敏感操作请求确认。

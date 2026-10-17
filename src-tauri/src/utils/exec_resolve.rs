@@ -153,6 +153,50 @@ pub fn resolve_or_keep(name: &str) -> String {
         .unwrap_or_else(|| name.to_string())
 }
 
+/// Windows `CREATE_NO_WINDOW`: run the child without allocating a console window.
+///
+/// Release builds are GUI-subsystem (`windows_subsystem = "windows"`, see `main.rs`),
+/// so AIO itself owns no console. A console-subsystem child (cmd / powershell / git /
+/// npx / nvidia-smi / reg …) spawned WITHOUT this flag makes Windows create a fresh
+/// console for it — the user sees a terminal window flash open and close on every
+/// agent command, MCP server start, git query, skills import and so on. Debug builds
+/// hide the bug: the app is then a console program and children inherit that console
+/// instead of creating one, which is exactly why it only reproduces from the installer.
+///
+/// Therefore EVERY spawn sets this — including the ones whose stdio is fully piped
+/// (piping does not stop console allocation) and the raw `CreateProcessW` path in
+/// `sandbox::win_appcontainer`.
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+/// Applies [`CREATE_NO_WINDOW`] so a spawned child never opens a console window.
+/// No-op off Windows, so call sites carry no `cfg` attribute of their own.
+pub trait HiddenConsole {
+    fn hidden_console(&mut self) -> &mut Self;
+}
+
+impl HiddenConsole for std::process::Command {
+    fn hidden_console(&mut self) -> &mut Self {
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            self.creation_flags(CREATE_NO_WINDOW);
+        }
+        self
+    }
+}
+
+impl HiddenConsole for tokio::process::Command {
+    fn hidden_console(&mut self) -> &mut Self {
+        #[cfg(windows)]
+        {
+            // tokio's Command exposes creation_flags as an inherent Windows method.
+            self.creation_flags(CREATE_NO_WINDOW);
+        }
+        self
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -248,5 +292,38 @@ mod tests {
         let resolved = resolve_executable(shell).expect("system shell must resolve");
         assert!(resolved.is_absolute());
         assert!(resolved.is_file());
+    }
+
+    /// The console flag must not break stdio redirection: the whole point of
+    /// `hidden_console` is that we STILL capture the child's output (every agent tool,
+    /// MCP handshake and skills import reads it). Regression guard for the flag being
+    /// applied in a way that detaches the pipes.
+    #[cfg(windows)]
+    #[test]
+    fn hidden_console_keeps_pipes_working() {
+        let shell = std::env::var("ComSpec").unwrap_or_else(|_| "cmd.exe".to_string());
+        let out = std::process::Command::new(shell)
+            .args(["/C", "echo probe"])
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .hidden_console()
+            .output()
+            .expect("spawn with hidden console");
+        assert!(out.status.success(), "child exited non-zero");
+        assert!(
+            String::from_utf8_lossy(&out.stdout).contains("probe"),
+            "stdout was not captured: {:?}",
+            String::from_utf8_lossy(&out.stdout)
+        );
+    }
+
+    /// The helper is chainable and idempotent, and exists for both command types the
+    /// codebase spawns through (std and tokio) — the signature call sites depend on.
+    #[test]
+    fn hidden_console_is_chainable_and_idempotent() {
+        let mut cmd = std::process::Command::new("aio-probe");
+        cmd.hidden_console().hidden_console().arg("--flag");
+        let mut tokio_cmd = tokio::process::Command::new("aio-probe");
+        tokio_cmd.hidden_console().arg("--flag");
     }
 }

@@ -548,6 +548,7 @@ pub async fn local_model_market_files(
 
 /// Probes an NVIDIA GPU via nvidia-smi (name + VRAM); None when absent or non-NVIDIA.
 fn probe_nvidia_gpu() -> Option<(String, u64)> {
+    use crate::utils::exec_resolve::HiddenConsole;
     // SEC-06: PATH-only resolution — a missing nvidia-smi means "no NVIDIA GPU".
     let nvidia_smi = crate::utils::exec_resolve::resolve_executable("nvidia-smi")?;
     let out = std::process::Command::new(nvidia_smi)
@@ -555,6 +556,7 @@ fn probe_nvidia_gpu() -> Option<(String, u64)> {
             "--query-gpu=name,memory.total",
             "--format=csv,noheader,nounits",
         ])
+        .hidden_console()
         .output()
         .ok()?;
     if !out.status.success() {

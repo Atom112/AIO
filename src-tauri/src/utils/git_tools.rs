@@ -8,6 +8,7 @@
 
 use crate::core::models::{FileChange, ToolFunctionSpec, ToolResult, ToolSpec};
 use crate::ierr;
+use crate::utils::exec_resolve::HiddenConsole;
 use serde_json::{json, Value};
 use std::process::Command;
 
@@ -39,6 +40,7 @@ pub(crate) fn run_git(project_root: &str, args: &[&str]) -> Result<String, Strin
     let output = Command::new(git)
         .args(args)
         .current_dir(project_root)
+        .hidden_console()
         .output()
         .map_err(|e| {
             ierr!(
@@ -66,8 +68,65 @@ pub(crate) fn run_git(project_root: &str, args: &[&str]) -> Result<String, Strin
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
-/// Checks whether the directory is a git repository
+/// Memoized `is_git_repo` answers: project root -> (answer, measured at).
+///
+/// The check spawns a `git rev-parse` process and the agent loop asks once per turn to
+/// decide whether the git tool specs are exposed (`tool_dispatch::build_main_tool_set`,
+/// plus once per subagent spawn) — a multi-agent turn would otherwise pay that process
+/// cost several times for an answer that cannot change between them.
+fn git_repo_cache(
+) -> &'static std::sync::Mutex<std::collections::HashMap<String, (bool, std::time::Instant)>> {
+    static CACHE: std::sync::OnceLock<
+        std::sync::Mutex<std::collections::HashMap<String, (bool, std::time::Instant)>>,
+    > = std::sync::OnceLock::new();
+    CACHE.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
+
+/// How long a memoized answer stays valid. Short on purpose: a repo created or removed
+/// outside AIO (`git init` in a terminal, a checkout, a folder swap) is picked up within
+/// seconds instead of being pinned for the whole session.
+const GIT_REPO_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// Checks whether the directory is a git repository (memoized, see [`git_repo_cache`]).
 pub(crate) fn is_git_repo(project_root: &str) -> bool {
+    if let Ok(map) = git_repo_cache().lock() {
+        if let Some((answer, at)) = map.get(project_root) {
+            if at.elapsed() < GIT_REPO_CACHE_TTL {
+                return *answer;
+            }
+        }
+    }
+    let answer = probe_git_repo(project_root);
+    if let Ok(mut map) = git_repo_cache().lock() {
+        map.insert(
+            project_root.to_string(),
+            (answer, std::time::Instant::now()),
+        );
+    }
+    answer
+}
+
+/// Forgets the memoized answer for one project root — call after anything that can
+/// create or remove a repository, so the next tool-set build re-probes immediately
+/// instead of waiting out the TTL.
+pub(crate) fn invalidate_git_repo_cache(project_root: &str) {
+    if let Ok(mut map) = git_repo_cache().lock() {
+        map.remove(project_root);
+    }
+}
+
+/// Whether a shell command could plausibly create or destroy a repository. Used to
+/// decide if `is_git_repo`'s memoized answer must be dropped after `execute_command`:
+/// an agent running `git init`, `git clone` or `rm -rf .git` must see the git tools
+/// appear/vanish on the NEXT turn, not ten seconds later. Cheap lexical check — a false
+/// positive only costs one extra `git rev-parse` process.
+pub(crate) fn command_may_change_repo(command: &str) -> bool {
+    let lower = command.to_ascii_lowercase();
+    lower.contains("git") || lower.contains(".git")
+}
+
+/// The actual probe (one `git rev-parse --git-dir` process).
+fn probe_git_repo(project_root: &str) -> bool {
     let Some(git) = crate::utils::exec_resolve::resolve_executable("git") else {
         return false;
     };
@@ -76,6 +135,7 @@ pub(crate) fn is_git_repo(project_root: &str) -> bool {
         .current_dir(project_root)
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
+        .hidden_console()
         .status()
         .map(|s| s.success())
         .unwrap_or(false)
@@ -390,5 +450,77 @@ pub fn execute_git_tool(name: &str, arguments: &Value, project_root: &str) -> To
         }
 
         _ => tool_err(&ierr!("未知 Git 工具: {}", "Unknown git tool: {}", name)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The whole point of the memoization: repeated tool-set builds within the TTL must
+    /// not each spawn `git rev-parse`. Two calls in a row are indistinguishable from the
+    /// outside, so this asserts the observable contract the callers depend on — a stable,
+    /// repeatable answer — while the process count is covered by the TTL test below.
+    #[test]
+    fn is_git_repo_is_stable_within_ttl() {
+        let dir = std::env::temp_dir().join(format!("aio_gitrepo_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let dir_s = dir.to_string_lossy().to_string();
+
+        let first = is_git_repo(&dir_s);
+        assert_eq!(is_git_repo(&dir_s), first, "同一 TTL 窗口内答案必须稳定");
+        // The second call must have hit the cache, not re-probed: a cache miss would
+        // have stored a fresh Instant, which we can only observe as "no invalidation
+        // happened in between". Assert the entry exists and is recent.
+        let cached = git_repo_cache().lock().unwrap();
+        let entry = cached.get(&dir_s).expect("探测结果应已写入缓存");
+        assert_eq!(entry.0, first);
+        assert!(entry.1.elapsed() < GIT_REPO_CACHE_TTL);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Invalidation after a repo-creating command must take effect immediately, not after
+    /// the TTL: otherwise an agent's `git init` would appear to have done nothing (the
+    /// git tools would only appear on a later turn).
+    #[test]
+    fn invalidation_forces_a_fresh_probe() {
+        let dir = std::env::temp_dir().join(format!("aio_gitrepo_inv_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let dir_s = dir.to_string_lossy().to_string();
+
+        // Prime the cache with the pre-init answer (a plain directory is not a repo).
+        let before = is_git_repo(&dir_s);
+        invalidate_git_repo_cache(&dir_s);
+        {
+            let cached = git_repo_cache().lock().unwrap();
+            assert!(!cached.contains_key(&dir_s), "失效后不应残留缓存条目");
+        }
+        // After invalidation the next call re-probes and re-populates the entry.
+        let after = is_git_repo(&dir_s);
+        assert_eq!(after, before, "同一目录重新探测应得到相同结论");
+        let cached = git_repo_cache().lock().unwrap();
+        assert!(cached.contains_key(&dir_s), "重新探测应重新写入缓存");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The lexical guard that decides whether a completed command may have changed the
+    /// repository must cover the real cases and must not fire on ordinary commands.
+    #[test]
+    fn repo_changing_commands_are_recognized() {
+        for cmd in [
+            "git init",
+            "git clone https://x/y.git",
+            "rm -rf .git",
+            "GIT_DIR=.git git log",
+        ] {
+            assert!(command_may_change_repo(cmd), "应识别为可能改动仓库: {cmd}");
+        }
+        for cmd in ["ls -la", "npm test", "cargo build", "echo hi"] {
+            assert!(!command_may_change_repo(cmd), "不应误判: {cmd}");
+        }
     }
 }

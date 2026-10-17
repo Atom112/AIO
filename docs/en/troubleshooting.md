@@ -41,6 +41,18 @@ For engine scanning and auto-discovery, see [providers-and-models.md &rarr; Engi
 
 If the server connects but tools are not visible, check whether the current assistant/project has that Server bound and the `enabledTools` allowlist.
 
+## A Terminal Window Flashes When Running Commands or Connecting MCP
+
+In an installed build, a terminal window may flash open when the Agent runs a command, starts an MCP server, queries Git, or imports a Skill. This does not happen in debug builds.
+
+Cause: only the installed (release) build is a GUI-subsystem application, so the process itself owns no console. Any console-subsystem child (`cmd` / `powershell` / `git` / `npx` / `node` / `reg` / `taskkill`, ...) spawned without `CREATE_NO_WINDOW` makes Windows allocate a fresh console for it. Debug builds hide this because children inherit the debug console. Piping stdio does not prevent console allocation.
+
+What to do:
+
+- This is a defect, not a misconfiguration; upgrade to a fixed version;
+- For a self-built version, confirm every spawn point hides its console (the `console-window` gate in `npm run check:gates` catches missing ones);
+- To confirm the diagnosis, reproduce with a release build and with `npm run tauri dev` and compare.
+
 ## MCP Tool Keeps Waiting for Confirmation
 
 - Normal Agent mode requests confirmation for sensitive operations.

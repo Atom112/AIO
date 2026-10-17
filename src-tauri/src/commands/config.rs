@@ -843,9 +843,12 @@ fn set_auto_start_inner(app: AppHandle, enabled: bool) -> Result<(), String> {
 
     #[cfg(target_os = "windows")]
     {
+        use crate::utils::exec_resolve::HiddenConsole;
         use std::process::Command;
         // SEC-06: PATH-only resolution — a bare "reg" spawn would consult the process
         // cwd before PATH; reg.exe lives in System32 and always resolves.
+        // hidden_console: reg.exe is a console program; without the flag the
+        // GUI-subsystem release build pops a terminal window for both calls.
         let reg = crate::utils::exec_resolve::resolve_executable("reg")
             .ok_or_else(|| ierr!("未找到 reg.exe（System32）", "reg.exe not found (System32)"))?;
         if enabled {
@@ -861,6 +864,7 @@ fn set_auto_start_inner(app: AppHandle, enabled: bool) -> Result<(), String> {
                     &exe_str,
                     "/f",
                 ])
+                .hidden_console()
                 .output()
                 .map_err(|e| {
                     ierr!(
@@ -886,6 +890,7 @@ fn set_auto_start_inner(app: AppHandle, enabled: bool) -> Result<(), String> {
                     app_name,
                     "/f",
                 ])
+                .hidden_console()
                 .output()
                 .map_err(|e| {
                     ierr!(

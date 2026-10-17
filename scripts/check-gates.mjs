@@ -12,6 +12,8 @@
 //   7. Native <select> ban (all dropdowns must use shared/components/Dropdown.tsx)
 //   8. Native <input type="checkbox"> ban (all checkboxes must use shared/components/Checkbox.tsx)
 //   9. Character-glyph ban in JSX text (× ✕ ✓ ✗ → ← ▲ ▼ as an element's sole content — use Icon)
+//  10. Windows child processes must hide their console (the release build is a GUI
+//      subsystem binary: an unflagged spawn flashes a terminal window)
 import { readFile, readdir } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
@@ -272,6 +274,59 @@ for await (const p of walk(path.join(root, 'src'), ['.tsx'])) {
   }
 }
 
+// ---------- Gate 10: Windows console window (terminal flash) ----------
+// AIO ships as a GUI-subsystem binary (`windows_subsystem = "windows"`, main.rs), so
+// the process owns NO console. Every console-subsystem child (cmd / powershell / git /
+// npx / node / nvidia-smi / reg / taskkill …) spawned without CREATE_NO_WINDOW makes
+// Windows allocate a fresh console — the user sees a terminal window flash open on
+// every agent command, MCP server start, git query and skills import. Debug builds hide
+// the bug (they are console programs, children inherit that console), so it only
+// reproduces from an installed release build.
+// Two rules: (a) the raw flag literal lives in exactly one place per path — the shared
+// helper in utils::exec_resolve and the hand-rolled CreateProcessW in win_appcontainer;
+// (b) every production `Command::new` either chains `.hidden_console()` or is covered by
+// one within the same statement block. Tests are exempt (they spawn local fixtures).
+{
+  const CONSOLE_FLAG_ALLOWLIST = new Set([
+    'src-tauri/src/utils/exec_resolve.rs',
+    'src-tauri/src/utils/sandbox/win_appcontainer.rs',
+  ]);
+  // A spawn's flag is usually applied on the tail of the same builder chain, which can
+  // sit a few dozen lines below the `Command::new` (shell_tools builds the argv in
+  // branches first), so the window is generous.
+  const SPAWN_WINDOW = 60;
+  for await (const p of walk(path.join(root, 'src-tauri', 'src'), ['.rs'])) {
+    const r = rel(p);
+    const lines = (await read(p)).split('\n');
+    if (!CONSOLE_FLAG_ALLOWLIST.has(r)) {
+      lines.forEach((line, i) => {
+        if (/0x0800_?0000/.test(line) && !line.trim().startsWith('//')) {
+          push(
+            'console-window',
+            r,
+            `L${i + 1} 裸 CREATE_NO_WINDOW 字面量 —— 使用 utils::exec_resolve::HiddenConsole`,
+          );
+        }
+      });
+    }
+    const testAt = lines.findIndex((l) => l.trim() === '#[cfg(test)]');
+    lines.forEach((line, i) => {
+      if (!/(?<!\/\/.*)(?:std::process::|tokio::process::)?(?:Std)?Command::new\(/.test(line))
+        return;
+      if (/^\s*(\/\/|\/\*|\*)/.test(line)) return;
+      if (testAt >= 0 && i > testAt) return; // test fixture spawns: no user-visible console
+      const window = lines.slice(i, Math.min(lines.length, i + SPAWN_WINDOW)).join('\n');
+      if (!/hidden_console\(/.test(window)) {
+        push(
+          'console-window',
+          r,
+          `L${i + 1} 子进程未隐藏控制台（安装版会闪终端窗口）—— 链式加 .hidden_console()`,
+        );
+      }
+    });
+  }
+}
+
 // ---------- Output ----------
 if (errors.length) {
   console.error('架构门禁失败（' + errors.length + ' 项）:');
@@ -294,6 +349,6 @@ if (errors.length) {
       anyCount +
       ' (≤' +
       ANY_BASELINE +
-      '), layering=0, file-size=0, cmd-dispatch=0',
+      '), layering=0, file-size=0, cmd-dispatch=0, console-window=0',
   );
 }

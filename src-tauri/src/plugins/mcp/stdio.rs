@@ -11,6 +11,7 @@ use crate::core::models::{
     ReadResourceResult, ToolResult, ToolSpec,
 };
 use crate::core::secure_store;
+use crate::utils::exec_resolve::HiddenConsole;
 use async_trait::async_trait;
 use serde_json::{json, Value};
 use std::process::Stdio;
@@ -101,14 +102,11 @@ impl super::McpServerPlugin for StdioPlugin {
         if let Some(dir) = cwd {
             cmd.current_dir(dir);
         }
-        // Windows: suppress the console window
-        #[cfg(windows)]
-        {
-            #[allow(unused_imports)]
-            use std::os::windows::process::CommandExt;
-            const CREATE_NO_WINDOW: u32 = 0x08000000;
-            cmd.creation_flags(CREATE_NO_WINDOW);
-        }
+        // Windows: suppress the console window. This is THE visible symptom fixed here:
+        // in a release (GUI-subsystem) build AIO has no console, so an unflagged stdio
+        // server (npx.cmd -> node) allocates one and the user sees a terminal flash on
+        // every MCP connect. Piping stdio does not prevent console allocation.
+        cmd.hidden_console();
 
         let mut child = cmd
             .spawn()
@@ -354,11 +352,9 @@ impl McpTransport for StdioTransportHandle {
 async fn kill_child_tree(child: &mut Child) {
     #[cfg(windows)]
     if let Some(pid) = child.id() {
-        // tokio Command 的 creation_flags 是 Windows 固有方法，无需 CommandExt trait
-        const CREATE_NO_WINDOW: u32 = 0x08000000;
         let mut taskkill = Command::new("taskkill");
         taskkill.args(["/PID", &pid.to_string(), "/T", "/F"]);
-        taskkill.creation_flags(CREATE_NO_WINDOW);
+        taskkill.hidden_console();
         // taskkill 失败（权限/已退出）不阻塞关闭路径，下方 kill 兜底直接子进程
         let _ = taskkill.output().await;
     }

@@ -14,6 +14,7 @@ use crate::plugins::harness::model::{
     HarnessApprovalRequestedPayload, HarnessSessionKey,
 };
 use crate::plugins::harness::registry::{AcpCommand, HarnessToolKind, HarnessToolSpec};
+use crate::utils::exec_resolve::HiddenConsole;
 use std::collections::HashMap;
 use std::process::Stdio;
 use std::sync::Arc;
@@ -296,14 +297,9 @@ pub fn spawn_harness_child_env(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
-    #[cfg(windows)]
-    {
-        // Suppress the console window for GUI-launched CLI children.
-        #[allow(unused_imports)]
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x08000000;
-        cmd.creation_flags(CREATE_NO_WINDOW);
-    }
+    // Suppress the console window for GUI-launched CLI children (the release build
+    // is windows-subsystem=windows and owns no console to inherit).
+    cmd.hidden_console();
     cmd.spawn().map_err(|e| {
         crate::ierr!(
             "启动 CLI 工具失败 ({}): {}",
@@ -325,10 +321,7 @@ pub async fn kill_child_tree(child: &tokio::sync::Mutex<Child>) {
     if let Some(pid) = pid {
         let mut cmd = Command::new(crate::utils::exec_resolve::resolve_or_keep("taskkill"));
         cmd.args(["/PID", &pid.to_string(), "/T", "/F"]);
-        #[allow(unused_imports)]
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x08000000;
-        cmd.creation_flags(CREATE_NO_WINDOW);
+        cmd.hidden_console();
         if let Ok(mut killed) = cmd.spawn() {
             let _ = killed.wait().await;
             return;

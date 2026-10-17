@@ -15,6 +15,7 @@
 //! - Permission system: reuses the existing Allow/Ask/Deny rule engine
 
 use crate::core::models::{ToolFunctionSpec, ToolResult, ToolSpec};
+use crate::utils::exec_resolve::HiddenConsole;
 use serde_json::json;
 use std::process::Command;
 use std::time::Duration;
@@ -1240,7 +1241,10 @@ pub fn execute_command(
     };
     cmd.current_dir(project_root)
         .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped());
+        .stderr(std::process::Stdio::piped())
+        // GUI-subsystem release build owns no console: without this the shell child
+        // allocates one and the user sees a terminal flash on every command.
+        .hidden_console();
     // Non-Windows: run the command in its own process group so timeout/cleanup kills the whole subtree
     #[cfg(unix)]
     {
@@ -1354,6 +1358,7 @@ pub fn execute_command(
                     let _ = std::process::Command::new(kill)
                         .arg("-KILL")
                         .arg(format!("-{child_pid}"))
+                        .hidden_console()
                         .status();
                 }
             }
@@ -1380,6 +1385,7 @@ pub fn execute_command(
 
     build_command_result(
         command,
+        project_root,
         exit_code,
         timed_out,
         timeout,
@@ -1522,6 +1528,7 @@ fn execute_command_in_appcontainer(
 
     build_command_result(
         command,
+        project_root,
         exit_code,
         timed_out,
         timeout,
@@ -1536,6 +1543,7 @@ fn execute_command_in_appcontainer(
 #[allow(clippy::too_many_arguments)]
 fn build_command_result(
     command: &str,
+    project_root: &str,
     exit_code: Option<i32>,
     timed_out: bool,
     timeout: u64,
@@ -1544,6 +1552,13 @@ fn build_command_result(
     stderr: Vec<u8>,
     stderr_total: usize,
 ) -> ToolResult {
+    // A command that could have created/removed a repository invalidates the memoized
+    // `is_git_repo` answer, so the git tools appear (or disappear) on the next turn
+    // instead of after the cache TTL. git init / clone / rm -rf .git must not appear
+    // to have had no effect on the tool set.
+    if crate::utils::git_tools::command_may_change_repo(command) {
+        crate::utils::git_tools::invalidate_git_repo_cache(project_root);
+    }
     let mut result = String::new();
     result.push_str(&format!("$ {command}\n"));
 

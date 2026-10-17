@@ -8,12 +8,12 @@
  *   (run-state chip + token readouts), followed by the chat-style input
  *   container (rounded-xl dark tint box) with the morphing send/stop button
  *   exactly like the chat page's input area;
- * - The Claude permission-mode dropdown sits in the input bottom-left slot
- *   (the chat page's AgentModeSelector position).
+ * - The config controls (model / mode / thinking / Claude permission mode) sit
+ *   in the input bottom-left slot via HarnessConfigControls (the chat page's
+ *   ModelSelector / AgentModeSelector / ReasoningButton visuals).
  */
 import { Component, For, Show } from 'solid-js';
 import Icon from '../../../shared/components/Icon';
-import Dropdown from '../../../shared/components/Dropdown';
 import {
   currentHarnessApprovals,
   currentHarnessDraft,
@@ -22,16 +22,13 @@ import {
   currentHarnessTopicId,
   currentHarnessTurnError,
   currentHarnessWorkspace,
-  harnessClaudeMode,
   harnessMessages,
   harnessTopics,
   harnessTools,
   harnessTurnErrors,
-  saveHarnessClaudeMode,
   setHarnessTurnErrors,
 } from '../../../core/store/harness';
 import { formatNumber, t } from '../../../core/i18n';
-import { harnessSetPermissionMode } from '../../../core/api/harness';
 import { getHarnessLogo } from '../utils/harnessLogos';
 import HarnessMessageList from './HarnessMessageList';
 import HarnessApprovalBubble from './HarnessApprovalBubble';
@@ -280,32 +277,11 @@ const HarnessChatInterface: Component<HarnessChatInterfaceProps> = (props) => {
               style={{ 'border-color': 'var(--border-dim)' }}
             >
               <div class="flex items-center gap-2 flex-wrap">
-                {/* Session config controls (model / thinking level) — the
-                    AgentModeSelector slot; rendered from the agent-reported
-                    option set, so controls appear only when the tool exposes
-                    them (ACP agents) or is a native adapter (claude/codex). */}
+                {/* Session config controls (model / mode / thinking level + the
+                    Claude permission mode) — the chat page's AgentModeSelector
+                    slot; rendered from the agent-reported option set with the
+                    chat page's own control visuals. */}
                 <HarnessConfigControls isBusy={props.isBusy} />
-                {/* Claude permission mode */}
-                <Show when={tool()?.id === 'claude' && tool()?.adapter === 'claude-native'}>
-                  <Dropdown
-                    variant="ghost"
-                    class="w-[128px]"
-                    menuUp
-                    value={harnessClaudeMode()}
-                    onChange={(mode) => {
-                      saveHarnessClaudeMode(mode);
-                      const sid = currentHarnessTopicId();
-                      if (sid) void harnessSetPermissionMode(sid, mode).catch(console.error);
-                    }}
-                    options={[
-                      { value: 'default', label: t('harness.mode.default') },
-                      { value: 'acceptEdits', label: t('harness.mode.acceptEdits') },
-                      { value: 'plan', label: t('harness.mode.plan') },
-                      { value: 'dontAsk', label: t('harness.mode.dontAsk') },
-                      { value: 'bypassPermissions', label: t('harness.mode.bypassPermissions') },
-                    ]}
-                  />
-                </Show>
               </div>
 
               <div class="flex items-center gap-2">

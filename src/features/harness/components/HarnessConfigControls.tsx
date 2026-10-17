@@ -1,9 +1,14 @@
 /**
- * Harness session-config controls — renders the config options the agent (or
- * the native driver, or the registry's spawn-option declarations) reported:
- * model selector, thought-level selector, mode/approval selectors, as compact
- * dropdowns in the input bar's bottom-left slot (the chat page's
- * AgentModeSelector position). Boolean options are not rendered in v1.
+ * Harness session-config controls — the input bar's bottom-left cluster (the
+ * chat page's AgentModeSelector slot), rendered with the chat page's own
+ * control visuals:
+ * - model options → HarnessModelSelect (icon-only trigger + provider-logo
+ *   popup rows, the chat ModelSelector replica);
+ * - thought_level options → HarnessThinkingSlider (the chat ReasoningButton
+ *   replica, generalized to the tool's own stop set);
+ * - mode / spawn / other selects → HarnessModeSelect (the chat
+ *   AgentModeSelector replica: icon + label trigger, upward acrylic popup);
+ * - the Claude-native permission mode rides the same HarnessModeSelect.
  *
  * Data sources (first non-empty wins) so the controls render eagerly:
  * 1. live: the current topic's reported option set (a driver has spawned);
@@ -15,42 +20,46 @@
  * Option semantics by category:
  * - agent options (mode/model/thinking_level/...): live change via
  *   `session/set_config_option` (ACP) or the native driver's handler;
- * - category "spawn" (registry-declared CLI-flag options): spawn-time only —
- *   the change persists the preference and stops the session runtime, and the
- *   next prompt respawns with the new flag (never forwarded to the agent).
- *
- * Model options whose value id carries a `provider/model` shape (omp's 588-
- * model catalog) render as `provider · name` so the source is visible.
+ * - category "spawn" (registry-declared CLI-flag/env options): spawn-time
+ *   only — the change persists the preference and stops the session runtime,
+ *   and the next prompt respawns with the new flag (never forwarded).
  */
 import { Component, createEffect, createSignal, For, Show } from 'solid-js';
-import Dropdown from '../../../shared/components/Dropdown';
+import type { IconName } from '../../../shared/components/Icon';
 import {
   currentHarnessConfigOptions,
   currentHarnessToolId,
   currentHarnessTopicId,
+  harnessClaudeMode,
   harnessConfigCache,
   harnessNativeModel,
   harnessNativeThinking,
   harnessSpawnPrefs,
   harnessTools,
+  saveHarnessClaudeMode,
   saveHarnessNativePref,
   saveHarnessSpawnPref,
 } from '../../../core/store/harness';
 import {
   harnessSetConfigOption,
+  harnessSetPermissionMode,
   harnessStopSession,
   harnessToolConfigOptions,
 } from '../../../core/api/harness';
+import { getHarnessLogo } from '../utils/harnessLogos';
 import { t } from '../../../core/i18n';
 import type { HarnessConfigOption } from '../../../core/store/harness';
+import HarnessModelSelect from './HarnessModelSelect';
+import HarnessModeSelect from './HarnessModeSelect';
+import HarnessThinkingSlider from './HarnessThinkingSlider';
 
 interface HarnessConfigControlsProps {
   isBusy: boolean;
 }
 
-/** Placeholder for an unset selector: known spawn-option ids i18n first, then
- * the agent/registry name, then a category default. */
-const placeholderFor = (option: HarnessConfigOption) => {
+/** Placeholder/popup title: known spawn-option ids i18n first, then the
+ * agent/registry name, then a category default. */
+const titleFor = (option: HarnessConfigOption) => {
   if (option.optionId === 'approval-mode') return t('harness.config.approvalMode');
   if (option.optionId === 'goose-mode') return t('harness.config.permissionMode');
   if (option.optionId === 'sandbox') return t('harness.config.sandbox');
@@ -96,16 +105,60 @@ const spawnValueLabel = (id: string): string | null => {
   }
 };
 
-/** Display label for one option value: i18n for known spawn-option values,
+/** i18n label for a thinking-level value id (null → name/id fallback). */
+const thinkValueLabel = (id: string): string | null => {
+  switch (id) {
+    case 'off':
+      return t('harness.thinkValue.off');
+    case 'minimal':
+      return t('harness.thinkValue.minimal');
+    case 'low':
+      return t('harness.thinkValue.low');
+    case 'medium':
+      return t('harness.thinkValue.medium');
+    case 'high':
+      return t('harness.thinkValue.high');
+    case 'xhigh':
+      return t('harness.thinkValue.xhigh');
+    case 'max':
+      return t('harness.thinkValue.max');
+    case 'auto':
+      return t('harness.thinkValue.auto');
+    default:
+      return null;
+  }
+};
+
+/** Display label for one option value: i18n for known spawn/thinking values,
  * provider-prefixed for `provider/model` ids (omp's catalog), else name/id. */
 const valueLabel = (option: HarnessConfigOption, id: string, name?: string) => {
   if (option.category === 'spawn') {
     const localized = spawnValueLabel(id);
     if (localized) return localized;
   }
+  if (option.category === 'thought_level') {
+    const localized = thinkValueLabel(id);
+    if (localized) return localized;
+  }
   const slash = id.indexOf('/');
   if (slash > 0) return `${id.slice(0, slash)} · ${name || id.slice(slash + 1)}`;
   return name || id;
+};
+
+/** Trigger icon per mode-kind option id. */
+const modeIconFor = (option: HarnessConfigOption): IconName => {
+  if (option.optionId === 'approval-mode' || option.optionId === 'goose-mode') return 'eye';
+  if (option.optionId === 'sandbox') return 'layers';
+  return 'compass';
+};
+
+/** Claude permission-mode trigger icons per mode value. */
+const CLAUDE_MODE_ICONS: Record<string, IconName> = {
+  default: 'eye',
+  acceptEdits: 'pen-line',
+  plan: 'document',
+  dontAsk: 'check-circle',
+  bypassPermissions: 'zap',
 };
 
 const HarnessConfigControls: Component<HarnessConfigControlsProps> = (props) => {
@@ -147,6 +200,16 @@ const HarnessConfigControls: Component<HarnessConfigControlsProps> = (props) => 
     return synthesized;
   };
 
+  /** Display order: model first (chat's left slot), mode-kind middle,
+   * thinking last (chat's reasoning slot). Stable within a group. */
+  const sortWeight = (o: HarnessConfigOption) =>
+    o.category === 'model' ? 0 : o.category === 'thought_level' ? 2 : 1;
+  const sortedOptions = () =>
+    options()
+      .map((o, i) => ({ o, i }))
+      .sort((a, b) => sortWeight(a.o) - sortWeight(b.o) || a.i - b.i)
+      .map((x) => x.o);
+
   /** Display value for one option: agent-reported current, else the local
    * preference (spawn prefs for spawn options, native prefs for model/effort). */
   const currentOf = (option: HarnessConfigOption) => {
@@ -174,7 +237,7 @@ const HarnessConfigControls: Component<HarnessConfigControlsProps> = (props) => 
     const toolId = currentHarnessToolId();
     if (!toolId) return;
     if (option.category === 'spawn') {
-      // CLI-flag-backed: persist + respawn (a running turn dies — confirm).
+      // CLI-flag/env-backed: persist + respawn (a running turn dies — confirm).
       if (props.isBusy && !confirm(t('harness.config.spawnRestartConfirm'))) return;
       saveHarnessSpawnPref(toolId, option.optionId, value);
       if (sid) void harnessStopSession(sid).catch(console.error);
@@ -194,38 +257,90 @@ const HarnessConfigControls: Component<HarnessConfigControlsProps> = (props) => 
     if (sid) void harnessSetConfigOption(sid, option.optionId, value).catch(console.error);
   };
 
+  /** Option values + the out-of-list current appended as an extra entry. */
+  const valuesOf = (option: HarnessConfigOption) => {
+    const extra =
+      option.current && !option.values.some((v) => v.id === option.current)
+        ? [{ id: option.current, name: undefined as string | undefined }]
+        : [];
+    return [...option.values, ...extra];
+  };
+
   return (
-    <For each={options()}>
-      {(option) => (
-        <Show when={option.kind === 'select' && option.values.length > 0}>
-          {(() => {
-            const current = () => currentOf(option);
-            const extra = () =>
-              option.current && !option.values.some((v) => v.id === option.current)
-                ? [{ id: option.current as string, name: undefined as string | undefined }]
-                : [];
-            const dropdownOptions = () => [
-              ...option.values.map((v) => ({
-                value: v.id,
-                label: valueLabel(option, v.id, v.name),
-              })),
-              ...extra().map((v) => ({ value: v.id, label: valueLabel(option, v.id, v.name) })),
-            ];
-            return (
-              <Dropdown
-                variant="ghost"
-                class="w-[150px]"
-                menuUp
-                value={current()}
+    <>
+      <For each={sortedOptions()}>
+        {(option) => (
+          <Show when={option.kind === 'select' && option.values.length > 0}>
+            <Show
+              when={option.category === 'model'}
+              fallback={
+                <Show
+                  when={option.category === 'thought_level'}
+                  fallback={
+                    <HarnessModeSelect
+                      icon={modeIconFor(option)}
+                      title={titleFor(option)}
+                      options={valuesOf(option).map((v) => ({
+                        value: v.id,
+                        label: valueLabel(option, v.id, v.name),
+                      }))}
+                      value={currentOf(option)}
+                      onChange={(v) => applyChange(option, v)}
+                    />
+                  }
+                >
+                  <HarnessThinkingSlider
+                    title={titleFor(option)}
+                    stops={valuesOf(option).map((v) => ({
+                      value: v.id,
+                      label: valueLabel(option, v.id, v.name),
+                    }))}
+                    value={currentOf(option)}
+                    onChange={(v) => applyChange(option, v)}
+                  />
+                </Show>
+              }
+            >
+              <HarnessModelSelect
+                title={titleFor(option)}
+                options={valuesOf(option).map((v) => ({
+                  value: v.id,
+                  label: valueLabel(option, v.id, v.name),
+                  provider: v.id.indexOf('/') > 0 ? v.id.slice(0, v.id.indexOf('/')) : undefined,
+                }))}
+                value={currentOf(option)}
+                toolLogo={(() => {
+                  const toolId = currentHarnessToolId();
+                  return toolId ? getHarnessLogo(toolId) : null;
+                })()}
                 onChange={(v) => applyChange(option, v)}
-                options={dropdownOptions()}
-                placeholder={placeholderFor(option)}
               />
-            );
-          })()}
-        </Show>
-      )}
-    </For>
+            </Show>
+          </Show>
+        )}
+      </For>
+
+      {/* Claude native permission mode rides the same mode-select visuals. */}
+      <Show when={isClaudeNative()}>
+        <HarnessModeSelect
+          icon={CLAUDE_MODE_ICONS[harnessClaudeMode()] ?? 'eye'}
+          title={t('harness.config.permissionMode')}
+          options={[
+            { value: 'default', label: t('harness.mode.default') },
+            { value: 'acceptEdits', label: t('harness.mode.acceptEdits') },
+            { value: 'plan', label: t('harness.mode.plan') },
+            { value: 'dontAsk', label: t('harness.mode.dontAsk') },
+            { value: 'bypassPermissions', label: t('harness.mode.bypassPermissions') },
+          ]}
+          value={harnessClaudeMode()}
+          onChange={(mode) => {
+            saveHarnessClaudeMode(mode);
+            const sid = currentHarnessTopicId();
+            if (sid) void harnessSetPermissionMode(sid, mode).catch(console.error);
+          }}
+        />
+      </Show>
+    </>
   );
 };
 

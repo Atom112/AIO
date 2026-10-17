@@ -379,6 +379,9 @@ pub struct StructuredKeyInfo {
     pub options: Vec<String>,
     /// Current value (None-shaped = key absent → tool default).
     pub value: StructuredValue,
+    /// Tool-provided description (omp's config catalog carries one; shown as a
+    /// tooltip on the label row).
+    pub description: Option<String>,
 }
 
 /// Curated declaration: (dotted key, label, kind, enum options).
@@ -389,65 +392,124 @@ type KeyDecl = (
     &'static [&'static str],
 );
 
-/// Which slot a tool's structured keys live in + the curated key declarations.
-fn structured_decl(tool_id: &str) -> Option<(String, Vec<KeyDecl>)> {
-    // (dotted key, label, kind, enum options)
-    let decl: Vec<(
-        &'static str,
-        &'static str,
-        &'static str,
-        &'static [&'static str],
-    )> = match tool_id {
-        "claude" => vec![
-            ("model", "Default model", "string", &[]),
-            (
-                "permissions.defaultMode",
-                "Default permission mode",
-                "enum",
-                &[
-                    "default",
-                    "acceptEdits",
-                    "askEdits",
-                    "viewOnly",
-                    "bypassPermissions",
-                    "plan",
-                ],
-            ),
-            ("alwaysThinkingEnabled", "Always thinking", "bool", &[]),
-            ("cleanupPeriodDays", "Session cleanup (days)", "number", &[]),
-            ("permissions.allow", "Allow rules", "string-list", &[]),
-            ("permissions.ask", "Ask rules", "string-list", &[]),
-            ("permissions.deny", "Deny rules", "string-list", &[]),
-            ("env", "Environment variables", "kv", &[]),
-        ],
-        "gemini" | "qwen" => vec![
-            ("model.name", "Default model", "string", &[]),
-            (
-                "tools.approvalMode",
-                "Approval mode",
-                "enum",
-                &["default", "auto_edit", "yolo", "plan"],
-            ),
-            ("context.fileName", "Context file name", "string", &[]),
-        ],
-        "opencode" => vec![
-            ("model", "Default model", "string", &[]),
-            ("autoupdate", "Auto update", "bool", &[]),
-        ],
-        _ => return None,
-    };
-    // All structured targets are the tool's primary JSON settings slot.
-    let slot = match tool_id {
-        "claude" | "gemini" | "qwen" | "opencode" => "settings".to_string(),
-        _ => return None,
-    };
-    // opencode's primary slot is the "global" one (id differs).
-    let slot = if tool_id == "opencode" {
-        "global".to_string()
-    } else {
-        slot
-    };
-    Some((slot, decl))
+/// Which backend serves a tool's structured keys:
+/// - Json: read-modify-write on the tool's settings.json (PR B tools);
+/// - Toml: toml_edit on codex's config.toml — comments and table layout
+///   preserved through structured edits;
+/// - YamlLines: line-surgery on goose's config.yaml — only the one
+///   `KEY: value` line is touched, so comments elsewhere survive;
+/// - OmpCli: omp's own official channel (`omp config list --json` reads the
+///   full typed catalog; `omp config set/reset` writes with omp's parser —
+///   zero schema reimplementation, perfect parity with the CLI).
+enum StructuredBackend {
+    Json { slot_id: String, decl: Vec<KeyDecl> },
+    Toml { slot_id: String, decl: Vec<KeyDecl> },
+    YamlLines { slot_id: String, decl: Vec<KeyDecl> },
+    OmpCli,
+}
+
+impl std::fmt::Debug for StructuredBackend {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            StructuredBackend::Json { .. } => write!(f, "Json"),
+            StructuredBackend::Toml { .. } => write!(f, "Toml"),
+            StructuredBackend::YamlLines { .. } => write!(f, "YamlLines"),
+            StructuredBackend::OmpCli => write!(f, "OmpCli"),
+        }
+    }
+}
+
+/// Per-tool structured backend + curated key declarations.
+fn structured_decl(tool_id: &str) -> Option<StructuredBackend> {
+    match tool_id {
+        "claude" => Some(StructuredBackend::Json {
+            slot_id: "settings".to_string(),
+            decl: vec![
+                ("model", "Default model", "string", &[]),
+                (
+                    "permissions.defaultMode",
+                    "Default permission mode",
+                    "enum",
+                    &[
+                        "default",
+                        "acceptEdits",
+                        "askEdits",
+                        "viewOnly",
+                        "bypassPermissions",
+                        "plan",
+                    ],
+                ),
+                ("alwaysThinkingEnabled", "Always thinking", "bool", &[]),
+                ("cleanupPeriodDays", "Session cleanup (days)", "number", &[]),
+                ("permissions.allow", "Allow rules", "string-list", &[]),
+                ("permissions.ask", "Ask rules", "string-list", &[]),
+                ("permissions.deny", "Deny rules", "string-list", &[]),
+                ("env", "Environment variables", "kv", &[]),
+            ],
+        }),
+        "gemini" | "qwen" => Some(StructuredBackend::Json {
+            slot_id: "settings".to_string(),
+            decl: vec![
+                ("model.name", "Default model", "string", &[]),
+                (
+                    "tools.approvalMode",
+                    "Approval mode",
+                    "enum",
+                    &["default", "auto_edit", "yolo", "plan"],
+                ),
+                ("context.fileName", "Context file name", "string", &[]),
+            ],
+        }),
+        "opencode" => Some(StructuredBackend::Json {
+            slot_id: "global".to_string(),
+            decl: vec![
+                ("model", "Default model", "string", &[]),
+                ("autoupdate", "Auto update", "bool", &[]),
+            ],
+        }),
+        // codex config.toml — verified keys from the official config reference.
+        "codex" => Some(StructuredBackend::Toml {
+            slot_id: "config".to_string(),
+            decl: vec![
+                ("model", "Default model", "string", &[]),
+                (
+                    "approval_policy",
+                    "Approval policy",
+                    "enum",
+                    &["untrusted", "on-request", "never"],
+                ),
+                (
+                    "sandbox_mode",
+                    "Sandbox mode",
+                    "enum",
+                    &["read-only", "workspace-write", "danger-full-access"],
+                ),
+                ("model_context_window", "Context window", "number", &[]),
+                ("notify", "Notify command", "string-list", &[]),
+            ],
+        }),
+        // goose config.yaml — top-level scalars, line-surgery friendly.
+        "goose" => Some(StructuredBackend::YamlLines {
+            slot_id: "config".to_string(),
+            decl: vec![
+                ("GOOSE_PROVIDER", "Provider", "string", &[]),
+                ("GOOSE_MODEL", "Default model", "string", &[]),
+                (
+                    "GOOSE_MODE",
+                    "Tool execution mode",
+                    "enum",
+                    &["auto", "approve", "smart_approve", "chat"],
+                ),
+                ("GOOSE_TEMPERATURE", "Temperature", "number", &[]),
+                ("GOOSE_MAX_TOKENS", "Max tokens", "number", &[]),
+                ("GOOSE_MAX_TURNS", "Max turns", "number", &[]),
+                ("GOOSE_TOOLSHIM", "Tool interpretation", "bool", &[]),
+            ],
+        }),
+        // omp: the official config channel (full typed catalog via CLI).
+        "omp" => Some(StructuredBackend::OmpCli),
+        _ => None,
+    }
 }
 
 /// Read a dotted path from a parsed JSON object.
@@ -532,10 +594,29 @@ fn to_structured(kind: &str, v: &serde_json::Value) -> StructuredValue {
 /// Structured view of the tool's curated config keys (empty for tools without
 /// declarations — the raw editor still serves them).
 pub fn structured_keys(tool_id: &str) -> Result<Vec<StructuredKeyInfo>, String> {
-    let Some((slot_id, decl)) = structured_decl(tool_id) else {
-        return Ok(Vec::new());
-    };
-    let slot = slot_spec(tool_id, &slot_id)?;
+    match structured_decl(tool_id) {
+        None => Ok(Vec::new()),
+        Some(StructuredBackend::Json { slot_id, decl }) => {
+            structured_keys_json(tool_id, &slot_id, &decl)
+        }
+        Some(StructuredBackend::Toml { slot_id, decl }) => {
+            structured_keys_toml(tool_id, &slot_id, &decl)
+        }
+        Some(StructuredBackend::YamlLines { slot_id, decl }) => {
+            structured_keys_yaml(tool_id, &slot_id, &decl)
+        }
+        Some(StructuredBackend::OmpCli) => structured_keys_omp(),
+    }
+}
+
+/// JSON backend: read the settings file (defaults when absent), map the
+/// declared keys. opencode guard: a .jsonc config disables the section.
+fn structured_keys_json(
+    tool_id: &str,
+    slot_id: &str,
+    decl: &[KeyDecl],
+) -> Result<Vec<StructuredKeyInfo>, String> {
+    let slot = slot_spec(tool_id, slot_id)?;
     let path = resolve_template_path(&slot.path)
         .ok_or_else(|| ierr!("无法解析配置路径", "Cannot resolve the config path"))?;
     // opencode: when the user runs on a .jsonc file, structured writes would
@@ -559,45 +640,227 @@ pub fn structured_keys(tool_id: &str) -> Result<Vec<StructuredKeyInfo>, String> 
     for (key, label, kind, options) in decl {
         let value = json_get(&root, key)
             .map(|v| to_structured(kind, v))
-            .unwrap_or_else(|| match kind {
-                "bool" => StructuredValue::Bool { value: None },
-                "number" => StructuredValue::Num { value: None },
-                "string-list" => StructuredValue::StrList { value: Vec::new() },
-                "kv" => StructuredValue::Kv { value: Vec::new() },
-                _ => StructuredValue::Str { value: None },
-            });
+            .unwrap_or_else(|| default_structured(kind));
         out.push(StructuredKeyInfo {
             key: key.to_string(),
             label: label.to_string(),
             kind: kind.to_string(),
             options: options.iter().map(|s| s.to_string()).collect(),
             value,
+            description: None,
         });
     }
     Ok(out)
 }
 
-/// Set one curated key. `value` of JSON null removes the key (tool default).
-/// Preserves every other key; keeps 2-space pretty formatting; the standard
-/// write pipeline (validate → backup → stale guard → atomic) applies via the
-/// file-level read-modify-write below.
-pub fn structured_set(tool_id: &str, key: &str, value: serde_json::Value) -> Result<(), String> {
-    let Some((slot_id, decl)) = structured_decl(tool_id) else {
-        return Err(ierr!(
-            "该工具没有结构化配置键",
-            "This tool has no structured config keys"
-        ));
-    };
-    if !decl.iter().any(|(k, ..)| *k == key) {
-        return Err(ierr!(
-            "未声明的配置键: {key}",
-            "Undeclared config key: {key}"
-        ));
-    }
-    let slot = slot_spec(tool_id, &slot_id)?;
+/// TOML backend (codex): toml_edit parse, dotted-path read.
+fn structured_keys_toml(
+    tool_id: &str,
+    slot_id: &str,
+    decl: &[KeyDecl],
+) -> Result<Vec<StructuredKeyInfo>, String> {
+    let slot = slot_spec(tool_id, slot_id)?;
     let path = resolve_template_path(&slot.path)
         .ok_or_else(|| ierr!("无法解析配置路径", "Cannot resolve the config path"))?;
+    let doc: toml_edit::DocumentMut = if path.exists() {
+        let content = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+        content
+            .parse()
+            .map_err(|e| format!("config.toml 解析失败: {e}"))?
+    } else {
+        toml_edit::DocumentMut::new()
+    };
+    let mut out = Vec::new();
+    for (key, label, kind, options) in decl {
+        let item = doc.get(key);
+        let value = match item {
+            Some(toml_edit::Item::Value(v)) => toml_value_to_structured(kind, v),
+            _ => default_structured(kind),
+        };
+        out.push(StructuredKeyInfo {
+            key: key.to_string(),
+            label: label.to_string(),
+            kind: kind.to_string(),
+            options: options.iter().map(|s| s.to_string()).collect(),
+            value,
+            description: None,
+        });
+    }
+    Ok(out)
+}
 
+/// toml_edit value → StructuredValue by the declared kind.
+fn toml_value_to_structured(kind: &str, v: &toml_edit::Value) -> StructuredValue {
+    match kind {
+        "bool" => StructuredValue::Bool { value: v.as_bool() },
+        "number" => StructuredValue::Num {
+            value: v.as_integer().map(|i| i as f64).or_else(|| v.as_float()),
+        },
+        "string-list" => StructuredValue::StrList {
+            value: v
+                .as_array()
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|x| x.as_str().map(str::to_string))
+                        .collect()
+                })
+                .unwrap_or_default(),
+        },
+        _ => StructuredValue::Str {
+            value: v.as_str().map(str::to_string),
+        },
+    }
+}
+
+/// YamlLines backend (goose): parse the file for CURRENT values (display only
+/// — writes go through line surgery). Top-level scalars only.
+fn structured_keys_yaml(
+    tool_id: &str,
+    slot_id: &str,
+    decl: &[KeyDecl],
+) -> Result<Vec<StructuredKeyInfo>, String> {
+    let slot = slot_spec(tool_id, slot_id)?;
+    let path = resolve_template_path(&slot.path)
+        .ok_or_else(|| ierr!("无法解析配置路径", "Cannot resolve the config path"))?;
+    let root: serde_yaml::Value = if path.exists() {
+        let content = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+        serde_yaml::from_str(&content).map_err(|e| format!("config.yaml 解析失败: {e}"))?
+    } else {
+        serde_yaml::Value::Null
+    };
+    let mut out = Vec::new();
+    for (key, label, kind, options) in decl {
+        let v = root.get(*key);
+        let value = match v {
+            Some(serde_yaml::Value::Bool(b)) => StructuredValue::Bool { value: Some(*b) },
+            Some(serde_yaml::Value::Number(n)) => StructuredValue::Num { value: n.as_f64() },
+            Some(serde_yaml::Value::String(s)) => StructuredValue::Str {
+                value: Some(s.clone()),
+            },
+            _ => default_structured(kind),
+        };
+        out.push(StructuredKeyInfo {
+            key: key.to_string(),
+            label: label.to_string(),
+            kind: kind.to_string(),
+            options: options.iter().map(|s| s.to_string()).collect(),
+            value,
+            description: None,
+        });
+    }
+    Ok(out)
+}
+
+/// omp backend: `omp config list --json` — the full typed catalog. The key
+/// count is large (~450); the GUI groups by key prefix. When omp is not on
+/// PATH, an empty catalog is returned (the section hides; raw editor serves).
+fn structured_keys_omp() -> Result<Vec<StructuredKeyInfo>, String> {
+    let output = run_omp_config(&["config", "list", "--json"])?;
+    let catalog: serde_json::Value =
+        serde_json::from_str(&output).map_err(|e| format!("omp config list 解析失败: {e}"))?;
+    let Some(map) = catalog.as_object() else {
+        return Ok(Vec::new());
+    };
+    let mut out = Vec::new();
+    for (key, meta) in map {
+        let ty = meta
+            .get("type")
+            .and_then(|t| t.as_str())
+            .unwrap_or("string");
+        let desc = meta
+            .get("description")
+            .and_then(|d| d.as_str())
+            .filter(|d| !d.is_empty())
+            .map(str::to_string);
+        let raw = meta.get("value");
+        // omp enums don't list their options in the catalog — render as text
+        // (omp validates on set and its error lists the valid values).
+        let kind = match ty {
+            "boolean" => "bool",
+            "number" => "number",
+            "array" => "string-list",
+            "record" => "kv",
+            _ => "string",
+        };
+        let value = raw
+            .map(|v| to_structured(kind, v))
+            .unwrap_or_else(|| default_structured(kind));
+        // Key path doubles as the label (omp's own vocabulary).
+        out.push(StructuredKeyInfo {
+            key: key.clone(),
+            label: key.clone(),
+            kind: kind.to_string(),
+            options: Vec::new(),
+            value,
+            description: desc,
+        });
+    }
+    out.sort_by(|a, b| a.key.cmp(&b.key));
+    Ok(out)
+}
+
+/// Default (unset) StructuredValue by kind.
+fn default_structured(kind: &str) -> StructuredValue {
+    match kind {
+        "bool" => StructuredValue::Bool { value: None },
+        "number" => StructuredValue::Num { value: None },
+        "string-list" => StructuredValue::StrList { value: Vec::new() },
+        "kv" => StructuredValue::Kv { value: Vec::new() },
+        _ => StructuredValue::Str { value: None },
+    }
+}
+
+/// Set one curated key. `value` of JSON null removes the key (tool default).
+/// Every backend preserves the rest of the file; writes ride the standard
+/// pipeline (validate → backup → stale guard → atomic) where a file is
+/// involved, or omp's own parser for the CLI channel.
+pub fn structured_set(tool_id: &str, key: &str, value: serde_json::Value) -> Result<(), String> {
+    match structured_decl(tool_id) {
+        None => Err(ierr!(
+            "该工具没有结构化配置键",
+            "This tool has no structured config keys"
+        )),
+        Some(StructuredBackend::Json { slot_id, decl }) => {
+            if !decl.iter().any(|(k, ..)| *k == key) {
+                return Err(ierr!(
+                    "未声明的配置键: {key}",
+                    "Undeclared config key: {key}"
+                ));
+            }
+            structured_set_json(tool_id, &slot_id, key, value)
+        }
+        Some(StructuredBackend::Toml { slot_id, decl }) => {
+            if !decl.iter().any(|(k, ..)| *k == key) {
+                return Err(ierr!(
+                    "未声明的配置键: {key}",
+                    "Undeclared config key: {key}"
+                ));
+            }
+            structured_set_toml(tool_id, &slot_id, key, value)
+        }
+        Some(StructuredBackend::YamlLines { slot_id, decl }) => {
+            if !decl.iter().any(|(k, ..)| *k == key) {
+                return Err(ierr!(
+                    "未声明的配置键: {key}",
+                    "Undeclared config key: {key}"
+                ));
+            }
+            structured_set_yaml(tool_id, &slot_id, key, value)
+        }
+        Some(StructuredBackend::OmpCli) => structured_set_omp(key, &value),
+    }
+}
+
+/// JSON backend: read → json_set → pretty-serialize → pipeline write.
+fn structured_set_json(
+    tool_id: &str,
+    slot_id: &str,
+    key: &str,
+    value: serde_json::Value,
+) -> Result<(), String> {
+    let slot = slot_spec(tool_id, slot_id)?;
+    let path = resolve_template_path(&slot.path)
+        .ok_or_else(|| ierr!("无法解析配置路径", "Cannot resolve the config path"))?;
     let mut root: serde_json::Value = if path.exists() {
         let content = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
         serde_json::from_str(&content).map_err(|e| e.to_string())?
@@ -615,8 +878,227 @@ pub fn structured_set(tool_id: &str, key: &str, value: serde_json::Value) -> Res
     }
     json_set(&mut root, key, value);
     let serialized = serde_json::to_string_pretty(&root).map_err(|e| e.to_string())?;
+    write_with_fresh_mtime(tool_id, slot_id, &path, &serialized)
+}
+
+/// TOML backend (codex): toml_edit set/remove — comments and table layout are
+/// preserved byte-faithfully outside the edited line.
+fn structured_set_toml(
+    tool_id: &str,
+    slot_id: &str,
+    key: &str,
+    value: serde_json::Value,
+) -> Result<(), String> {
+    let slot = slot_spec(tool_id, slot_id)?;
+    let path = resolve_template_path(&slot.path)
+        .ok_or_else(|| ierr!("无法解析配置路径", "Cannot resolve the config path"))?;
+    let mut doc: toml_edit::DocumentMut = if path.exists() {
+        let content = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+        content
+            .parse()
+            .map_err(|e| format!("config.toml 解析失败: {e}"))?
+    } else {
+        toml_edit::DocumentMut::new()
+    };
+    if value.is_null() {
+        doc.remove(key);
+    } else {
+        let toml_value = json_to_toml_value(&value).ok_or_else(|| {
+            ierr!(
+                "该值无法写入 TOML（对象/嵌套结构请用原始编辑器）",
+                "This value cannot be written as TOML (use the raw editor for objects)"
+            )
+        })?;
+        doc[key] = toml_edit::Item::Value(toml_value);
+    }
+    let serialized = doc.to_string();
+    write_with_fresh_mtime(tool_id, slot_id, &path, &serialized)
+}
+
+/// serde_json value → toml_edit value (scalars + arrays; objects are out of
+/// scope for the curated keys — the raw editor serves those).
+fn json_to_toml_value(v: &serde_json::Value) -> Option<toml_edit::Value> {
+    match v {
+        serde_json::Value::Bool(b) => Some((*b).into()),
+        serde_json::Value::Number(n) => n
+            .as_i64()
+            .map(|i| i.into())
+            .or_else(|| n.as_f64().map(|f| f.into())),
+        serde_json::Value::String(s) => Some(s.as_str().into()),
+        serde_json::Value::Array(a) => {
+            let mut arr = toml_edit::Array::new();
+            for item in a {
+                arr.push(json_to_toml_value(item)?);
+            }
+            Some(arr.into())
+        }
+        _ => None,
+    }
+}
+
+/// YamlLines backend (goose): line surgery — replace/remove the single
+/// `KEY: value` line (top-level keys only), leaving every other line
+/// (comments included) byte-identical. Missing key appends at the end.
+fn structured_set_yaml(
+    tool_id: &str,
+    slot_id: &str,
+    key: &str,
+    value: serde_json::Value,
+) -> Result<(), String> {
+    let slot = slot_spec(tool_id, slot_id)?;
+    let path = resolve_template_path(&slot.path)
+        .ok_or_else(|| ierr!("无法解析配置路径", "Cannot resolve the config path"))?;
+    let original = if path.exists() {
+        std::fs::read_to_string(&path).map_err(|e| e.to_string())?
+    } else {
+        String::new()
+    };
+    let updated = yaml_line_surgery(&original, key, &value)?;
+    write_with_fresh_mtime(tool_id, slot_id, &path, &updated)
+}
+
+/// Replace/remove/append one top-level `KEY: value` line in a YAML document.
+/// null removes the line; scalars serialize as plain YAML (strings quoted when
+/// they contain YAML special characters).
+fn yaml_line_surgery(src: &str, key: &str, value: &serde_json::Value) -> Result<String, String> {
+    let lines: Vec<&str> = src.lines().collect();
+    let prefix = format!("{key}:");
+    let mut out: Vec<String> = Vec::with_capacity(lines.len() + 1);
+    let mut found = false;
+    for line in lines {
+        let trimmed = line.trim_start();
+        // Top-level match: the line starts with the key (no leading spaces) and
+        // is a mapping entry, not a nested key with the same suffix.
+        if !found
+            && line.starts_with(&prefix)
+            && (trimmed == prefix || trimmed.starts_with(&format!("{prefix} ")))
+        {
+            found = true;
+            if value.is_null() {
+                continue; // remove the line
+            }
+            out.push(format!("{key}: {}", yaml_scalar(value)));
+            continue;
+        }
+        out.push(line.to_string());
+    }
+    if !found && !value.is_null() {
+        if !out.is_empty() && !out.last().map(|l| l.is_empty()).unwrap_or(true) {
+            out.push(String::new());
+        }
+        out.push(format!("{key}: {}", yaml_scalar(value)));
+    }
+    let mut result = out.join("\n");
+    if src.ends_with('\n') || !result.is_empty() {
+        result.push('\n');
+    }
+    Ok(result)
+}
+
+/// Serialize a JSON scalar as a YAML scalar (strings quoted when needed).
+fn yaml_scalar(v: &serde_json::Value) -> String {
+    match v {
+        serde_json::Value::Bool(b) => b.to_string(),
+        serde_json::Value::Number(n) => n.to_string(),
+        serde_json::Value::String(s) => {
+            let needs_quotes = s.is_empty()
+                || s.contains(':')
+                || s.contains('#')
+                || s.contains('"')
+                || s.contains('\'')
+                || s.contains('\n')
+                || s.trim() != s
+                || s.starts_with('[')
+                || s.starts_with('{')
+                || s.starts_with('&')
+                || s.starts_with('*')
+                || s.starts_with('!')
+                || s.starts_with('%')
+                || s.starts_with('@')
+                || s.starts_with('`')
+                || s == "true"
+                || s == "false"
+                || s == "null"
+                || s == "~";
+            if needs_quotes {
+                serde_yaml::to_string(s)
+                    .unwrap_or_default()
+                    .trim()
+                    .to_string()
+            } else {
+                s.clone()
+            }
+        }
+        other => serde_yaml::to_string(other)
+            .unwrap_or_default()
+            .trim()
+            .to_string(),
+    }
+}
+
+/// omp backend: `omp config set <key> <value>` (omp's own parser/validator —
+/// its error text, including valid enum values, surfaces to the UI). null →
+/// `omp config reset <key>` (omp's official revert).
+fn structured_set_omp(key: &str, value: &serde_json::Value) -> Result<(), String> {
+    if value.is_null() {
+        run_omp_config(&["config", "reset", key])?;
+        return Ok(());
+    }
+    let arg = omp_arg_string(value);
+    run_omp_config(&["config", "set", key, &arg])?;
+    Ok(())
+}
+
+/// Convert a JSON value to omp's `config set` value-string convention
+/// (booleans true/false; numbers decimal; arrays/records as JSON strings —
+/// omp parses these against the key's schema type).
+fn omp_arg_string(value: &serde_json::Value) -> String {
+    match value {
+        serde_json::Value::Bool(b) => b.to_string(),
+        serde_json::Value::Number(n) => n.to_string(),
+        serde_json::Value::String(s) => s.clone(),
+        other => other.to_string(),
+    }
+}
+
+/// Run `omp <args…>`, capture stdout, surface stderr on non-zero exit.
+/// PATH-only resolution (SEC-06); no console window on Windows.
+fn run_omp_config(args: &[&str]) -> Result<String, String> {
+    use std::process::Command as StdCommand;
+    let program = crate::utils::exec_resolve::resolve_or_keep("omp");
+    let mut cmd = StdCommand::new(&program);
+    cmd.args(args);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    let output = cmd
+        .output()
+        .map_err(|e| format!("无法启动 omp ({program}): {e}"))?;
+    if !output.status.success() {
+        let err = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let out = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        return Err(format!(
+            "omp config 失败: {}",
+            if err.is_empty() { out } else { err }
+        ));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+/// Read-modify-write helper: capture the file's current mtime (or None when
+/// absent) right before writing so the pipeline's staleness guard passes for
+/// our own read.
+fn write_with_fresh_mtime(
+    tool_id: &str,
+    slot_id: &str,
+    path: &Path,
+    serialized: &str,
+) -> Result<(), String> {
     let expected = if path.exists() {
-        std::fs::metadata(&path)
+        std::fs::metadata(path)
             .ok()
             .and_then(|m| m.modified().ok())
             .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
@@ -624,7 +1106,7 @@ pub fn structured_set(tool_id: &str, key: &str, value: serde_json::Value) -> Res
     } else {
         None
     };
-    write(tool_id, &slot_id, &serialized, expected)
+    write(tool_id, slot_id, serialized, expected)
 }
 
 #[cfg(test)]
@@ -701,21 +1183,39 @@ mod tests {
     }
 
     #[test]
-    fn structured_declarations_cover_json_tools() {
+    fn structured_declarations_cover_all_backends() {
+        // JSON tools (PR B)
         for tool in ["claude", "gemini", "qwen", "opencode"] {
             let decl = structured_decl(tool);
             assert!(decl.is_some(), "{tool} should declare structured keys");
-            let (slot, keys) = decl.unwrap();
-            let expected_slot = if tool == "opencode" {
-                "global"
-            } else {
-                "settings"
-            };
-            assert_eq!(slot, expected_slot);
-            assert!(!keys.is_empty());
+            match decl.unwrap() {
+                StructuredBackend::Json { slot_id, decl } => {
+                    let expected = if tool == "opencode" {
+                        "global"
+                    } else {
+                        "settings"
+                    };
+                    assert_eq!(slot_id, expected);
+                    assert!(!decl.is_empty());
+                }
+                other => panic!("{tool} should be the Json backend, got {other:?}"),
+            }
         }
-        // TOML/YAML tools get no structured keys in PR B (raw editor serves them)
-        for tool in ["codex", "omp", "goose", "dsh"] {
+        // codex → Toml, goose → YamlLines, omp → OmpCli (PR C)
+        assert!(matches!(
+            structured_decl("codex"),
+            Some(StructuredBackend::Toml { .. })
+        ));
+        assert!(matches!(
+            structured_decl("goose"),
+            Some(StructuredBackend::YamlLines { .. })
+        ));
+        assert!(matches!(
+            structured_decl("omp"),
+            Some(StructuredBackend::OmpCli)
+        ));
+        // dsh/custom: raw editor only
+        for tool in ["dsh", "nope"] {
             assert!(structured_decl(tool).is_none());
         }
     }
@@ -723,5 +1223,76 @@ mod tests {
     #[test]
     fn structured_set_rejects_undeclared_keys() {
         assert!(structured_set("claude", "nope.hack", json!(1)).is_err());
+        assert!(structured_set("codex", "nope.hack", json!(1)).is_err());
+        assert!(structured_set("goose", "nope.hack", json!(1)).is_err());
+    }
+
+    /// toml_edit keeps comments and table layout through structured edits
+    /// (a removed key takes its OWN comments with it — toml_edit decor
+    /// semantics — while untouched keys keep theirs byte-identically).
+    #[test]
+    fn toml_edit_preserves_comments() {
+        let src =
+            "model = \"gpt-5.2\" # inline\n\n# keep me\nother = 1\n\n[not_touched]\nkey = 1\n";
+        let mut doc: toml_edit::DocumentMut = src.parse().unwrap();
+        doc["sandbox_mode"] = toml_edit::Item::Value("workspace-write".into());
+        let out = doc.to_string();
+        assert!(out.contains("model = \"gpt-5.2\" # inline"));
+        assert!(out.contains("# keep me\nother = 1"));
+        assert!(out.contains("[not_touched]"));
+        assert!(out.contains("sandbox_mode = \"workspace-write\""));
+        // removal drops the key and its own decor; others untouched
+        let mut doc2: toml_edit::DocumentMut = out.parse().unwrap();
+        doc2.remove("model");
+        let out2 = doc2.to_string();
+        assert!(!out2.contains("model ="));
+        assert!(out2.contains("# keep me\nother = 1"));
+        assert!(out2.contains("sandbox_mode = \"workspace-write\""));
+        assert!(out2.contains("[not_touched]\nkey = 1"));
+    }
+
+    /// YAML line surgery: replace/remove/append one top-level key, comments
+    /// and unrelated lines byte-identical.
+    #[test]
+    fn yaml_line_surgery_roundtrip() {
+        let src = "# goose config\nGOOSE_PROVIDER: anthropic\nGOOSE_MODE: approve # note\n\nextensions:\n  developer:\n    enabled: true\n";
+        // replace
+        let out = yaml_line_surgery(src, "GOOSE_MODE", &json!("smart_approve")).unwrap();
+        assert!(out.contains("GOOSE_MODE: smart_approve"));
+        assert!(out.contains("# goose config"));
+        assert!(out.contains("GOOSE_PROVIDER: anthropic"));
+        assert!(out.contains("extensions:"));
+        assert!(!out.contains("approve # note"));
+        // remove
+        let out2 = yaml_line_surgery(&out, "GOOSE_PROVIDER", &json!(null)).unwrap();
+        assert!(!out2.contains("GOOSE_PROVIDER"));
+        assert!(out2.contains("GOOSE_MODE: smart_approve"));
+        // append when missing
+        let out3 = yaml_line_surgery(&out2, "GOOSE_TEMPERATURE", &json!(0.7)).unwrap();
+        assert!(out3.contains("GOOSE_TEMPERATURE: 0.7"));
+        // string needing quotes
+        let out4 = yaml_line_surgery(&out2, "GOOSE_MODEL", &json!("claude: 3.5")).unwrap();
+        assert!(
+            out4.contains("GOOSE_MODEL: 'claude: 3.5'")
+                || out4.contains("GOOSE_MODEL: \"claude: 3.5\"")
+        );
+        // nested keys with the same suffix are NOT touched
+        let nested = "extensions:\n  GOOSE_MODE: nope\n";
+        let out5 = yaml_line_surgery(nested, "GOOSE_MODE", &json!("auto")).unwrap();
+        assert!(out5.contains("  GOOSE_MODE: nope"));
+        assert!(out5.contains("GOOSE_MODE: auto"));
+    }
+
+    /// omp arg serialization follows omp's config set conventions.
+    #[test]
+    fn omp_arg_string_conventions() {
+        assert_eq!(omp_arg_string(&json!(true)), "true");
+        assert_eq!(omp_arg_string(&json!(42)), "42");
+        assert_eq!(omp_arg_string(&json!("high")), "high");
+        assert_eq!(omp_arg_string(&json!(["a", "b"])), r#"["a","b"]"#);
+        assert_eq!(
+            omp_arg_string(&json!({"bash": "prompt"})),
+            r#"{"bash":"prompt"}"#
+        );
     }
 }

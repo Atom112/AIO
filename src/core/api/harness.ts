@@ -238,6 +238,8 @@ export interface HarnessStructuredKey {
   kind: string;
   options: string[];
   value: HarnessStructuredValue;
+  /** Tool-provided description (omp's catalog carries one; label tooltip). */
+  description?: string;
 }
 
 /** Structured view of the tool's curated config keys. */

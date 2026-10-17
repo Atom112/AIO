@@ -106,7 +106,11 @@ Oh My Pi / OpenCode / goose / DSH 使用各自的登录或配置体系（无 API
 每个工具页包含：
 
 - **概览**：安装/认证状态、配置文件探测（路径/是否存在/备份标记）、DSH 的 profile 层叠只读展示；
-- **常用配置**（Claude Code / Gemini CLI / Qwen Code / OpenCode）：高频配置键的结构化表单——默认模型、默认权限模式（claude）、审批模式（gemini/qwen）、始终思考、会话清理天数、权限规则（allow/ask/deny 芯片编辑）、环境变量键值对等。每次修改直接写入工具自己的配置文件（保留其它键；清空/移除即恢复工具默认——与手工编辑同一语义）。OpenCode 使用 JSONC 配置文件时结构化编辑自动禁用（避免并行 .json 覆盖），用下方原始编辑器；
+- **常用配置**（全部 8 工具）：高频配置键的结构化表单，按工具的配置格式走对应写入通道——
+  - **JSON 工具**（Claude Code / Gemini CLI / Qwen Code / OpenCode）：默认模型、默认权限模式（claude）、审批模式（gemini/qwen）、始终思考、权限规则（allow/ask/deny 芯片编辑）、环境变量键值对等；每次修改直接写入 settings.json（保留其它键；清空/移除即恢复默认）。OpenCode 使用 JSONC 时自动禁用（避免并行 .json 覆盖）；
+  - **Codex**（TOML，`toml_edit` 保注释）：默认模型、审批策略、沙箱模式、上下文窗口、通知命令——注释与表结构在结构化编辑下逐字节保留；
+  - **goose**（YAML 行级手术）：Provider、默认模型、工具执行模式、温度、max tokens/turns、工具解释——只动目标 `KEY: value` 一行，其余行（含注释）逐字节保留；
+  - **Oh My Pi**（**官方通道**）：`omp config list --json` 驱动**全量设置目录**（448 键，含类型与描述）分组折叠 + 过滤检索；写入走 `omp config set`（omp 自带解析校验，枚举合法值错误直接透传）、恢复默认走 `omp config reset`——与 CLI 完全同源，零 schema 重复实现。omp 未安装时该区隐藏（原始编辑器仍可用）；
 - **凭据**：认证探测 + API Key（OS 钥匙串，spawn 时注入）+ 官方文档；
 - **高级配置**：每个配置文件的带校验原始编辑器——保存前按格式重解析校验（JSON/JSONC/TOML/YAML，解析失败拒绝落盘）、**首次写入前自动备份**（`<file>.aio-bak`，可一键还原）、外部修改的陈旧检测（编辑期间文件被外部改动则拒绝覆盖）。
 

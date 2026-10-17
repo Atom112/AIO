@@ -349,8 +349,8 @@ pub fn builtin_tools() -> Vec<HarnessToolSpec> {
                     },
                     ConfigFileSlotSpec {
                         id: "global-instruction".to_string(),
-                        label: "Global instructions (AGENTS.md)".to_string(),
-                        path: "~/.omp/AGENTS.md".to_string(),
+                        label: "Global instructions (~/AGENTS.md)".to_string(),
+                        path: "~/AGENTS.md".to_string(),
                         format: "markdown".to_string(),
                     },
                 ],

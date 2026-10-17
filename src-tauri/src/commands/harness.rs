@@ -10,6 +10,7 @@ use crate::plugins::harness::store::{
 };
 use crate::plugins::harness::toolconf::{
     ConfigFileContent as ToolConfigContent, ConfigSlotInfo as ToolConfigSlotInfo, DshProfileInfo,
+    StructuredKeyInfo,
 };
 use tauri::{AppHandle, Manager, State};
 
@@ -550,4 +551,23 @@ pub async fn harness_tool_config_restore(tool_id: String, slot_id: String) -> Re
 #[tauri::command]
 pub async fn harness_tool_dsh_profiles() -> Result<Vec<DshProfileInfo>, String> {
     Ok(crate::plugins::harness::toolconf::dsh_profiles())
+}
+/// Structured view of the tool's curated config keys (typed descriptors for
+/// the settings form; empty for tools without declarations).
+#[tauri::command]
+pub async fn harness_tool_structured_get(
+    tool_id: String,
+) -> Result<Vec<StructuredKeyInfo>, String> {
+    crate::plugins::harness::toolconf::structured_keys(&tool_id)
+}
+
+/// Set one curated config key (JSON `null` removes the key → tool default).
+/// Read-modify-write on the tool's own file; every other key is preserved.
+#[tauri::command]
+pub async fn harness_tool_structured_set(
+    tool_id: String,
+    key: String,
+    value: serde_json::Value,
+) -> Result<(), String> {
+    crate::plugins::harness::toolconf::structured_set(&tool_id, &key, value)
 }

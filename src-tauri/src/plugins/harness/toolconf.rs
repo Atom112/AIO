@@ -346,9 +346,291 @@ pub fn dsh_profiles() -> Vec<DshProfileInfo> {
     out
 }
 
+// ===== Structured key layer (plan PR B: curated per-tool keys) =====
+//
+// The tool's own config file stays the source of truth; this layer exposes a
+// curated set of well-known keys as typed descriptors the settings page
+// renders as form rows. Setting a key rewrites the file (nested dotted paths,
+// unknown keys preserved); setting it to null REMOVES the key (revert to the
+// tool's default), mirroring how CLI users edit these files by hand.
+
+/// One curated key's current value (mirrored to the frontend; internally
+/// tagged by `kind`: str/bool/num/strList/kv).
+#[derive(Serialize, Clone, Debug)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum StructuredValue {
+    Str { value: Option<String> },
+    Bool { value: Option<bool> },
+    Num { value: Option<f64> },
+    StrList { value: Vec<String> },
+    Kv { value: Vec<(String, String)> },
+}
+
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct StructuredKeyInfo {
+    /// Dotted path into the config file ("permissions.defaultMode").
+    pub key: String,
+    /// Display label (English; the GUI i18n's known keys).
+    pub label: String,
+    /// string | enum | bool | number | string-list | kv
+    pub kind: String,
+    /// Enum values when kind == enum.
+    pub options: Vec<String>,
+    /// Current value (None-shaped = key absent → tool default).
+    pub value: StructuredValue,
+}
+
+/// Curated declaration: (dotted key, label, kind, enum options).
+type KeyDecl = (
+    &'static str,
+    &'static str,
+    &'static str,
+    &'static [&'static str],
+);
+
+/// Which slot a tool's structured keys live in + the curated key declarations.
+fn structured_decl(tool_id: &str) -> Option<(String, Vec<KeyDecl>)> {
+    // (dotted key, label, kind, enum options)
+    let decl: Vec<(
+        &'static str,
+        &'static str,
+        &'static str,
+        &'static [&'static str],
+    )> = match tool_id {
+        "claude" => vec![
+            ("model", "Default model", "string", &[]),
+            (
+                "permissions.defaultMode",
+                "Default permission mode",
+                "enum",
+                &[
+                    "default",
+                    "acceptEdits",
+                    "askEdits",
+                    "viewOnly",
+                    "bypassPermissions",
+                    "plan",
+                ],
+            ),
+            ("alwaysThinkingEnabled", "Always thinking", "bool", &[]),
+            ("cleanupPeriodDays", "Session cleanup (days)", "number", &[]),
+            ("permissions.allow", "Allow rules", "string-list", &[]),
+            ("permissions.ask", "Ask rules", "string-list", &[]),
+            ("permissions.deny", "Deny rules", "string-list", &[]),
+            ("env", "Environment variables", "kv", &[]),
+        ],
+        "gemini" | "qwen" => vec![
+            ("model.name", "Default model", "string", &[]),
+            (
+                "tools.approvalMode",
+                "Approval mode",
+                "enum",
+                &["default", "auto_edit", "yolo", "plan"],
+            ),
+            ("context.fileName", "Context file name", "string", &[]),
+        ],
+        "opencode" => vec![
+            ("model", "Default model", "string", &[]),
+            ("autoupdate", "Auto update", "bool", &[]),
+        ],
+        _ => return None,
+    };
+    // All structured targets are the tool's primary JSON settings slot.
+    let slot = match tool_id {
+        "claude" | "gemini" | "qwen" | "opencode" => "settings".to_string(),
+        _ => return None,
+    };
+    // opencode's primary slot is the "global" one (id differs).
+    let slot = if tool_id == "opencode" {
+        "global".to_string()
+    } else {
+        slot
+    };
+    Some((slot, decl))
+}
+
+/// Read a dotted path from a parsed JSON object.
+fn json_get<'a>(root: &'a serde_json::Value, path: &str) -> Option<&'a serde_json::Value> {
+    let mut cur = root;
+    for part in path.split('.') {
+        cur = cur.get(part)?;
+    }
+    Some(cur)
+}
+
+/// Set (or remove on `value = null`) a dotted path in a parsed JSON object,
+/// creating intermediate objects as needed. Returns whether the tree changed.
+fn json_set(root: &mut serde_json::Value, path: &str, value: serde_json::Value) -> bool {
+    let parts: Vec<&str> = path.split('.').collect();
+    let mut cur = root;
+    for (i, part) in parts.iter().enumerate() {
+        if i == parts.len() - 1 {
+            if value.is_null() {
+                return if let Some(map) = cur.as_object_mut() {
+                    map.remove(*part).is_some()
+                } else {
+                    false
+                };
+            }
+            if !cur.is_object() {
+                *cur = serde_json::Map::new().into();
+            }
+            return if let Some(map) = cur.as_object_mut() {
+                let changed = map.get(*part) != Some(&value);
+                map.insert(part.to_string(), value);
+                changed
+            } else {
+                false
+            };
+        }
+        if !cur.is_object() {
+            *cur = serde_json::Map::new().into();
+        }
+        let obj = cur.as_object_mut().unwrap();
+        cur = obj
+            .entry(part.to_string())
+            .or_insert_with(|| serde_json::Map::new().into());
+    }
+    false
+}
+
+/// Convert a JSON value into the descriptor's StructuredValue shape.
+fn to_structured(kind: &str, v: &serde_json::Value) -> StructuredValue {
+    match kind {
+        "bool" => StructuredValue::Bool { value: v.as_bool() },
+        "number" => StructuredValue::Num { value: v.as_f64() },
+        "enum" => StructuredValue::Str {
+            value: v.as_str().map(str::to_string),
+        },
+        "string-list" => StructuredValue::StrList {
+            value: v
+                .as_array()
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|x| x.as_str().map(str::to_string))
+                        .collect()
+                })
+                .unwrap_or_default(),
+        },
+        "kv" => StructuredValue::Kv {
+            value: v
+                .as_object()
+                .map(|o| {
+                    o.iter()
+                        .filter_map(|(k, x)| x.as_str().map(|s| (k.clone(), s.to_string())))
+                        .collect()
+                })
+                .unwrap_or_default(),
+        },
+        _ => StructuredValue::Str {
+            value: v.as_str().map(str::to_string),
+        },
+    }
+}
+
+/// Structured view of the tool's curated config keys (empty for tools without
+/// declarations — the raw editor still serves them).
+pub fn structured_keys(tool_id: &str) -> Result<Vec<StructuredKeyInfo>, String> {
+    let Some((slot_id, decl)) = structured_decl(tool_id) else {
+        return Ok(Vec::new());
+    };
+    let slot = slot_spec(tool_id, &slot_id)?;
+    let path = resolve_template_path(&slot.path)
+        .ok_or_else(|| ierr!("无法解析配置路径", "Cannot resolve the config path"))?;
+    // opencode: when the user runs on a .jsonc file, structured writes would
+    // create a parallel .json — refuse and let the raw editor serve instead.
+    if tool_id == "opencode" && !path.exists() {
+        if let Ok(jsonc) = slot_spec(tool_id, "global-jsonc") {
+            if let Some(p) = resolve_template_path(&jsonc.path) {
+                if p.exists() {
+                    return Ok(Vec::new());
+                }
+            }
+        }
+    }
+    let root: serde_json::Value = if path.exists() {
+        let content = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+        serde_json::from_str(&content).map_err(|e| e.to_string())?
+    } else {
+        serde_json::Value::Null
+    };
+    let mut out = Vec::new();
+    for (key, label, kind, options) in decl {
+        let value = json_get(&root, key)
+            .map(|v| to_structured(kind, v))
+            .unwrap_or_else(|| match kind {
+                "bool" => StructuredValue::Bool { value: None },
+                "number" => StructuredValue::Num { value: None },
+                "string-list" => StructuredValue::StrList { value: Vec::new() },
+                "kv" => StructuredValue::Kv { value: Vec::new() },
+                _ => StructuredValue::Str { value: None },
+            });
+        out.push(StructuredKeyInfo {
+            key: key.to_string(),
+            label: label.to_string(),
+            kind: kind.to_string(),
+            options: options.iter().map(|s| s.to_string()).collect(),
+            value,
+        });
+    }
+    Ok(out)
+}
+
+/// Set one curated key. `value` of JSON null removes the key (tool default).
+/// Preserves every other key; keeps 2-space pretty formatting; the standard
+/// write pipeline (validate → backup → stale guard → atomic) applies via the
+/// file-level read-modify-write below.
+pub fn structured_set(tool_id: &str, key: &str, value: serde_json::Value) -> Result<(), String> {
+    let Some((slot_id, decl)) = structured_decl(tool_id) else {
+        return Err(ierr!(
+            "该工具没有结构化配置键",
+            "This tool has no structured config keys"
+        ));
+    };
+    if !decl.iter().any(|(k, ..)| *k == key) {
+        return Err(ierr!(
+            "未声明的配置键: {key}",
+            "Undeclared config key: {key}"
+        ));
+    }
+    let slot = slot_spec(tool_id, &slot_id)?;
+    let path = resolve_template_path(&slot.path)
+        .ok_or_else(|| ierr!("无法解析配置路径", "Cannot resolve the config path"))?;
+
+    let mut root: serde_json::Value = if path.exists() {
+        let content = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+        serde_json::from_str(&content).map_err(|e| e.to_string())?
+    } else {
+        serde_json::Value::Null
+    };
+    if root.is_null() {
+        root = serde_json::Map::new().into();
+    }
+    if !root.is_object() {
+        return Err(ierr!(
+            "配置文件顶层不是对象",
+            "The config file's top level is not an object"
+        ));
+    }
+    json_set(&mut root, key, value);
+    let serialized = serde_json::to_string_pretty(&root).map_err(|e| e.to_string())?;
+    let expected = if path.exists() {
+        std::fs::metadata(&path)
+            .ok()
+            .and_then(|m| m.modified().ok())
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_secs())
+    } else {
+        None
+    };
+    write(tool_id, &slot_id, &serialized, expected)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     #[test]
     fn jsonc_comment_stripping() {
@@ -389,5 +671,57 @@ mod tests {
         assert!(slot_spec("claude", "settings").is_ok());
         // custom agents declare no slots
         assert!(slot_spec("nonexistent", "settings").is_err());
+    }
+
+    #[test]
+    fn json_set_nested_and_remove() {
+        let mut root: serde_json::Value =
+            serde_json::from_str(r#"{"a":1,"permissions":{"allow":["Bash(git *)"]}}"#).unwrap();
+        // nested set creates intermediate objects
+        assert!(json_set(
+            &mut root,
+            "permissions.defaultMode",
+            json!("acceptEdits")
+        ));
+        assert_eq!(root["permissions"]["defaultMode"], "acceptEdits");
+        assert_eq!(root["permissions"]["allow"][0], "Bash(git *)");
+        // same value → no change reported
+        assert!(!json_set(
+            &mut root,
+            "permissions.defaultMode",
+            json!("acceptEdits")
+        ));
+        // null removes the leaf only
+        assert!(json_set(&mut root, "permissions.defaultMode", json!(null)));
+        assert!(root["permissions"].get("defaultMode").is_none());
+        assert_eq!(root["permissions"]["allow"][0], "Bash(git *)");
+        // deep path materializes objects
+        json_set(&mut root, "x.y.z", json!(true));
+        assert_eq!(root["x"]["y"]["z"], true);
+    }
+
+    #[test]
+    fn structured_declarations_cover_json_tools() {
+        for tool in ["claude", "gemini", "qwen", "opencode"] {
+            let decl = structured_decl(tool);
+            assert!(decl.is_some(), "{tool} should declare structured keys");
+            let (slot, keys) = decl.unwrap();
+            let expected_slot = if tool == "opencode" {
+                "global"
+            } else {
+                "settings"
+            };
+            assert_eq!(slot, expected_slot);
+            assert!(!keys.is_empty());
+        }
+        // TOML/YAML tools get no structured keys in PR B (raw editor serves them)
+        for tool in ["codex", "omp", "goose", "dsh"] {
+            assert!(structured_decl(tool).is_none());
+        }
+    }
+
+    #[test]
+    fn structured_set_rejects_undeclared_keys() {
+        assert!(structured_set("claude", "nope.hack", json!(1)).is_err());
     }
 }

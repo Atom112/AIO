@@ -1,8 +1,9 @@
 /**
  * Harness model selector — a strict visual replica of the chat page's
  * ModelSelector, parameterized over the agent-reported value set: icon-only
- * trigger (white circle with the current model's provider logo), upward popup
- * with a header row and logo-circle rows (`provider · name` labels carry the
+ * trigger (white circle with the CURRENT MODEL's logo — resolved by model
+ * name like the chat page, never the provider logo), upward popup with a
+ * header row and logo-circle rows (`provider · name` labels carry the
  * provider prefix per the harness requirement), check mark on the active one.
  */
 import { Component, createSignal, For, Show } from 'solid-js';
@@ -12,39 +13,34 @@ import { getLogo } from '../../../core/utils/modelLogo';
 export interface HarnessModelOption {
   value: string;
   label: string;
-  /** Provider prefix parsed from a `provider/model` value id (drives the logo). */
-  provider?: string;
+  /** The agent-reported model name (logo resolution key — chat parity:
+   *  `getLogo(null, name)` matches by model-name text rules). */
+  modelName: string;
 }
 
 interface HarnessModelSelectProps {
   title: string;
   options: HarnessModelOption[];
   value: string;
-  /** Fallback trigger logo (the tool's brand logo) when no provider resolves. */
-  toolLogo?: string | null;
   onChange: (value: string) => void;
 }
 
-/** Provider logo for a value: provider id first, then the model-name rules. */
-const optionLogo = (opt: HarnessModelOption) =>
-  getLogo(opt.provider ?? null, opt.label) ?? getLogo(opt.provider ?? null, opt.value);
+/** Model logo by NAME (chat parity: the chat page resolves logos from the
+ * model id's text rules, provider-agnostic). */
+const optionLogo = (opt: HarnessModelOption) => getLogo(null, opt.modelName || opt.label);
+
+/** First letter of the model's own name (fallback inside the white circle). */
+const initialOf = (opt: HarnessModelOption) => (opt.modelName || opt.label).charAt(0).toUpperCase();
 
 const HarnessModelSelect: Component<HarnessModelSelectProps> = (props) => {
   const [open, setOpen] = createSignal(false);
 
   const currentOpt = () => props.options.find((o) => o.value === props.value);
-  const triggerLogo = () => {
-    const cur = currentOpt();
-    if (cur) {
-      const l = optionLogo(cur);
-      if (l) return l;
-    }
-    return props.toolLogo ?? undefined;
-  };
 
   return (
     <div class="relative">
-      {/* Trigger: only the current model's logo in a white circle (chat parity) */}
+      {/* Trigger: only the current model's logo in a white circle (chat
+          parity; no selection → the generic model icon) */}
       <button
         class="flex items-center justify-center bg-transparent border-none rounded-md cursor-pointer p-1 transition-all duration-200"
         title={currentOpt()?.label ?? props.title}
@@ -59,9 +55,22 @@ const HarnessModelSelect: Component<HarnessModelSelectProps> = (props) => {
           if (!open()) e.currentTarget.style.background = 'transparent';
         }}
       >
-        <Show when={triggerLogo()} fallback={<Icon name="model" size={18} class="opacity-50" />}>
+        <Show when={currentOpt()} fallback={<Icon name="model" size={18} class="opacity-50" />}>
           <div class="w-[22px] h-[22px] bg-white rounded-full flex items-center justify-center shrink-0 shadow-sm">
-            <img src={triggerLogo()!} alt="logo" class="w-[15px] h-[15px] object-contain" />
+            <Show
+              when={optionLogo(currentOpt()!)}
+              fallback={
+                <span class="text-[11px] font-bold" style={{ color: 'var(--color-dark-700)' }}>
+                  {initialOf(currentOpt()!)}
+                </span>
+              }
+            >
+              <img
+                src={optionLogo(currentOpt()!)!}
+                alt="logo"
+                class="w-[15px] h-[15px] object-contain"
+              />
+            </Show>
           </div>
         </Show>
       </button>
@@ -131,7 +140,7 @@ const HarnessModelSelect: Component<HarnessModelSelectProps> = (props) => {
                           class="text-[11px] font-bold"
                           style={{ color: 'var(--color-dark-700)' }}
                         >
-                          {(opt.provider || opt.label).charAt(0).toUpperCase()}
+                          {initialOf(opt)}
                         </span>
                       }
                     >

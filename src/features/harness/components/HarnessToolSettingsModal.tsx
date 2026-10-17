@@ -14,7 +14,7 @@ import Icon from '../../../shared/components/Icon';
 import {
   btnClose,
   btnDangerOutline,
-  btnPrimaryOutline,
+  btnPrimaryOutlineSm,
   btnSecondary,
 } from '../../../shared/components/buttonStyles';
 import {
@@ -132,7 +132,7 @@ const HarnessToolSettingsModal: Component<HarnessToolSettingsModalProps> = (prop
                 }}
               />
               <button
-                class={btnPrimaryOutline}
+                class={btnPrimaryOutlineSm}
                 disabled={!keyInput().trim()}
                 onClick={() => void saveKey()}
               >

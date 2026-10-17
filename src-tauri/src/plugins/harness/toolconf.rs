@@ -241,6 +241,8 @@ fn validate(format: &str, content: &str) -> Result<(), String> {
         "yaml" => serde_yaml::from_str::<serde_yaml::Value>(content)
             .map(|_| ())
             .map_err(|e| e.to_string()),
+        // Instruction/context files: user-authored prose, no syntax to check.
+        "markdown" => Ok(()),
         other => Err(format!("unknown slot format: {other}")),
     }
 }
@@ -344,6 +346,195 @@ pub fn dsh_profiles() -> Vec<DshProfileInfo> {
     }
     out.sort_by(|a, b| a.name.cmp(&b.name));
     out
+}
+
+// ===== Markdown collections (skills / prompt templates / commands) =====
+//
+// The tool's own discovery directories (claude ~/.claude/skills/<dir>/SKILL.md,
+// goose prompts/*.md, opencode commands/*.md): list/create/edit/delete with
+// the same atomic-write + backup discipline as the config slots.
+
+/// One markdown collection entry (a skill / prompt / command).
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct MarkdownEntryInfo {
+    /// Entry name (skill dir name / file stem).
+    pub name: String,
+    /// Absolute file path of the entry's markdown file.
+    pub path: String,
+    /// First markdown heading (or first non-empty line) — one-line preview.
+    pub summary: String,
+}
+
+/// Look up one declared markdown dir for a tool.
+fn md_dir_spec(tool_id: &str, kind: &str) -> Result<registry::MarkdownDirSpec, String> {
+    let spec = registry::lookup(tool_id).ok_or_else(|| {
+        ierr!(
+            "未知的 harness 工具: {tool_id}",
+            "Unknown harness tool: {tool_id}"
+        )
+    })?;
+    spec.setup
+        .markdown_dirs
+        .into_iter()
+        .find(|d| d.kind == kind)
+        .ok_or_else(|| {
+            ierr!(
+                "未声明的目录类型: {kind}",
+                "Undeclared markdown directory: {kind}"
+            )
+        })
+}
+
+/// Entry name validation: filename-safe slug (lowercase letters, digits,
+/// hyphens; also dots for flat stems). Rejects path separators and anything
+/// that could escape the directory.
+fn valid_md_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 64
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '.')
+        && !name.starts_with('.')
+        && !name.contains("..")
+}
+
+/// Resolve one entry's markdown file path by shape. The name is validated
+/// first — entries never escape the declared directory.
+fn md_entry_path(dir: &registry::MarkdownDirSpec, name: &str) -> Result<PathBuf, String> {
+    if !valid_md_name(name) {
+        return Err(ierr!(
+            "名称只能包含字母、数字、连字符（≤64 字符）",
+            "Names may only contain letters, digits and hyphens (max 64 chars)"
+        ));
+    }
+    let base = resolve_template_path(&dir.path)
+        .ok_or_else(|| ierr!("无法解析目录路径", "Cannot resolve the directory path"))?;
+    Ok(match dir.shape.as_str() {
+        "skill-dir" => base.join(name).join("SKILL.md"),
+        _ => base.join(format!("{name}.md")),
+    })
+}
+
+/// List a collection's entries (name, path, first-heading summary).
+pub fn markdown_entries(tool_id: &str, kind: &str) -> Result<Vec<MarkdownEntryInfo>, String> {
+    let dir = md_dir_spec(tool_id, kind)?;
+    let base = resolve_template_path(&dir.path)
+        .ok_or_else(|| ierr!("无法解析目录路径", "Cannot resolve the directory path"))?;
+    let mut out = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(&base) {
+        for entry in entries.flatten() {
+            let (name, path) = match dir.shape.as_str() {
+                "skill-dir" => {
+                    if !entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                        continue;
+                    }
+                    let name = entry.file_name().to_string_lossy().into_owned();
+                    if name.starts_with('.') {
+                        continue;
+                    }
+                    let md = entry.path().join("SKILL.md");
+                    if !md.exists() {
+                        continue;
+                    }
+                    (name, md)
+                }
+                _ => {
+                    let name = entry.file_name().to_string_lossy().into_owned();
+                    if !name.ends_with(".md") || name.starts_with('.') {
+                        continue;
+                    }
+                    (name.trim_end_matches(".md").to_string(), entry.path())
+                }
+            };
+            out.push(MarkdownEntryInfo {
+                name,
+                path: path.to_string_lossy().into_owned(),
+                summary: first_heading(&path),
+            });
+        }
+    }
+    out.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(out)
+}
+
+/// First markdown heading (or first non-empty line, capped) of a file.
+fn first_heading(path: &Path) -> String {
+    let Ok(content) = std::fs::read_to_string(path) else {
+        return String::new();
+    };
+    for line in content.lines() {
+        let t = line.trim();
+        if t.is_empty() {
+            continue;
+        }
+        let stripped = t.trim_start_matches('#').trim();
+        if !stripped.is_empty() {
+            return stripped.chars().take(80).collect();
+        }
+    }
+    String::new()
+}
+
+/// Read one entry's markdown content.
+pub fn markdown_read(tool_id: &str, kind: &str, name: &str) -> Result<String, String> {
+    let dir = md_dir_spec(tool_id, kind)?;
+    let path = md_entry_path(&dir, name)?;
+    if !path.exists() {
+        return Ok(String::new());
+    }
+    std::fs::read_to_string(&path).map_err(|e| e.to_string())
+}
+
+/// Write (create or overwrite) one entry. Skill-dir shapes create the entry
+/// directory. Atomic write; existing entries keep the one-time `.aio-bak`
+/// convention via the generic backup helper.
+pub fn markdown_write(tool_id: &str, kind: &str, name: &str, content: &str) -> Result<(), String> {
+    let dir = md_dir_spec(tool_id, kind)?;
+    let path = md_entry_path(&dir, name)?;
+    if content.len() > 1024 * 1024 {
+        return Err(ierr!(
+            "内容超过 1MB，拒绝写入",
+            "Content exceeds 1MB; refusing to write"
+        ));
+    }
+    if path.exists() {
+        let bak = backup_path(&path);
+        if !bak.exists() {
+            std::fs::copy(&path, &bak).map_err(|e| e.to_string())?;
+        }
+    }
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    crate::core::fs_util::atomic_write(&path, content.as_bytes()).map_err(|e| e.to_string())
+}
+
+/// Delete one entry (skill-dir: the whole skill directory; flat: the file).
+pub fn markdown_delete(tool_id: &str, kind: &str, name: &str) -> Result<(), String> {
+    let dir = md_dir_spec(tool_id, kind)?;
+    let path = md_entry_path(&dir, name)?;
+    let target = match dir.shape.as_str() {
+        "skill-dir" => path
+            .parent()
+            .ok_or_else(|| ierr!("无效路径", "Invalid path"))?
+            .to_path_buf(),
+        _ => path,
+    };
+    if !target.exists() {
+        return Ok(());
+    }
+    // Safety: the resolved target must live under the declared directory.
+    let base = resolve_template_path(&dir.path)
+        .ok_or_else(|| ierr!("无法解析目录路径", "Cannot resolve the directory path"))?;
+    if !target.starts_with(&base) {
+        return Err(ierr!("路径越界", "Path escapes the declared directory"));
+    }
+    if target.is_dir() {
+        std::fs::remove_dir_all(&target).map_err(|e| e.to_string())
+    } else {
+        std::fs::remove_file(&target).map_err(|e| e.to_string())
+    }
 }
 
 // ===== Structured key layer (plan PR B: curated per-tool keys) =====
@@ -1295,4 +1486,37 @@ mod tests {
             r#"{"bash":"prompt"}"#
         );
     }
+}
+/// Markdown entries: name validation rejects traversal/unsafe chars.
+#[test]
+fn markdown_name_validation() {
+    assert!(valid_md_name("my-skill"));
+    assert!(valid_md_name("Skill.2"));
+    assert!(!valid_md_name(""));
+    assert!(!valid_md_name("../escape"));
+    assert!(!valid_md_name("a/b"));
+    assert!(!valid_md_name(".hidden"));
+    assert!(!valid_md_name("has space"));
+    assert!(!valid_md_name(&"x".repeat(65)));
+}
+
+/// Markdown validation arm accepts any prose (no syntax to check).
+#[test]
+fn markdown_validation_is_lenient() {
+    assert!(validate("markdown", "# anything {even braces").is_ok());
+    assert!(validate("markdown", "").is_ok());
+}
+
+/// First heading extraction for the entry list previews.
+#[test]
+fn first_heading_extraction() {
+    let dir = std::env::temp_dir().join("aio-md-test");
+    std::fs::create_dir_all(&dir).unwrap();
+    let f = dir.join("a.md");
+    std::fs::write(&f, "\n\n# My Skill Title\nbody").unwrap();
+    assert_eq!(first_heading(&f), "My Skill Title");
+    let f2 = dir.join("b.md");
+    std::fs::write(&f2, "plain first line").unwrap();
+    assert_eq!(first_heading(&f2), "plain first line");
+    let _ = std::fs::remove_dir_all(&dir);
 }

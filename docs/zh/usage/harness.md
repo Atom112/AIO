@@ -116,6 +116,10 @@ Oh My Pi / OpenCode / goose / DSH 使用各自的登录或配置体系（无 API
 
 信任边界：只写用户级文件（不碰企业/managed 层与任何凭据文件）；密钥永不写入配置文件。
 
+每个工具页还提供：
+
+- **指令与技能**：工具自己发现的全局指令文件（claude `~/.claude/CLAUDE.md`、codex `~/.codex/AGENTS.md`、gemini `~/.gemini/GEMINI.md`、qwen `~/.qwen/QWEN.md`、opencode `~/.config/opencode/AGENTS.md`、omp `~/.omp/AGENTS.md`——走高级配置的带备份编辑器）与 **markdown 目录管理**：claude skills（`~/.claude/skills/<名称>/SKILL.md`，目录型）、goose 提示词模板（`prompts/*.md`）、opencode 自定义命令（`commands/*.md`）——列表/新建/编辑/删除，名称限字母数字连字符（防路径逃逸），原子写入 + 首次覆盖前备份。工作区级指令文件仍在 Harness 页工作区行内编辑。
+
 ## 数据与隐私
 
 - 显示记录保存在 AIO 本地数据库（`harness_*` 表），仅用于回看与话题管理，不会发送到任何远端。

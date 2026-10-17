@@ -116,6 +116,10 @@ Each tool page contains:
 
 Trust boundary: only user-level files are written (never managed/enterprise layers or credential files); secrets never land in config files.
 
+Each tool page also provides:
+
+- **Instructions & skills**: the tool's own global instruction files (claude `~/.claude/CLAUDE.md`, codex `~/.codex/AGENTS.md`, gemini `~/.gemini/GEMINI.md`, qwen `~/.qwen/QWEN.md`, opencode `~/.config/opencode/AGENTS.md`, omp `~/.omp/AGENTS.md` — served by the backed-up advanced editor) plus **markdown collection management**: claude skills (`~/.claude/skills/<name>/SKILL.md`, directory-shaped), goose prompt templates (`prompts/*.md`), opencode custom commands (`commands/*.md`) — list/create/edit/delete with name validation (letters/digits/hyphens, no path escapes), atomic writes and one-time pre-overwrite backups. Workspace-level instruction files stay editable from the harness page's workspace rows.
+
 ## Data and privacy
 
 - The display record is stored in AIO's local database (`harness_*` tables) purely for review and topic management; nothing is sent to any remote.

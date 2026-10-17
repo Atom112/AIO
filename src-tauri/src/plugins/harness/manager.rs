@@ -40,6 +40,13 @@ pub struct HarnessManager {
     pub sessions: DashMap<HarnessSessionKey, Arc<SessionRuntime>>,
     /// Pending approvals keyed by request id (resolved by harness_respond_approval).
     pub approvals: Arc<DashMap<String, oneshot::Sender<ApprovalDecision>>>,
+    /// Last driver-reported state per session ("connecting"/"running"/"idle"/
+    /// "error") — the emitter task writes it, `running_session_row_ids` reads
+    /// it. This is what distinguishes an idle CONNECTED session (spawned by
+    /// eager connect, no turn in flight) from a genuinely running turn; the
+    /// pre-eager-connect shape (runtime exists ⇒ a turn was sent) no longer
+    /// holds, so "live runtime" cannot stand in for "running turn".
+    last_states: DashMap<HarnessSessionKey, String>,
 }
 
 impl HarnessManager {
@@ -47,6 +54,7 @@ impl HarnessManager {
         Self {
             sessions: DashMap::new(),
             approvals: Arc::new(DashMap::new()),
+            last_states: DashMap::new(),
         }
     }
 
@@ -100,10 +108,12 @@ impl HarnessManager {
         };
 
         // Emitter task: serializes driver events into Tauri events. Lives for the
-        // whole session; the emitter owns nothing else.
+        // whole session; also tracks the last reported state for the running-turn
+        // reconciliation query (live runtime ≠ running turn).
         {
             let app = app.clone();
             let (tool, row) = key.clone();
+            let last_states = self.last_states.clone();
             tokio::spawn(async move {
                 while let Some(ev) = event_rx.recv().await {
                     let _ = match ev {
@@ -115,15 +125,18 @@ impl HarnessManager {
                                 event,
                             },
                         ),
-                        DriverEvent::State { state, error } => app.emit(
-                            ev::HARNESS_STATE,
-                            crate::plugins::harness::model::HarnessStatePayload {
-                                tool_id: tool.clone(),
-                                session_row_id: row.clone(),
-                                state,
-                                error,
-                            },
-                        ),
+                        DriverEvent::State { state, error } => {
+                            last_states.insert((tool.clone(), row.clone()), state.clone());
+                            app.emit(
+                                ev::HARNESS_STATE,
+                                crate::plugins::harness::model::HarnessStatePayload {
+                                    tool_id: tool.clone(),
+                                    session_row_id: row.clone(),
+                                    state,
+                                    error,
+                                },
+                            )
+                        }
                     };
                 }
             });
@@ -245,6 +258,7 @@ impl HarnessManager {
             kill_child_tree(child).await;
         }
         self.sessions.remove(&key);
+        self.last_states.remove(&key);
         Ok(())
     }
 
@@ -292,6 +306,7 @@ impl HarnessManager {
         let keys: Vec<HarnessSessionKey> = self.sessions.iter().map(|e| e.key().clone()).collect();
         for key in keys {
             if let Some((_, runtime)) = self.sessions.remove(&key) {
+                self.last_states.remove(&key);
                 runtime.token.cancel();
                 if let Some(child) = &runtime.child {
                     let child = child.clone();
@@ -303,10 +318,21 @@ impl HarnessManager {
         }
     }
 
-    /// Live session row ids (frontend reconciliation on page mount: sessions may
-    /// keep running while the user is elsewhere in the app).
+    /// Session row ids with a turn genuinely in flight (frontend reconciliation
+    /// on page mount: stop buttons keep working for sessions streaming while
+    /// the user is elsewhere). NOT "live runtimes" — eager connect keeps idle
+    /// runtimes alive, so we filter by the last driver-reported state.
     pub fn running_session_row_ids(&self) -> Vec<String> {
-        self.sessions.iter().map(|e| e.key().1.clone()).collect()
+        self.sessions
+            .iter()
+            .filter(|e| {
+                self.last_states
+                    .get(e.key())
+                    .map(|s| s.as_str() == "running")
+                    .unwrap_or(false)
+            })
+            .map(|e| e.key().1.clone())
+            .collect()
     }
 }
 
@@ -322,4 +348,38 @@ impl Default for HarnessManager {
 pub fn list_running_harness_sessions(app: &AppHandle) -> Vec<String> {
     let manager = app.state::<HarnessManager>();
     manager.running_session_row_ids()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn fake_runtime() -> Arc<SessionRuntime> {
+        let (cmd_tx, _rx) = mpsc::unbounded_channel();
+        Arc::new(SessionRuntime {
+            cmd_tx,
+            child: None,
+            token: CancellationToken::new(),
+        })
+    }
+
+    /// running_session_row_ids reports only sessions whose last driver-reported
+    /// state is "running" — a live-but-idle runtime (eager connect) must not
+    /// read as a running turn on page-mount reconciliation.
+    #[test]
+    fn running_ids_filter_by_last_state() {
+        let m = HarnessManager::new();
+        let running_key: HarnessSessionKey = ("t".into(), "running-row".into());
+        let idle_key: HarnessSessionKey = ("t".into(), "idle-row".into());
+        let nostate_key: HarnessSessionKey = ("t".into(), "fresh-row".into());
+        m.sessions.insert(running_key.clone(), fake_runtime());
+        m.sessions.insert(idle_key.clone(), fake_runtime());
+        m.sessions.insert(nostate_key.clone(), fake_runtime());
+        m.last_states.insert(running_key, "running".to_string());
+        m.last_states.insert(idle_key, "idle".to_string());
+        // fresh-row: runtime exists, no state yet → not running.
+
+        let ids = m.running_session_row_ids();
+        assert_eq!(ids, vec!["running-row".to_string()]);
+    }
 }

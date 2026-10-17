@@ -106,6 +106,7 @@ A "CLI tools" section is added to the settings page (list + a second-level page 
 Each tool page contains:
 
 - **Overview**: install/auth state, config-file probes (path/exists/backup mark), DSH's read-only profile stack;
+- **Common config** (Claude Code / Gemini CLI / Qwen Code / OpenCode): a structured form over the high-frequency keys — default model, default permission mode (claude), approval mode (gemini/qwen), always-thinking, session cleanup days, permission rules (allow/ask/deny chip editor), env var pairs. Every change writes the tool's own config file directly (other keys preserved; clearing removes the key → tool default, the same semantics as hand-editing). Structured editing disables itself when OpenCode runs on a JSONC file (avoiding a parallel .json override); use the raw editor below;
 - **Credentials**: auth detection + the API key (OS keychain, injected at spawn) + official docs;
 - **Advanced config**: a validated raw editor per config file — content is re-parsed by format before saving (JSON/JSONC/TOML/YAML; parse failures are refused), the pre-AIO state is **backed up once** (`<file>.aio-bak`, one-click restore), and a staleness guard rejects writes when the file changed externally while editing.
 

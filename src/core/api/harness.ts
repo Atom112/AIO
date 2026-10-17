@@ -220,6 +220,37 @@ export interface DshProfileInfo {
 export const harnessToolDshProfiles = (): Promise<DshProfileInfo[]> =>
   invoke<DshProfileInfo[]>('harness_tool_dsh_profiles');
 
+// ===== Structured config keys (settings form) =====
+
+/** One curated key's value (None-shaped = key absent → tool default). */
+export type HarnessStructuredValue =
+  | { kind: 'str'; value?: string }
+  | { kind: 'bool'; value?: boolean }
+  | { kind: 'num'; value?: number }
+  | { kind: 'strList'; value: string[] }
+  | { kind: 'kv'; value: [string, string][] };
+
+export interface HarnessStructuredKey {
+  /** Dotted path ("permissions.defaultMode"). */
+  key: string;
+  label: string;
+  /** string | enum | bool | number | string-list | kv */
+  kind: string;
+  options: string[];
+  value: HarnessStructuredValue;
+}
+
+/** Structured view of the tool's curated config keys. */
+export const harnessToolStructuredGet = (toolId: string): Promise<HarnessStructuredKey[]> =>
+  invoke<HarnessStructuredKey[]>('harness_tool_structured_get', { toolId });
+
+/** Set one curated key (null removes the key → tool default). */
+export const harnessToolStructuredSet = (
+  toolId: string,
+  key: string,
+  value: unknown,
+): Promise<void> => invoke<void>('harness_tool_structured_set', { toolId, key, value });
+
 /** List user-registered custom ACP agents. */
 export const harnessListCustomAgents = (): Promise<HarnessCustomAgent[]> =>
   invoke<HarnessCustomAgent[]>('harness_list_custom_agents');

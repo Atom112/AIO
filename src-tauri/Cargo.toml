@@ -28,7 +28,9 @@ tauri = { version = "2.12", features = ["protocol-asset", "macos-private-api"] }
 tauri-plugin-opener = "2.7"
 tauri-plugin-updater = "2"
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+# preserve_order: structured config edits rewrite the tool's settings.json
+# without re-alphabetizing the user's key order.
+serde_json = { version = "1", features = ["preserve_order"] }
 # Config-file validation for the harness tool settings pages (codex config.toml,
 # goose/omp/dsh yaml). Value-level parse only — comment-preserving edits use
 # toml_edit when the structured form lands.

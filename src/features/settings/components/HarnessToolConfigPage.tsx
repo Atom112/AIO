@@ -19,6 +19,7 @@ import { getHarnessLogo } from '../../harness/utils/harnessLogos';
 import { t } from '../../../core/i18n';
 import HarnessToolCredentials from './HarnessToolCredentials';
 import HarnessConfigFileEditor from './HarnessConfigFileEditor';
+import HarnessToolStructuredForm from './HarnessToolStructuredForm';
 
 const stateLabel = (state: string) =>
   state === 'ready'
@@ -175,6 +176,12 @@ const HarnessToolConfigPage: Component = () => {
               </Show>
             </Show>
           </div>
+        </Section>
+
+        {/* ===== 常用配置（结构化表单） ===== */}
+        <Section title={t('harness.conf.common')}>
+          <div class="text-[11px] text-white/35 mb-2">{t('harness.conf.commonNote')}</div>
+          <HarnessToolStructuredForm toolId={toolId()} />
         </Section>
 
         {/* ===== 凭据 ===== */}

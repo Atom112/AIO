@@ -312,6 +312,8 @@ pub fn run() {
             commands::harness::harness_tool_config_write,
             commands::harness::harness_tool_config_restore,
             commands::harness::harness_tool_dsh_profiles,
+            commands::harness::harness_tool_structured_get,
+            commands::harness::harness_tool_structured_set,
             commands::harness::harness_list_custom_agents,
             commands::harness::harness_save_custom_agent,
             commands::harness::harness_delete_custom_agent,

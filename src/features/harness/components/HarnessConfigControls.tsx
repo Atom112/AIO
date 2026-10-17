@@ -46,7 +46,6 @@ import {
   harnessStopSession,
   harnessToolConfigOptions,
 } from '../../../core/api/harness';
-import { getHarnessLogo } from '../utils/harnessLogos';
 import { t } from '../../../core/i18n';
 import type { HarnessConfigOption } from '../../../core/store/harness';
 import HarnessModelSelect from './HarnessModelSelect';
@@ -306,13 +305,12 @@ const HarnessConfigControls: Component<HarnessConfigControlsProps> = (props) => 
                 options={valuesOf(option).map((v) => ({
                   value: v.id,
                   label: valueLabel(option, v.id, v.name),
-                  provider: v.id.indexOf('/') > 0 ? v.id.slice(0, v.id.indexOf('/')) : undefined,
+                  // Logo resolution key: the model's own name (chat parity),
+                  // post-slash for `provider/model` ids.
+                  modelName:
+                    v.name ?? (v.id.indexOf('/') > 0 ? v.id.slice(v.id.indexOf('/') + 1) : v.id),
                 }))}
                 value={currentOf(option)}
-                toolLogo={(() => {
-                  const toolId = currentHarnessToolId();
-                  return toolId ? getHarnessLogo(toolId) : null;
-                })()}
                 onChange={(v) => applyChange(option, v)}
               />
             </Show>

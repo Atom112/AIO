@@ -159,3 +159,71 @@ cargo +1.97.1 fmt --check
 cargo +1.97.1 clippy --all-targets --quiet -- -D warnings
 cargo +1.97.1 test --quiet   # 除第 2 项外应全绿
 ```
+
+---
+
+# 修复记录（2026-10-17，修复轮）
+
+由修复代理对全部五项逐条复核、实测并修复。**先修正一项关键结论**：
+
+## 第 1 项根因修正：不是「本机 junction 遍历整体失效」，而是「受限进程的 reparse 穿越被 Windows 按设计拒绝」
+
+原报告的探针全部在 AIO 自身的 agent shell（默认 `sandboxWindows=appcontainer`）内执行。**AppContainer / 受限令牌进程穿越 junction/mount point 时，除非目标 ACL 显式授予该容器 SID，否则 Windows 按安全设计拒绝**（`cmd` 的「不受信任的装入点」错误正是这一层的标准文案）。`whoami /groups` 显示 Medium 完整性、无 AppContainer SID 并不能排除——观察到的失败签名与 AppContainer reparse 策略完全一致。
+
+**决定性反证**：同一时刻、同一机器、同一用户，从普通 Medium-IL 进程（另一个 harness 的 pwsh 会话）对同一个 junction 执行 `lstat / readdir / readFileSync` 全部成功。自建 junction 在 `%TEMP%` 与 `D:\base` 的失败同理——不是文件系统损坏，是发起方身份。
+
+### 修复（已落地）
+
+`.npmrc` 增加 `install-links=true`：npm 对 `file:` 依赖装成**真实目录副本**而非 junction——副本位于项目内的 `node_modules/`，对宿主会话与受限会话（AIO 自迭代沙箱）**同样可读**。实测：
+
+- `npm ci`（7s）后 `lstatSync(...).isSymbolicLink() === false`，`dist/data/models.json` 在位
+- `npx tsc --noEmit` 通过（不再有 5 个 TS2307）
+- `cargo check` / `test` 无需 `TAURI_CONFIG` 覆盖即可通过（`bundle.resources` 解析到真实副本）
+- `vite build` 通过
+
+**AIO 自迭代的全部绕过手段（TAURI_CONFIG 覆盖、间接验证 tsc）自此不再需要**——在它自己的沙箱里直接跑全量门禁即可。
+
+### 遗留（需人工）
+
+`fltmc filters` 仍需管理员会话执行一次，确认本机过滤驱动清单（与 EDR 行为对照）。这与第 2 项共用一个提权动作。
+
+## 第 2 项根因确认：DACL 拒写 → 授权从未生效 → 静默拒绝
+
+逐层实测定位（全部在普通会话复现）：
+
+1. AppContainer 家族测试里，System32 出身的 `cmd` / `powershell` 全部正常；**只有 `D:\Git\cmd\git.exe` 静默拒绝**——「安装目录被过滤」成立
+2. 直接复现：`icacls D:\Git\cmd /grant ...` → **Access is denied**（该目录 DACL 全部为继承项、属主 Administrators；中完整性用户无 WRITE_DAC）
+3. 测试内 `grant_dir_access(...)` 返回 `SetNamedSecurityInfoW` 失败（Win32 错误 5），但结果被 `let _ =` 吞掉——授权从未写入，断言随后的静默拒绝必然触发
+
+即：**非产品回归，非 fltmc 级过滤驱动拦截 exec——是授权写不进 DACL 这一步确定性失败**。0.8.2 发版前后该测试时绿时红，是因为 `D:\Git` 的授权状态被安全层周期性改写（0.8.1 开发期已有同款实录，测试注释里的 EDR 提示即此）。
+
+### 修复（已落地）
+
+测试改为**捕获授权结果**：授权失败 → 打印诊断后跳过沙箱内 git 断言（带 `[SKIP ...]` 前缀与根因、复检指引），其余断言（.git 拒写、.git 可读、项目根可写）全部保持硬断言。授权成功（干净机器 / 提权后）时完整断言照旧。与 `ac_python_forwarding` 的机器级过滤 `#[ignore]` 先例同构，但本例是运行时判定而非静态忽略。
+
+### 遗留（需人工）
+
+提权会话执行一次 `icacls D:\Git\cmd /grant "*S-1-15-2-1:(RX)"`（ALL APPLICATION PACKAGES 读+执行，一行永久解决本机沙箱内 git 可用性），随后 rerun `cargo test appcontainer`——硬断言将自动重新生效。
+
+## 第 3 项修复（已落地）：UTF-8 控制台前导
+
+解码器本就是 UTF-8 优先（`decode_console_output`），乱码的真实机制是**混合编码流**：cmd/PowerShell 以 GBK 写系统消息、node/cargo 以 UTF-8 写，合流后整体 UTF-8 校验失败 → 整流按 GBK 解码 → UTF-8 段变成「鏋舵瀯闂ㄧ鍚」。修复在**源头**统一编码：
+
+- PowerShell 路径（`pwsh_script`）：前导 `try { [Console]::OutputEncoding=[System.Text.UTF8Encoding]::new($false); $OutputEncoding=[Console]::OutputEncoding } catch { }`——本会话输出与转发的原生子进程输出均为 UTF-8
+- cmd 路径（原生 + AppContainer 两处）：`chcp 65001 >nul & <命令>`——隐藏控制台切换到 65001，cmd 内建消息与感知控制台的子进程随之 UTF-8
+- 前导在元字符/危险命令扫描**之后**注入，不触发拦截；`decode_console_output` 的 GBK 回退保留（直接 spawn 的 git 等仍可能按 ACP 输出）
+- 既有 e2e（`gbk_console_output_decodes_e2e`）继续覆盖端到端链路（现走 UTF-8 路径）
+
+## 第 4 项修复（已落地）：分支拓扑复位
+
+三项迭代提交已从 `master` 挪到 `dev-<功能>` 分支并走 PR 合入 `dev`；本地 `master` 复位到 `origin/master`（v0.8.2 发布点）。`master` 重新只含已发布内容。
+
+## 第 5 项：未触碰
+
+`stash@{0}: On dev: aio-checkpoint` 原样保留。
+
+---
+
+## 迭代成果审查结论（修复代理）
+
+三项提交逐行审查通过：TTFT 后端全 delta 分支首 token 打点 + v19 落库迁移 + 前端读出，设计完整（时钟覆盖网关排队与 prefill）；控制台闪窗根因（release GUI 子系统无控制台 + 管道化不阻止控制台分配）分析正确，`HiddenConsole` trait 统一 25+ 处 spawn 并加门禁防回归；`is_git_repo` 10s TTL 记忆化 + git init/clone 后失效，消除每回合重复 spawn。**发现并修复其一项测试盲点**（第 2 项的授权吞错）。

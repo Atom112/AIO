@@ -92,6 +92,16 @@ cargo 424 Rust 测试（6 ignored 真机项）、78 前端测试、gates 全过�
 
 ## [Unreleased]
 
+### 🔁 AIO 自迭代成果（审查通过后合入）+ 环境问题修复（修复轮）
+
+- **TTFT（首 token 延迟）读出（自迭代 #1）**：输入栏统计区新增每轮 TTFT——后端在发请求前起表、任意流 delta（文本/思考/工具调用）首达停表，覆盖网关排队与 prefill 的真实等待；首个 token 落地即经无内容 `llm-chunk` ping 上报（长回合不必等结束）；`messages.ttft_ms` v19 迁移落库，重启后读出存活；输入栏显示 `820ms` / `1.2s`
+- **Windows 控制台闪窗根修（自迭代 #2）**：安装版是 GUI 子系统进程——无 `CREATE_NO_WINDOW` 的控制台子进程每次都会让 Windows 新建控制台窗口（管道化并不能阻止），用户在每次 agent 命令与 MCP 连接时看到终端一闪。新增 `HiddenConsole::hidden_console()`（`std`/`tokio` Command 双实现、跨平台 no-op），贯通全部 25+ 生产 spawn（shell 原生与 AppContainer 路径、git、skills npx、MCP/LSP/引擎/harness、注册表自启动写入等）；裸 `CreateProcessW` AppContainer 路径补 `CREATE_NO_WINDOW` + `STARTF_USESHOWWINDOW/SW_HIDE`；四处重复字面量收敛为共享常量；**新增 console-window 门禁**（裸 `CREATE_NO_WINDOW` 字面量与无前导 spawn 即报错）防回归；`is_git_repo` 10s TTL 记忆化（此前每回合 + 每个子代理拉起都 spawn 一次 `git rev-parse`），git init/clone/rm .git 后主动失效
+- **环境问题修复轮（依据 `docs/zh/development/harness-environment-report.md`，逐项根因复核）**：
+  - **node_modules junction 不可遍历（报告第 1 项）**：根因修正——非「本机 junction 整体失效」，而是受限进程（AIO 自迭代沙箱 = AppContainer）的 reparse 穿越被 Windows 按设计拒绝（「不受信任的装入点」）；普通会话同一 junction 全部可读（实测反证）。修复：`.npmrc` 增加 `install-links=true`，`file:` 依赖装成项目内**真实目录副本**——宿主与沙箱会话同样可读，`tsc` / `cargo check` / `verify` 在任何环境直接可用，原 `TAURI_CONFIG` 覆盖绕过不再需要
+  - **`appcontainer_git_history_protection` 时红时绿（第 2 项）**：根因实测定位——`D:\Git\cmd` DACL 属主 Administrators、中完整性用户无 WRITE_DAC（`icacls /grant` 直接 Access denied 复现），测试的尽力 R+X 授权 `SetNamedSecurityInfoW` 失败（错误 5）却被 `let _ =` 吞掉 → 授权从未写入 → 静默拒绝必然触发；发版前后时绿时红是安全层周期性改写该目录授权状态。修复：**捕获授权结果**——授权失败时打印根因诊断（`[SKIP ...]` 前缀 + 提权复检指引）后跳过沙箱内 git 断言，其余断言（.git 拒写/可读/根可写）保持硬断言；干净机器或提权一次后完整断言自动恢复（与 `ac_python_forwarding` 的机器级过滤忽略先例同构）
+  - **控制台 GBK 乱码（第 3 项）**：解码器本就 UTF-8 优先，乱码源是**混合编码流**（GBK 系统消息 + UTF-8 工具输出合流，整体 UTF-8 校验失败后按 GBK 解码）。修复在源头统一：PowerShell 路径前导 `[Console]::OutputEncoding=UTF-8`（本会话输出与转发的原生子进程输出均为 UTF-8）、cmd 路径（原生 + AppContainer 两处）`chcp 65001 >nul &` 前导；GBK 解码回退保留（直接 spawn 的 git 等仍按 ACP 输出）
+  - **分支拓扑复位（第 4 项）**：三项迭代提交从 `master` 挪回 `dev-` 分支经 PR 合入 `dev`，`master` 复位到 v0.8.2 发布点——`master` 重新只含已发布内容
+
 ### 🪜 第十二轮：模式阶梯改名 + 完全权限内置化 + 工作流功能移除（PR #131）
 
 - **Agent 模式阶梯改名（wire 值稳定，assistants DB 无迁移）**：`off`=「只读」、`normal`=「工作区内修改」、`auto`=「完全权限」、`plan`=「计划」不变——

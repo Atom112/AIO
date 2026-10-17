@@ -45,6 +45,11 @@ pub struct StreamPayload {
     /// Source: OpenAI `usage.prompt_tokens_details.cached_tokens`; DeepSeek `usage.prompt_cache_hit_tokens`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cached_input_tokens: Option<u32>,
+    /// Time-to-first-token for this round (ms), measured backend-side: from the start of
+    /// the HTTP request to the first content/reasoning/tool-call delta. Absent when the
+    /// round never produced any token (error/cancel before first byte).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ttft_ms: Option<u32>,
     /// Metadata of model-generated images (carried when done=true and images exist)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub images: Option<Vec<GeneratedImage>>,
@@ -205,6 +210,11 @@ pub struct Message {
     /// context bar survives restarts instead of falling back to the round sum.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context_tokens: Option<u32>,
+    /// Time-to-first-token (ms) for this turn: measured frontend-side from the round-start
+    /// event to the first streamed token (content/reasoning/tool call). Persisted so the
+    /// input-bar latency readout survives restarts like the other usage stats.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ttft_ms: Option<u32>,
     /// Agent work steps (JSON-serialized AgentStep[]), persisted across restarts
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_steps: Option<serde_json::Value>,

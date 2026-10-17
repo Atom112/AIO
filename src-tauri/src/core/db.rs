@@ -296,6 +296,12 @@ fn m_topics_context_trim(c: &Connection) -> Result<(), String> {
     add_column_if_missing(c, "topics", "context_trim_count", "INTEGER")
 }
 
+/// v19: messages.ttft_ms (time-to-first-token per turn). Makes the input-bar latency
+/// readout survive restarts like the other usage stats; legacy rows stay NULL (unknown).
+fn m_messages_ttft(c: &Connection) -> Result<(), String> {
+    add_column_if_missing(c, "messages", "ttft_ms", "INTEGER")
+}
+
 /// v18: harness workbench tables (CLI-agent GUI compatibility layer).
 fn m_harness_tables(c: &Connection) -> Result<(), String> {
     c.execute_batch(
@@ -426,5 +432,10 @@ pub(crate) const CHAT_DB_MIGRATIONS: &[Migration] = &[
         version: 18,
         name: "harness 工作台三表",
         run: m_harness_tables,
+    },
+    Migration {
+        version: 19,
+        name: "messages.ttft_ms",
+        run: m_messages_ttft,
     },
 ];

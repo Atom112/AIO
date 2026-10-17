@@ -83,6 +83,16 @@ pub const LSP_SERVER_STDERR: &str = "lsp-server-stderr";
 /// LSP server status change
 pub const LSP_SERVER_STATUS: &str = "lsp-server-status";
 
+// ===== Harness workbench (CLI-agent GUI compatibility layer) =====
+/// Normalized harness event stream (payload: tool_id / session_row_id / event)
+pub const HARNESS_EVENT: &str = "harness-event";
+/// Harness session run-state change (connecting / running / idle / error)
+pub const HARNESS_STATE: &str = "harness-state";
+/// Harness approval request (the CLI agent is waiting on the user)
+pub const HARNESS_APPROVAL_REQUESTED: &str = "harness-approval-requested";
+/// Harness approval expired (session died / cancelled before answering)
+pub const HARNESS_APPROVAL_EXPIRED: &str = "harness-approval-expired";
+
 /// Models catalog updated (fresh fetch persisted to AppData)
 pub const MODELS_CATALOG_UPDATED: &str = "models-catalog-updated";
 
@@ -130,6 +140,10 @@ mod tests {
             LSP_SERVER_STDERR,
             LSP_SERVER_STATUS,
             MODELS_CATALOG_UPDATED,
+            HARNESS_EVENT,
+            HARNESS_STATE,
+            HARNESS_APPROVAL_REQUESTED,
+            HARNESS_APPROVAL_EXPIRED,
         ] {
             assert!(
                 name.chars()

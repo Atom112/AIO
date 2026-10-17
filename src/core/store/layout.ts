@@ -77,3 +77,29 @@ export const saveTopicFoldState = (assistantId: string, ids: Set<string>): void 
     /* restricted storage: keep working session-only */
   }
 };
+
+const HARNESS_TOOL_FOLD_KEY = 'harness-tool-fold-state';
+
+/**
+ * Harness sidebar: which CLI tools have their workspace list folded.
+ * Single global set keyed by tool id; storage unavailable/corrupted →
+ * session-only folds (empty set).
+ */
+export const loadHarnessToolFoldState = (): Set<string> => {
+  try {
+    const raw = safeGet(HARNESS_TOOL_FOLD_KEY);
+    if (!raw) return new Set();
+    const parsed = JSON.parse(raw) as string[];
+    return new Set(Array.isArray(parsed) ? parsed : []);
+  } catch {
+    return new Set();
+  }
+};
+
+export const saveHarnessToolFoldState = (ids: Set<string>): void => {
+  try {
+    safeSet(HARNESS_TOOL_FOLD_KEY, JSON.stringify(Array.from(ids)));
+  } catch {
+    /* restricted storage: keep working session-only */
+  }
+};

@@ -46,6 +46,8 @@ export interface DropdownProps<V extends string = string> {
   disabled?: boolean;
   /** Unique ID (used for aria) */
   id?: string;
+  /** Open the menu upward (bottom-anchored triggers like input-bar controls). */
+  menuUp?: boolean;
 }
 
 export const Dropdown = <V extends string = string>(props: DropdownProps<V>) => {
@@ -149,7 +151,7 @@ export const Dropdown = <V extends string = string>(props: DropdownProps<V>) => 
       </button>
 
       <div
-        class={`dropdown-menu absolute z-[100] min-w-full mt-1 rounded-[10px] p-1 transition-all duration-150 ease-out origin-top ${props.align === 'right' ? 'right-0' : 'left-0'} top-full`}
+        class={`dropdown-menu absolute z-[100] min-w-full rounded-[10px] p-1 transition-all duration-150 ease-out max-h-[320px] overflow-y-auto ${props.align === 'right' ? 'right-0' : 'left-0'} ${props.menuUp ? 'bottom-full mb-1 origin-bottom' : 'top-full mt-1 origin-top'}`}
         classList={{
           'invisible opacity-0 scale-95 translate-y-1 pointer-events-none': !open(),
           'visible opacity-100 scale-100 translate-y-0 pointer-events-auto': open(),

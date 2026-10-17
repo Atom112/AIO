@@ -17,7 +17,17 @@ pub fn init_db(app: &AppHandle) -> Result<Connection, String> {
     conn.execute("PRAGMA foreign_keys = ON;", [])
         .map_err(|e| e.to_string())?;
 
-    // Create the table schema
+    // Create the base table schema, then run versioned migrations on top.
+    create_base_schema(&conn)?;
+    run_migrations_and_clean_orphans(&conn)?;
+
+    Ok(conn)
+}
+
+/// Historical base tables created before the versioned-migration runner existed;
+/// migrations assume these already exist. Also used by the harness driver's
+/// live test to build an equivalent in-memory database.
+pub(crate) fn create_base_schema(conn: &Connection) -> Result<(), String> {
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS assistants (
         id TEXT PRIMARY KEY,
@@ -67,7 +77,13 @@ pub fn init_db(app: &AppHandle) -> Result<Connection, String> {
     CREATE INDEX IF NOT EXISTS idx_message_attachments_attachment_id
         ON message_attachments(attachment_id);",
     )
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| e.to_string())
+}
+
+/// Orphan-attachment cleanup + versioned migrations (the second half of
+/// [`init_db`]; kept private — callers of `create_base_schema` run migrations
+/// themselves with the same table).
+fn run_migrations_and_clean_orphans(conn: &Connection) -> Result<(), String> {
     // A previous abnormal exit may leave temporary uploads not yet linked to messages; clean them up safely at startup.
     let mut orphan_stmt = conn
         .prepare(
@@ -92,9 +108,9 @@ pub fn init_db(app: &AppHandle) -> Result<Connection, String> {
     }
 
     // Versioned migrations (PRAGMA user_version tracks progress; each is idempotent, legacy DBs may be partially applied).
-    crate::core::migrate::run_migrations(&conn, CHAT_DB_MIGRATIONS)?;
+    crate::core::migrate::run_migrations(conn, CHAT_DB_MIGRATIONS)?;
 
-    Ok(conn)
+    Ok(())
 }
 
 // ====== Versioned migration table (ascending by version; each entry idempotent) ======
@@ -280,8 +296,47 @@ fn m_topics_context_trim(c: &Connection) -> Result<(), String> {
     add_column_if_missing(c, "topics", "context_trim_count", "INTEGER")
 }
 
+/// v18: harness workbench tables (CLI-agent GUI compatibility layer).
+fn m_harness_tables(c: &Connection) -> Result<(), String> {
+    c.execute_batch(
+        "CREATE TABLE IF NOT EXISTS harness_workspaces (
+        id TEXT PRIMARY KEY,
+        tool_id TEXT NOT NULL,
+        path TEXT NOT NULL,
+        name TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        UNIQUE(tool_id, path)
+    );
+    CREATE TABLE IF NOT EXISTS harness_sessions (
+        id TEXT PRIMARY KEY,
+        tool_id TEXT NOT NULL,
+        workspace_path TEXT NOT NULL,
+        harness_session_id TEXT,
+        title TEXT NOT NULL,
+        model_id TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS harness_messages (
+        id TEXT PRIMARY KEY,
+        session_row_id TEXT NOT NULL,
+        role TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        data TEXT NOT NULL,
+        FOREIGN KEY(session_row_id) REFERENCES harness_sessions(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_harness_sessions_ws
+        ON harness_sessions(tool_id, workspace_path);
+    CREATE INDEX IF NOT EXISTS idx_harness_messages_session
+        ON harness_messages(session_row_id);",
+    )
+    .map_err(|e| e.to_string())
+}
+
 /// Migration table for chat_history.db (strictly increasing; new migrations may only be appended, released entries must never be modified).
-const CHAT_DB_MIGRATIONS: &[Migration] = &[
+/// pub(crate) so the harness driver's live round-trip test can build the same
+/// schema in an in-memory connection.
+pub(crate) const CHAT_DB_MIGRATIONS: &[Migration] = &[
     Migration {
         version: 1,
         name: "topics.renamed 列",
@@ -366,5 +421,10 @@ const CHAT_DB_MIGRATIONS: &[Migration] = &[
         version: 17,
         name: "topics.context_trim_count",
         run: m_topics_context_trim,
+    },
+    Migration {
+        version: 18,
+        name: "harness 工作台三表",
+        run: m_harness_tables,
     },
 ];

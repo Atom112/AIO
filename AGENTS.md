@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-AIO is a lightweight, cross-platform AI assistant desktop client built with **Tauri 2.x** (Rust backend) and **SolidJS** (frontend). It supports remote API providers (OpenAI-compatible, Anthropic, Google Gemini, Ollama), local inference engines (llama.cpp, Ollama, vLLM — multi-engine, one active at a time), and an **Agent mode** that runs tool-augmented loops (file, git, shell, web, LSP, knowledge tools via MCP), spawns subagents, and enforces a three-tier permission model. Other subsystems: project workspaces with Git integration, MCP server management (stdio/HTTP transports, catalog, tool approvals), skills (built-in, market, npx import), LSP diagnostics, usage tracking, app self-update, and full zh-CN/en-US localization. User docs live in `docs/` (mirrored: `docs/zh/`, `docs/en/`); development guides are in `docs/zh|en/development/`.
+AIO is a lightweight, cross-platform AI assistant desktop client built with **Tauri 2.x** (Rust backend) and **SolidJS** (frontend). It supports remote API providers (OpenAI-compatible, Anthropic, Google Gemini, Ollama), local inference engines (llama.cpp, Ollama, vLLM — multi-engine, one active at a time), and an **Agent mode** that runs tool-augmented loops (file, git, shell, web, LSP, knowledge tools via MCP), spawns subagents, and enforces a three-tier permission model. Other subsystems: a **Harness workbench** (`/harness` page) that drives third-party CLI coding agents (Claude Code, Codex, OpenCode, Oh My Pi, Gemini CLI, Qwen Code, goose, DSH) over the Agent Client Protocol and renders their streams natively (AIO's own tools stay out of the loop there), project workspaces with Git integration, MCP server management (stdio/HTTP transports, catalog, tool approvals), skills (built-in, market, npx import), LSP diagnostics, usage tracking, app self-update, and full zh-CN/en-US localization. User docs live in `docs/` (mirrored: `docs/zh/`, `docs/en/`); development guides are in `docs/zh|en/development/`.
 
 ## Tech Stack & Versions
 
@@ -41,6 +41,7 @@ src/
 │   └── assets/
 ├── features/
 │   ├── chat/            # ChatPage.tsx + hooks/（chatEventListeners.ts：18 个流监听器在根 Layout 全局注册 + 3 个拖放监听器页面级；chatTurnEffects.ts：回合收尾效果）+ constants.ts + components/ (ChatInterface, TopicSidebar, ProjectSidebar, AgentProcessBlock, SubagentBlock, AgentModeSelector, ReasoningButton, TokenBar, TokenStatsBar, ShareModal, ProjectSettingsModal, ProjectSelector, TaskBoardPanel, AgentQuestionBubble, ...)
+│   ├── harness/         # HarnessPage.tsx（/harness：CLI 工具图形化兼容层）+ hooks/harnessEventListeners.ts（全局注册）+ components/（HarnessToolSidebar 两级工具/工作区栏, HarnessTopicSidebar, HarnessChatInterface, HarnessMessageList, HarnessApprovalBubble, HarnessAddWorkspaceModal）——复用 chat 叶子组件渲染
 │   └── settings/        # SettingsPage.tsx, ProviderDetailPage.tsx + components/ (ProviderList, AppSettings, McpServerList, McpServerDetail, SkillList, SubagentModelSettings, EmbeddingModelSettings, LocalModelMarket, UsageSettings + usage chart components)
 └── shared/
     └── components/      # Icon, Markdown, NavBar, CommandPalette, SlashCommandMenu, Dropdown, Switch, ModelRow, GlobalKeyboardHandler, DiffView, ThinkBlock, UpdateNotification
@@ -89,6 +90,7 @@ src-tauri/src/
 │   ├── embedding.rs     # 嵌入模型：测试 / 列表 / 下载 / 启停 / 目录
 │   ├── rerank.rs        # 重排模型：测试 / 保存 API Key
 │   ├── memory.rs        # 项目记忆命令（memory_*：CRUD/混合检索/统计/开关）
+│   ├── harness.rs       # Harness 工作台命令（harness_*：工具检测/工作区/话题/消息/发送/停止/审批）
 │   ├── export.rs        # 会话导出（Markdown/HTML/PDF 素材）
 │   ├── image_gen.rs     # 图像生成命令
 │   └── update.rs        # App update check/install/restart
@@ -111,6 +113,7 @@ src-tauri/src/
 ├── plugins/
 │   ├── engine/          # LocalEnginePlugin trait + llama_cpp, ollama, vllm, installer
 │   ├── provider/        # ProviderPlugin trait + openai_compat (fallback, registered last), anthropic, google, ollama
+│   ├── harness/         # Harness 工作台（CLI 工具兼容层）：model（归一化事件）/adapter（DriverCtx+trait+spawn）/registry（内置 ACP 工具注册表+检测）/acp（ACP JSON-RPC 驱动）/store（harness_* 三表）/manager（会话运行时+审批解析）
 │   ├── llm.rs           # LLM HTTP 客户端（post_chat_completion/chat_text_content 等，命令层已下沉至此）
 │   ├── embed/           # 嵌入 provider 插件（local_onnx + cache）
 │   ├── rerank/          # 重排 provider 插件（local_onnx + openai_compat）
@@ -197,8 +200,9 @@ More extension paths (MCP transports, new Tauri commands, agent tools, permissio
 - `models.ts`：选中模型 / 模型目录 / 供应商配置 / modelKey / isLocalModel
 - `engine.ts`：本地引擎启动 / 进度 / 连接 / 扫描缓存
 - `project.ts` / `profiles.ts` / `ui-prefs.ts` / `update.ts` / `workflow.ts`：各自域
+- `harness.ts`：Harness 工作台（工具检测/工作区/话题/消息/草稿/审批/运行态，选择持久化到 localStorage）
 
-关键信号：`datas`（Store: assistants/activatedModels）、`config`（apiUrl/apiKey）、`selectedModel`、`currentAssistantId`、`currentTopicId`、`projects`/`currentProjectId`（+ `gitBranch`/`gitBranches`）、`mcpServers`/`mcpServerStatus`/`mcpToolsCache`、`skills`、`providerConfigs`、`modelsCatalog*`、`profileModelOverrides`、`customSubagentProfiles`、`engineScanResults`、`workflowState`、`appUpdate*`；UI 偏好（`themeColor`/`isDarkMode`/`reasoningLevel`/`webSearchEnabled`）持久化到 localStorage。
+关键信号：`datas`（Store: assistants/activatedModels）、`config`（apiUrl/apiKey）、`selectedModel`、`currentAssistantId`、`currentTopicId`、`projects`/`currentProjectId`（+ `gitBranch`/`gitBranches`）、`mcpServers`/`mcpServerStatus`/`mcpToolsCache`、`skills`、`providerConfigs`、`modelsCatalog*`、`profileModelOverrides`、`customSubagentProfiles`、`engineScanResults`、`workflowState`、`appUpdate*`、harness 域信号（`harnessTools`/`harnessWorkspaces`/`harnessTopics`/`harnessMessages`/`harnessDrafts`/`harnessApprovals`/`harnessRunStates`）；UI 偏好（`themeColor`/`isDarkMode`/`reasoningLevel`/`webSearchEnabled`）持久化到 localStorage。
 
 ### Backend State (`core/state.rs` + `lib.rs`)
 
@@ -206,13 +210,13 @@ More extension paths (MCP transports, new Tauri commands, agent tools, permissio
 - `DbState`: SQLite connection.
 - `LocalEngineState`: running local engine processes, HashMap keyed by `engine_type`; one active engine at a time enforced by `start_local_server`.
 - `SubagentHandles`: background subagent join handles.
-- Plus managers registered in `lib.rs`: `EngineManager`, `McpServerManager`/`McpServerState`/`McpRequestManager`/`PendingApprovals`, `LspManager`, `FileLockRegistry`（多智能体写协调，见 `core/file_locks.rs`）.
+- Plus managers registered in `lib.rs`: `EngineManager`, `McpServerManager`/`McpServerState`/`McpRequestManager`/`PendingApprovals`, `LspManager`, `FileLockRegistry`（多智能体写协调，见 `core/file_locks.rs`）, `HarnessManager`（harness 会话运行时：子进程 + 命令通道 + 取消令牌 + 审批 oneshot 表；停止两段式=协议取消→taskkill 进程树）。
 
 ## Important Compatibility Notes
 
 - **Command Stability**: Public Tauri command names (`start_local_server`, `stop_local_server`, `is_local_server_running`, `call_llm_stream`, etc.) must remain stable to preserve frontend compatibility.
 - **Config Migration**: The `ActivatedModel` struct supports an optional `engine_type` field. Old configs without this field deserialize safely (defaults to `None`), and logic treats `None` as legacy llama.cpp behavior.
-- **Event Names**: `engine-progress` is the generic progress event (all engines default to it); the llama.cpp plugin still emits `llama-progress` for backward compatibility. Other frontend events: `llm-chunk`, `llm-round-start`, `llm-compression`, `llm-compression-failed`, `subagent-start` / `subagent-step` / `subagent-done` / `subagent-error`, `mcp-server-status`, `mcp-server-stderr`, `app-update-progress`. New events must be kebab-case.
+- **Event Names**: `engine-progress` is the generic progress event (all engines default to it); the llama.cpp plugin still emits `llama-progress` for backward compatibility. Other frontend events: `llm-chunk`, `llm-round-start`, `llm-compression`, `llm-compression-failed`, `subagent-start` / `subagent-step` / `subagent-done` / `subagent-error`, `mcp-server-status`, `mcp-server-stderr`, `app-update-progress`, harness 事件族（`harness-event` / `harness-state` / `harness-approval-requested` / `harness-approval-expired`）. New events must be kebab-case.
 
 ## Branch & Release Workflow
 

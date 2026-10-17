@@ -43,6 +43,7 @@ const KIND_ICON: Record<BackgroundTaskKind, Parameters<typeof Icon>[0]['name']> 
   'model-download': 'download',
   'gguf-download': 'download',
   'shell-command': 'terminal',
+  harness: 'terminal',
 };
 
 /** Download progress counters are bytes; index counters are item counts. */

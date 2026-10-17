@@ -14,3 +14,4 @@ export * from './subagent-view';
 export * from './background-tasks';
 export * from './stream';
 export * from './layout';
+export * from './harness';

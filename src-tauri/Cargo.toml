@@ -1,6 +1,6 @@
 [package]
 name = "aio"
-version = "0.8.1"
+version = "0.8.2"
 description = "A lightweight cross-platform AI assistant desktop client"
 authors = ["Loch"]
 edition = "2021"
@@ -28,7 +28,16 @@ tauri = { version = "2.12", features = ["protocol-asset", "macos-private-api"] }
 tauri-plugin-opener = "2.7"
 tauri-plugin-updater = "2"
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+# preserve_order: structured config edits rewrite the tool's settings.json
+# without re-alphabetizing the user's key order.
+serde_json = { version = "1", features = ["preserve_order"] }
+# Config-file validation for the harness tool settings pages (codex config.toml,
+# goose/omp/dsh yaml). Value-level parse only — comment-preserving edits use
+# toml_edit when the structured form lands.
+toml = "0.8"
+# Comment-preserving structured edits on codex config.toml (plan PR C)
+toml_edit = "0.22"
+serde_yaml = "0.9"
 dirs = "6.0"
 reqwest = { version = "0.13", features = ["json", "stream", "blocking"] }
 tokio = { version = "1", features = ["full"] }
@@ -64,6 +73,11 @@ auto-launch = "0.6"
 sqlite-vec = "0.1.9"
 sysinfo = "0.33"
 fastembed = { version = "4", default-features = false, features = ["ort-download-binaries"] }
+# ACP wire types for the harness workbench (CLI-agent GUI compatibility layer).
+# Types-only usage (default features = none): AIO owns the transport (tokio child
+# stdio + utils/jsonrpc.rs), the crate supplies the serde v1 schema shapes.
+# Pinned to ~3.3: the crate majors land roughly quarterly — upgrades are deliberate.
+agent-client-protocol = { version = "~3.3", default-features = false }
 
 [dev-dependencies]
 # http is already in the dependency tree via reqwest 0.13 (same major version);

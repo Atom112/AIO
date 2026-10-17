@@ -2,7 +2,9 @@
 
 # Changelog
 
-## [0.8.2] — 2026-10-17
+## [v0.8.2]
+
+<sup>Released on **2026-10-17**</sup>
 
 本版本主题：**CLI Harness 图形化兼容层完整成型**——8 个 CLI 编码工具（Claude Code / Codex / OpenCode / Oh My Pi / Gemini CLI / Qwen Code / goose / DSH）在 AIO 内获得接近原生的使用体验：输入栏与对话页同款控件实时切换模型/思考强度/审批模式，设置页提供每工具配置子页（凭据、常用配置表单、带校验的原始配置编辑器、全局指令与技能管理、MCP 服务器管理），会话历史可靠持久化、选中话题即连即用。
 
@@ -31,6 +33,62 @@
 ### 验证基线
 
 cargo 424 Rust 测试（6 ignored 真机项）、78 前端测试、gates 全过、i18n 双语 1198 键；omp/codex/dsh/claude 本机探针实测（含 omp 448 键目录形状、`omp acp --approval-mode` 注入、DSH ACP 全链路）
+
+<p align="right"><a href="#top"><img src="/public/icons/top.svg"></img></a></p>
+
+[v0.8.2]: https://github.com/Atom112/AIO/releases/tag/v0.8.2
+
+## [v0.8.1]
+
+<sup>Released on **2026-10-16**</sup>
+
+### 📋 后台任务上拉菜单（新增）
+
+- **应用后台作业的实时视图**：状态栏新增「后台任务」菜单（子智能体菜单左侧）——记忆自动提取/整理（每轮异步 + 每日调度）、索引重建、代码索引、嵌入/本地模型下载、**执行超 5 秒的长时命令**（构建/测试等应用正在等待的 shell 脚本，含子智能体发起）逐类入列：进度条 / 已运行时长 / 错误行 / 完成时长，终态 10 秒自动消隐、运行中 30 分钟无事件兜底清除（错过终态不悬挂）
+- 后端六类作业补全事件生命周期：`memory-extract-progress` 正式双端注册、新增 `memory-consolidate-progress` 与 `command-progress`；下载器终态事件兼容旧契约
+
+### 🛡 权限与沙箱（自主权体系重构）
+
+- **模式阶梯定型**：off=「只读」/ normal=「工作区内修改」/ auto=「完全权限」/ plan=「计划」，新增**「本机全权」（danger）**档——显式 opt-in 的无沙箱原生执行（进入时独立红色警告），对齐 Codex/DSH danger 档语义
+- **完全权限无人值守自愈**：沙箱拒绝命中签名即自动补救（Auto 不受防弹窗节流）、授权未落地自动降级重试、成功授权永久写入工具链配置；`.git` 递归只读防提示注入篡改历史（Windows PROTECTED+REVOKE ACE / Linux ro-bind / macOS SBPL）；「跳出沙箱兜底」开关化
+- **审批「始终允许」持久化**：项目内调用原子写入 `.aio/permissions.json`；未信任 MCP 门与网络命令闸尊重用户 Allow 规则（点了不再白点）；审批/扩权弹窗超时统一 600s
+- **Windows 默认 shell 切换 PowerShell**：`-EncodedCommand`（UTF-16LE base64）免疫引号转义、退出码正确传播、可经 `shellWindows` 切回 cmd；`cmd /S /C` 引号语义修复（本机全权档实测暴露）
+- MCP 项目级信任与 spawn 门同源（完全权限免逐次确认）；MCP stdio 子进程树泄漏修复（`taskkill /T` 整树终止 + autoStart 单飞去重，npx 型 server 三份并存根因）；授权失败目录进程级去重
+
+### 🧠 上下文压缩
+
+- **压缩不再删除消息记录**：`context_trim_count` 作为上下文边界——LLM 请求只发摘要 + 边界后消息，完整对话记录始终可见；压缩中显示内嵌胶囊动效
+- **压缩摘要升级 + 读回通道**：pi 式章节结构 + DSH 逐字规则（路径/命令/错误串不可转述）；归档保真度无损化（单条预算对齐管线截断上限），`read_artifact` 可读回被压缩的工具结果细节
+- 保留区 token 估算 CJK 感知（原 chars/4 对中文低估 4 倍）；长对话分段渲染（切话题只挂载最近 40 条 + 哨兵增量加载）；上下文 token 口径修复（`context_tokens` 落库贯通，重启不再虚高数倍）；缓存命中率分母修复（真实 80% 不再显示为 ~44%）
+
+### 🤖 子智能体
+
+- **DSH 级实时流式**：`subagent-chunk`/`subagent-reasoning` 事件把子代理正文/思维链/巨型工具参数（每 2KB 进度心跳）实时转发到独立会话视图——多分钟子代理不再「卡思考无反馈」
+- **10 角色专属图标/配色/动效**：`--role-<id>-rgb` 注册表统一驱动设置行徽标、对话视图头像、拉起菜单、时间线着色；工作中状态环绕动效
+- 后台（wait=false）子代理完成状态修复（全历史定位翻转，状态条转圈不停根因）；「不限制」并发档 panic 修复（tokio 信号量上限映射）；Skill npx 导入分源读取 + 项目设置面板陈旧 store 修复
+
+### ⚡ Agent 稳定性与可见性
+
+- **流稳定**：停止按钮永远生效（两阶段 stop：取消令牌贯通 500ms 分片命令等待 + 2s 宽限升级终止）；命令执行带可取消语义
+- **崩溃轮次可见性**：回合增量持久化（轮次开始/结束/工具结果三锚点），异常中断的回合重启后经「从断点继续」按钮恢复（压缩种子续跑）
+- **流式闪烁根修**：消息身份稳定化（`produce` 原地变异替代路径 setter 重建，入场动画不再逐 token 重放）；思维链步骤时间线自动滚动修复（ResizeObserver 改观察增长的内容包裹层）；嵌入模型行开关不再整行重载（store + reconcile）
+- 推理强度真参数化（OpenAI `reasoning_effort` / Anthropic thinking 预算，不再只是提示词）+ GPT 式滑杆（每档一色 + 过渡动画）
+
+### 🎨 UI 统一
+
+- **弹层亚克力 token 体系**：`--popup-bg`/`--popup-blur`/`--dialog-bg` 三 token 贯通 15+ 组件面；浅色模式弹窗透底亚克力化（backdrop-filter 直接模糊主页面真实背景，任意高度弹窗一致）
+- **控件规范入档并门禁化**：下拉唯一组件（禁原生 select）、勾选框唯一组件（禁原生 checkbox）、图形语义必须 SVG 图标（禁字符）、同行控件等高、语义色按钮一律 outline——`check-gates` 新增 3 道门禁强制执行
+- 子智能体设置行角色徽标；嵌入模型页重设计（embedding 专属图标 + 图标徽标分区头 + 通知独立行自动消隐）；任务清单与授权/问答并入状态条（DSH 风格）；ask_user 逐题引导；用量热力图滚动条闪现修复；子智能体模型下拉按供应商分组；流式气泡切页返回不再消失
+
+### 🛠 Engineering
+
+- 工作流（workflow）可视化功能移除（create_tasks 任务清单保留并并入状态条）；主代理工具集/并行写入隔离/完全放手三个配置项端到端移除（策略固化为自动）
+- 视觉回归脚本体系：headless Edge 双主题截图（12 个 `gen-*.mjs` 生成器）+ CDP 逐帧复现工具链；模型列表三源缓存（目录/ModelScope/HuggingFace 可选下载源）
+- i18n 1030 键 zh/en 全对齐；FE 78 单测 / cargo 387 测试 / clippy -D warnings / prettier / eslint / tsc / vite build 全绿基线
+
+<p align="right"><a href="#top"><img src="/public/icons/top.svg"></img></a></p>
+
+[v0.8.1]: https://github.com/Atom112/AIO/releases/tag/v0.8.1
 
 ## [Unreleased]
 

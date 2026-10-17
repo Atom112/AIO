@@ -118,6 +118,7 @@ Trust boundary: only user-level files are written (never managed/enterprise laye
 
 Each tool page also provides:
 
+- **MCP servers**: manage the MCP servers in the tool's own config file — claude `~/.claude.json` `mcpServers` (new slot), gemini/qwen `settings.json` `mcpServers`, opencode `mcp` (local/remote), codex `config.toml` `[mcp_servers.<name>]`, goose `extensions` — list (stdio command or HTTP URL preview) / add / edit (stdio: command + args per line + env vars; HTTP: URL) / delete, written in each tool's native shape (name whitelist blocks path escapes; codex rides toml_edit comment preservation; goose rewrites with a backup notice). omp/dsh MCP goes through the raw editors;
 - **Instructions & skills**: the tool's own global instruction files (claude `~/.claude/CLAUDE.md`, codex `~/.codex/AGENTS.md`, gemini `~/.gemini/GEMINI.md`, qwen `~/.qwen/QWEN.md`, opencode `~/.config/opencode/AGENTS.md`, omp `~/.omp/AGENTS.md` — served by the backed-up advanced editor) plus **markdown collection management**: claude skills (`~/.claude/skills/<name>/SKILL.md`, directory-shaped), goose prompt templates (`prompts/*.md`), opencode custom commands (`commands/*.md`) — list/create/edit/delete with name validation (letters/digits/hyphens, no path escapes), atomic writes and one-time pre-overwrite backups. Workspace-level instruction files stay editable from the harness page's workspace rows.
 
 ## Data and privacy

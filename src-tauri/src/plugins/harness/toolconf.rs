@@ -26,7 +26,8 @@
 
 use crate::ierr;
 use crate::plugins::harness::registry;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use serde_json::json;
 use std::path::{Path, PathBuf};
 
 /// One resolvable config slot as reported to the frontend.
@@ -535,6 +536,407 @@ pub fn markdown_delete(tool_id: &str, kind: &str, name: &str) -> Result<(), Stri
     } else {
         std::fs::remove_file(&target).map_err(|e| e.to_string())
     }
+}
+
+// ===== MCP server management (plan PR E) =====
+//
+// Each tool keeps its MCP servers in its own config file — this layer edits
+// the tool's native shape (claude ~/.claude.json mcpServers, gemini/qwen
+// settings.json mcpServers, opencode opencode.json mcp, codex config.toml
+// [mcp_servers.<name>], goose config.yaml extensions). omp/dsh: not covered
+// (their raw editors serve).
+
+/// One MCP server entry (normalized across tools).
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct McpEntryInfo {
+    pub name: String,
+    /// stdio | http
+    #[serde(rename = "type")]
+    pub transport: String,
+    /// stdio: launch command; goose: cmd field.
+    pub command: String,
+    /// http: endpoint URL.
+    #[serde(default)]
+    pub url: Option<String>,
+    #[serde(default)]
+    pub args: Vec<String>,
+    #[serde(default)]
+    pub env: Vec<(String, String)>,
+    /// goose extensions carry an enabled flag.
+    #[serde(default)]
+    pub enabled: Option<bool>,
+}
+
+/// Where a tool's MCP servers live: (slot id, config key, format family).
+fn mcp_location(tool_id: &str) -> Option<(&'static str, &'static str)> {
+    Some(match tool_id {
+        // ~/.claude.json → mcpServers (user-level MCP; project .mcp.json is
+        // workspace-scoped and stays to the user).
+        "claude" => ("user-state", "mcpServers"),
+        "gemini" | "qwen" => ("settings", "mcpServers"),
+        "opencode" => ("global", "mcp"),
+        "codex" => ("config", "mcp_servers"),
+        "goose" => ("config", "extensions"),
+        _ => return None,
+    })
+}
+
+/// Read the tool's MCP servers (empty for tools without coverage).
+pub fn mcp_list(tool_id: &str) -> Result<Vec<McpEntryInfo>, String> {
+    let Some((slot_id, key)) = mcp_location(tool_id) else {
+        return Ok(Vec::new());
+    };
+    let slot = slot_spec(tool_id, slot_id)?;
+    let path = resolve_template_path(&slot.path)
+        .ok_or_else(|| ierr!("无法解析配置路径", "Cannot resolve the config path"))?;
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+    let content = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    match tool_id {
+        "codex" => {
+            let doc: toml_edit::DocumentMut = content
+                .parse()
+                .map_err(|e| format!("config.toml 解析失败: {e}"))?;
+            let Some(servers) = doc.get("mcp_servers").and_then(|i| i.as_table()) else {
+                return Ok(Vec::new());
+            };
+            let mut out = Vec::new();
+            for (name, item) in servers.iter() {
+                if let Some(t) = item.as_table() {
+                    out.push(McpEntryInfo {
+                        name: name.to_string(),
+                        transport: if t.get("url").is_some() {
+                            "http".into()
+                        } else {
+                            "stdio".into()
+                        },
+                        command: t
+                            .get("command")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string(),
+                        url: t.get("url").and_then(|v| v.as_str()).map(str::to_string),
+                        args: t
+                            .get("args")
+                            .and_then(|v| v.as_array())
+                            .map(|a| {
+                                a.iter()
+                                    .filter_map(|x| x.as_str().map(str::to_string))
+                                    .collect()
+                            })
+                            .unwrap_or_default(),
+                        env: t
+                            .get("env")
+                            .and_then(|v| v.as_table())
+                            .map(|e| {
+                                e.iter()
+                                    .filter_map(|(k, v)| {
+                                        v.as_str().map(|s| (k.to_string(), s.to_string()))
+                                    })
+                                    .collect()
+                            })
+                            .unwrap_or_default(),
+                        enabled: None,
+                    });
+                }
+            }
+            out.sort_by(|a, b| a.name.cmp(&b.name));
+            Ok(out)
+        }
+        "goose" => {
+            let root: serde_yaml::Value =
+                serde_yaml::from_str(&content).map_err(|e| format!("config.yaml 解析失败: {e}"))?;
+            let Some(map) = root.get("extensions").and_then(|v| v.as_mapping()) else {
+                return Ok(Vec::new());
+            };
+            let mut out = Vec::new();
+            for (k, v) in map {
+                let name = k.as_str().unwrap_or_default().to_string();
+                if name.is_empty() {
+                    continue;
+                }
+                let get = |key: &str| v.get(key).and_then(|x| x.as_str()).map(str::to_string);
+                out.push(McpEntryInfo {
+                    transport: "stdio".into(),
+                    command: get("cmd").or_else(|| get("command")).unwrap_or_default(),
+                    url: None,
+                    args: v
+                        .get("args")
+                        .and_then(|x| x.as_sequence())
+                        .map(|a| {
+                            a.iter()
+                                .filter_map(|i| i.as_str().map(str::to_string))
+                                .collect()
+                        })
+                        .unwrap_or_default(),
+                    env: Vec::new(),
+                    enabled: v.get("enabled").and_then(|x| x.as_bool()),
+                    name,
+                });
+            }
+            out.sort_by(|a, b| a.name.cmp(&b.name));
+            Ok(out)
+        }
+        _ => {
+            // JSON tools: claude/gemini/qwen/opencode — entry objects keyed by name.
+            let root: serde_json::Value =
+                serde_json::from_str(&content).map_err(|e| e.to_string())?;
+            let Some(map) = root.get(key).and_then(|v| v.as_object()) else {
+                return Ok(Vec::new());
+            };
+            let mut out = Vec::new();
+            for (name, e) in map {
+                let get = |k: &str| e.get(k).and_then(|v| v.as_str()).map(str::to_string);
+                let url = get("url");
+                out.push(McpEntryInfo {
+                    name: name.clone(),
+                    transport: if url.is_some() {
+                        "http".into()
+                    } else {
+                        "stdio".into()
+                    },
+                    command: get("command").or_else(|| get("cmd")).unwrap_or_default(),
+                    url,
+                    args: e
+                        .get("args")
+                        .and_then(|v| v.as_array())
+                        .map(|a| {
+                            a.iter()
+                                .filter_map(|x| x.as_str().map(str::to_string))
+                                .collect()
+                        })
+                        .unwrap_or_default(),
+                    env: e
+                        .get("env")
+                        .and_then(|v| v.as_object())
+                        .map(|o| {
+                            o.iter()
+                                .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
+                                .collect()
+                        })
+                        .unwrap_or_default(),
+                    enabled: e.get("enabled").and_then(|v| v.as_bool()),
+                });
+            }
+            out.sort_by(|a, b| a.name.cmp(&b.name));
+            Ok(out)
+        }
+    }
+}
+
+/// Write one MCP server entry (add/update). The entry JSON carries
+/// {command?, url?, args?, env?} — mapped into the tool's native shape.
+pub fn mcp_set(tool_id: &str, name: &str, entry: &McpEntryInfo) -> Result<(), String> {
+    let Some((slot_id, key)) = mcp_location(tool_id) else {
+        return Err(ierr!(
+            "该工具的 MCP 管理暂不支持（请用原始编辑器）",
+            "MCP management is not available for this tool (use the raw editor)"
+        ));
+    };
+    if !valid_md_name(name) {
+        return Err(ierr!(
+            "名称只能包含字母、数字、连字符",
+            "Names may only contain letters, digits and hyphens"
+        ));
+    }
+    let slot = slot_spec(tool_id, slot_id)?;
+    let path = resolve_template_path(&slot.path)
+        .ok_or_else(|| ierr!("无法解析配置路径", "Cannot resolve the config path"))?;
+    let is_http = entry.transport == "http";
+    if !is_http && entry.command.trim().is_empty() {
+        return Err(ierr!(
+            "stdio 服务器需要命令",
+            "stdio servers require a command"
+        ));
+    }
+    if is_http && entry.url.as_deref().unwrap_or("").trim().is_empty() {
+        return Err(ierr!("http 服务器需要 URL", "http servers require a URL"));
+    }
+    match tool_id {
+        "codex" => {
+            let content = if path.exists() {
+                std::fs::read_to_string(&path).map_err(|e| e.to_string())?
+            } else {
+                String::new()
+            };
+            let mut doc: toml_edit::DocumentMut = content
+                .parse()
+                .map_err(|e| format!("config.toml 解析失败: {e}"))?;
+            let mut table = toml_edit::Table::new();
+            if is_http {
+                table["url"] = toml_edit::value(entry.url.clone().unwrap_or_default());
+            } else {
+                table["command"] = toml_edit::value(entry.command.trim());
+                if !entry.args.is_empty() {
+                    let mut arr = toml_edit::Array::new();
+                    for a in &entry.args {
+                        arr.push(a.as_str());
+                    }
+                    table["args"] = toml_edit::value(arr);
+                }
+                if !entry.env.is_empty() {
+                    let mut env = toml_edit::InlineTable::new();
+                    for (k, v) in &entry.env {
+                        env.insert(k, toml_edit::Value::from(v.as_str()));
+                    }
+                    table["env"] = toml_edit::value(env);
+                }
+            }
+            let servers = doc
+                .entry("mcp_servers")
+                .or_insert(toml_edit::Item::Table(toml_edit::Table::new()));
+            servers[name] = toml_edit::Item::Table(table);
+            write_with_fresh_mtime(tool_id, slot_id, &path, &doc.to_string())
+        }
+        "goose" => {
+            // Full YAML round-trip (comments lost — one-time backup covers).
+            let content = if path.exists() {
+                std::fs::read_to_string(&path).map_err(|e| e.to_string())?
+            } else {
+                String::new()
+            };
+            let mut root: serde_yaml::Value = if content.trim().is_empty() {
+                serde_yaml::Value::Mapping(Default::default())
+            } else {
+                serde_yaml::from_str(&content).map_err(|e| format!("config.yaml 解析失败: {e}"))?
+            };
+            if !root.is_mapping() {
+                return Err(ierr!(
+                    "配置文件顶层不是映射",
+                    "The config file's top level is not a mapping"
+                ));
+            }
+            let mut entry_map = serde_yaml::Mapping::new();
+            entry_map.insert("type".into(), "stdio".into());
+            entry_map.insert("cmd".into(), entry.command.trim().into());
+            if !entry.args.is_empty() {
+                entry_map.insert(
+                    "args".into(),
+                    serde_yaml::Value::Sequence(
+                        entry.args.iter().map(|a| a.as_str().into()).collect(),
+                    ),
+                );
+            }
+            entry_map.insert("enabled".into(), entry.enabled.unwrap_or(true).into());
+            let map = root.as_mapping_mut().unwrap();
+            let ext = map
+                .entry("extensions".into())
+                .or_insert(serde_yaml::Value::Mapping(Default::default()));
+            ext.as_mapping_mut()
+                .ok_or_else(|| ierr!("extensions 不是映射", "extensions is not a mapping"))?
+                .insert(name.into(), serde_yaml::Value::Mapping(entry_map));
+            let serialized = serde_yaml::to_string(&root).map_err(|e| e.to_string())?;
+            write_with_fresh_mtime(tool_id, slot_id, &path, &serialized)
+        }
+        _ => {
+            // JSON tools: write the tool's native entry shape.
+            let mut root: serde_json::Value = if path.exists() {
+                let content = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+                serde_json::from_str(&content).map_err(|e| e.to_string())?
+            } else {
+                serde_json::Value::Null
+            };
+            if root.is_null() {
+                root = serde_json::Map::new().into();
+            }
+            if !root.is_object() {
+                return Err(ierr!(
+                    "配置文件顶层不是对象",
+                    "The config file's top level is not an object"
+                ));
+            }
+            let native: serde_json::Value = match tool_id {
+                "claude" => {
+                    if is_http {
+                        json!({"type": "http", "url": entry.url})
+                    } else {
+                        json!({"type": "stdio", "command": entry.command.trim(), "args": entry.args, "env": env_object(entry.env.clone())})
+                    }
+                }
+                "opencode" => {
+                    if is_http {
+                        json!({"type": "remote", "url": entry.url})
+                    } else {
+                        json!({"type": "local", "command": entry.command.trim(), "args": entry.args, "enabled": true})
+                    }
+                }
+                _ => {
+                    // gemini/qwen: plain command shape.
+                    if is_http {
+                        json!({"url": entry.url})
+                    } else {
+                        json!({"command": entry.command.trim(), "args": entry.args, "env": env_object(entry.env.clone())})
+                    }
+                }
+            };
+            // Ensure the parent key exists as an object.
+            if !root.get(key).map(|v| v.is_object()).unwrap_or(false) {
+                json_set(&mut root, key, serde_json::Map::new().into());
+            }
+            json_set(&mut root, &format!("{key}.{name}"), native);
+            let serialized = serde_json::to_string_pretty(&root).map_err(|e| e.to_string())?;
+            write_with_fresh_mtime(tool_id, slot_id, &path, &serialized)
+        }
+    }
+}
+
+/// Delete one MCP server entry.
+pub fn mcp_delete(tool_id: &str, name: &str) -> Result<(), String> {
+    let Some((slot_id, key)) = mcp_location(tool_id) else {
+        return Err(ierr!(
+            "该工具的 MCP 管理暂不支持",
+            "MCP management is not available for this tool"
+        ));
+    };
+    let slot = slot_spec(tool_id, slot_id)?;
+    let path = resolve_template_path(&slot.path)
+        .ok_or_else(|| ierr!("无法解析配置路径", "Cannot resolve the config path"))?;
+    if !path.exists() {
+        return Ok(());
+    }
+    match tool_id {
+        "codex" => {
+            let content = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+            let mut doc: toml_edit::DocumentMut = content
+                .parse()
+                .map_err(|e| format!("config.toml 解析失败: {e}"))?;
+            if let Some(servers) = doc.get_mut("mcp_servers").and_then(|i| i.as_table_mut()) {
+                servers.remove(name);
+            }
+            write_with_fresh_mtime(tool_id, slot_id, &path, &doc.to_string())
+        }
+        "goose" => {
+            let content = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+            let mut root: serde_yaml::Value =
+                serde_yaml::from_str(&content).map_err(|e| format!("config.yaml 解析失败: {e}"))?;
+            if let Some(map) = root.get_mut("extensions").and_then(|v| v.as_mapping_mut()) {
+                map.remove(name);
+            }
+            let serialized = serde_yaml::to_string(&root).map_err(|e| e.to_string())?;
+            write_with_fresh_mtime(tool_id, slot_id, &path, &serialized)
+        }
+        _ => {
+            let content = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+            let mut root: serde_json::Value =
+                serde_json::from_str(&content).map_err(|e| e.to_string())?;
+            if let Some(servers) = root.get_mut(key).and_then(|v| v.as_object_mut()) {
+                servers.remove(name);
+            }
+            let serialized = serde_json::to_string_pretty(&root).map_err(|e| e.to_string())?;
+            write_with_fresh_mtime(tool_id, slot_id, &path, &serialized)
+        }
+    }
+}
+
+/// serde_json object from env pairs (insertion order preserved).
+fn env_object(env: Vec<(String, String)>) -> serde_json::Map<String, serde_json::Value> {
+    let mut m = serde_json::Map::new();
+    for (k, v) in env {
+        m.insert(k, serde_json::Value::String(v));
+    }
+    m
 }
 
 // ===== Structured key layer (plan PR B: curated per-tool keys) =====
@@ -1505,6 +1907,19 @@ fn markdown_name_validation() {
 fn markdown_validation_is_lenient() {
     assert!(validate("markdown", "# anything {even braces").is_ok());
     assert!(validate("markdown", "").is_ok());
+}
+
+/// MCP location matrix: six supported tools, omp/dsh served by raw editors.
+#[test]
+fn mcp_location_matrix() {
+    assert_eq!(mcp_location("claude"), Some(("user-state", "mcpServers")));
+    assert_eq!(mcp_location("gemini"), Some(("settings", "mcpServers")));
+    assert_eq!(mcp_location("qwen"), Some(("settings", "mcpServers")));
+    assert_eq!(mcp_location("opencode"), Some(("global", "mcp")));
+    assert_eq!(mcp_location("codex"), Some(("config", "mcp_servers")));
+    assert_eq!(mcp_location("goose"), Some(("config", "extensions")));
+    assert_eq!(mcp_location("omp"), None);
+    assert_eq!(mcp_location("dsh"), None);
 }
 
 /// First heading extraction for the entry list previews.

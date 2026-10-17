@@ -206,6 +206,12 @@ pub fn builtin_tools() -> Vec<HarnessToolSpec> {
                         path: "~/.claude/CLAUDE.md".to_string(),
                         format: "markdown".to_string(),
                     },
+                    ConfigFileSlotSpec {
+                        id: "user-state".to_string(),
+                        label: "User state & MCP (~/.claude.json)".to_string(),
+                        path: "~/.claude.json".to_string(),
+                        format: "json".to_string(),
+                    },
                 ],
                 markdown_dirs: vec![MarkdownDirSpec {
                     kind: "skills".to_string(),

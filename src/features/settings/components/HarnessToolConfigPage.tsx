@@ -21,6 +21,7 @@ import HarnessToolCredentials from './HarnessToolCredentials';
 import HarnessConfigFileEditor from './HarnessConfigFileEditor';
 import HarnessToolStructuredForm from './HarnessToolStructuredForm';
 import HarnessMarkdownCollection from './HarnessMarkdownCollection';
+import HarnessMcpSection, { MCP_TOOLS } from './HarnessMcpSection';
 
 /** Markdown collections declared per tool id (kind, label i18n key). */
 const MARKDOWN_COLLECTIONS: Record<string, [string, TranslationKey][]> = {
@@ -229,6 +230,14 @@ const HarnessToolConfigPage: Component = () => {
               </For>
             </div>
             <div class="text-[11px] text-white/30 mt-2">{t('harness.conf.workspaceHint')}</div>
+          </Section>
+        </Show>
+
+        {/* ===== MCP 服务器 ===== */}
+        <Show when={MCP_TOOLS.has(toolId())}>
+          <Section title={t('harness.mcp.section')}>
+            <div class="text-[11px] text-white/35 mb-2">{t('harness.mcp.note')}</div>
+            <HarnessMcpSection toolId={toolId()} />
           </Section>
         </Show>
       </div>

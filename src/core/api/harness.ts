@@ -285,6 +285,34 @@ export const harnessToolMdWrite = (
 /** Delete one markdown entry. */
 export const harnessToolMdDelete = (toolId: string, kind: string, name: string): Promise<void> =>
   invoke<void>('harness_tool_md_delete', { toolId, kind, name });
+// ===== MCP server management =====
+
+/** One MCP server entry (normalized across tools). */
+export interface HarnessMcpEntry {
+  name: string;
+  /** stdio | http */
+  type: string;
+  command: string;
+  url?: string;
+  args?: string[];
+  env?: [string, string][];
+  enabled?: boolean;
+}
+
+/** List the tool's MCP servers from its own config file. */
+export const harnessToolMcpList = (toolId: string): Promise<HarnessMcpEntry[]> =>
+  invoke<HarnessMcpEntry[]>('harness_tool_mcp_list', { toolId });
+
+/** Add/update one MCP server entry (tool-native shape on write). */
+export const harnessToolMcpSet = (
+  toolId: string,
+  name: string,
+  entry: HarnessMcpEntry,
+): Promise<void> => invoke<void>('harness_tool_mcp_set', { toolId, name, entry });
+
+/** Delete one MCP server entry. */
+export const harnessToolMcpDelete = (toolId: string, name: string): Promise<void> =>
+  invoke<void>('harness_tool_mcp_delete', { toolId, name });
 
 /** List user-registered custom ACP agents. */
 export const harnessListCustomAgents = (): Promise<HarnessCustomAgent[]> =>

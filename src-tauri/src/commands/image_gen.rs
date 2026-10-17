@@ -70,6 +70,7 @@ pub async fn generate_image(
                 output_tokens: None,
                 context_tokens: None,
                 cached_input_tokens: None,
+                ttft_ms: None,
                 images,
             },
         );

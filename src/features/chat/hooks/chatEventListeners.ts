@@ -356,6 +356,7 @@ export function registerChatStreamListeners(): Promise<UnlistenFn>[] {
         output_tokens,
         context_tokens,
         cached_input_tokens,
+        ttft_ms,
         images,
       } = e.payload;
       if (done) {
@@ -429,6 +430,7 @@ export function registerChatStreamListeners(): Promise<UnlistenFn>[] {
             if (output_tokens != null) updatedMsg.outputTokens = output_tokens;
             if (context_tokens != null) updatedMsg.contextTokens = context_tokens;
             if (cached_input_tokens != null) updatedMsg.cachedInputTokens = cached_input_tokens;
+            if (ttft_ms != null) updatedMsg.ttftMs = ttft_ms;
             // Model-generated image metadata (download button) + final text after the backend rewrite (token markers stripped)
             if (images) updatedMsg.images = images;
             if (!error && content) updatedMsg.content = content;
@@ -485,7 +487,8 @@ export function registerChatStreamListeners(): Promise<UnlistenFn>[] {
       // update the running message's token stats in place so the context bar tracks the
       // growing prompt across a multi-round turn (mainstream: per-API-call updates).
       // produce() keeps message identity stable — no row remount, no animation replay.
-      if (input_tokens != null || context_tokens != null) {
+      // ttft_ms alone also counts (a round may report latency without token usage totals).
+      if (input_tokens != null || context_tokens != null || ttft_ms != null) {
         const asstPing = datas.assistants.find((a) => a.id === assistant_id);
         const topicPing = asstPing?.topics.find((t: Topic) => t.id === topic_id);
         const lastIdxPing = (topicPing?.history.length ?? 0) - 1;
@@ -503,6 +506,7 @@ export function registerChatStreamListeners(): Promise<UnlistenFn>[] {
               if (output_tokens != null) msg.outputTokens = output_tokens;
               if (context_tokens != null) msg.contextTokens = context_tokens;
               if (cached_input_tokens != null) msg.cachedInputTokens = cached_input_tokens;
+              if (ttft_ms != null) msg.ttftMs = ttft_ms;
             }),
           );
         }

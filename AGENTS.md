@@ -130,7 +130,7 @@ src-tauri/src/
     ├── knowledge.rs     # Project knowledge (.aio/knowledge.json)
     ├── project_map.rs   # Project structure mapping
     ├── sandbox.rs       # Shell sandboxing（路径白名单/黑名单校验）
-    ├── exec_resolve.rs  # PATH-only 可执行文件解析（全部裸名 spawn 的唯一入口；Windows PATHEXT 顺序归一）
+    ├── exec_resolve.rs  # PATH-only 可执行文件解析（全部裸名 spawn 的唯一入口；Windows PATHEXT 顺序归一）+ HiddenConsole（所有子进程隐藏控制台窗口）
     ├── think.rs         # Reasoning tool
     ├── url_validation.rs # SSRF/URL safety checks
     ├── token_counter.rs # Token counting
@@ -173,6 +173,7 @@ src-tauri/src/
 - **同行元素高度相等**：同一行（同一 flex 行容器）内的按钮/输入框/下拉/标签等控件必须使用相同的高度档位——优先复用 `shared/components/buttonStyles.ts` 中同一档位的常量（行内操作统一 `px-3 py-1.5 text-xs` 档：`btnSecondarySm`/`btnDangerOutline`/`btnSuccessOutline` 等 Sm/Outline 系列），禁止同一行混用不同 padding/字号档位（如 `btnBadge` 的 `px-2 py-1 text-[11px]` 与 `btnDangerOutline` 的 `px-3 py-1.5 text-xs` 并排）；表单行内输入框的圆角与垂直内边距也需与同弹窗的下拉触发器一致（`Dropdown` ghost 变体为 `rounded-lg py-1.5`，输入框用 `rounded-lg` 匹配）。
 - **语义色按钮一律 outline**：带语义颜色的文本操作按钮（确定/保存/创建、删除/停止/关闭、测试连接/启动/批准、存密钥等）只允许 `buttonStyles.ts` 的 Outline 家族——**边框与文字携带语义色**（`border-pri-50`+`text-pri`、`border-danger/50`+`text-danger`、`border-success/50`+`text-success`、`border-warn/50`+`text-warn`），按钮主体保持中性底（`bg-white/[0.06]`，与 secondary 一致，hover 才浮现浅语义色底）。禁止实底语义按钮（`bg-pri` 实色）与色块底（`bg-danger/10`/`bg-green-400/10` 等）；中性操作用 `btnSecondary`/`btnSecondarySm`。发送/停止复合图标控件（输入区主控件）与 tab 选中态不在此规则约束内。
 - **i18n**：所有面向用户的字符串必须通过 `t()`（`core/i18n`）取词；每个 key 必须同时存在于 `locales/zh-CN.json` 与 `locales/en-US.json`，且 `{{placeholder}}` 集合一致（`npm run check:i18n` 强制校验）。禁止在 JSX/模板字符串中硬编码 UI 文案。
+- **子进程必须隐藏控制台**：安装版（release）是 GUI 子系统（`#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]`），进程自身没有控制台；任何 console 子系统子进程（cmd/powershell/git/npx/node/reg/taskkill…）若不带 `CREATE_NO_WINDOW`，Windows 会为它**新建**一个控制台窗口——用户看到终端一闪。调试模式下子进程继承调试控制台，所以只在安装版复现。规则：所有 `std::process::Command` / `tokio::process::Command` 一律链式加 `.hidden_console()`（`utils::exec_resolve::HiddenConsole`，跨平台 no-op）；裸 `CreateProcessW` 路径（`utils/sandbox/win_appcontainer.rs`）需自行带上 `CREATE_NO_WINDOW` 与 `STARTF_USESHOWWINDOW`+`SW_HIDE`。管道化 stdio 并不能阻止控制台分配（`npm run check:gates` 门禁强制执行）。
 - **UI 文案克制**：界面上只放功能性文字（标签、状态、操作结果、错误提示、一句话占位符）。开发/设计阶段的解释性描述——功能介绍、原理说明、使用教程、配置字段的长说明——一律不写入 UI，它们属于 `docs/`。新增 UI 文案时先问：删掉这句话用户会不会用不了这个功能？会才留。操作状态反馈优先用控件自身的状态变化表达（如按钮文字短暂切换为「已取消/已下载」一秒后恢复、列表项消失、布局切换），而不是新增常驻状态文字行；错误信息（含失败原因）除外。
 
 ### Naming & Strings
@@ -260,4 +261,4 @@ Before submitting changes, verify:
 - [ ] No hardcoded color literals; theme colors go through CSS variables in `src/index.css`.
 - [ ] 新后端→前端事件名：在 `src-tauri/src/core/events.rs` 与 `src/core/api/events.ts` 两端登记（kebab-case）。
 - [ ] 新 Tauri 命令：前端经 `core/api/<域>.ts` 封装调用，组件不得裸 `invoke`。
-- [ ] `npm run check:gates` 全过（裸中文 JSX / 颜色 / any 闸门 / 分层 / 文件规模 / 命令注册）。
+- [ ] `npm run check:gates` 全过（裸中文 JSX / 颜色 / any 闸门 / 分层 / 文件规模 / 命令注册 / 子进程隐藏控制台）。

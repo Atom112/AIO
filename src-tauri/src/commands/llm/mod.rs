@@ -299,6 +299,7 @@ pub async fn call_llm_stream(
                         output_tokens: Some(round.output_tokens),
                         context_tokens: Some(round.input_tokens),
                         cached_input_tokens: Some(round.cached_input_tokens),
+                        ttft_ms: round.ttft_ms,
                         images: if round.images.is_empty() {
                             None
                         } else {
@@ -326,6 +327,7 @@ pub async fn call_llm_stream(
                         output_tokens: None,
                         context_tokens: None,
                         cached_input_tokens: None,
+                        ttft_ms: None,
                         images: None,
                     },
                 );
@@ -427,6 +429,7 @@ pub async fn stop_llm_stream(
                     output_tokens: None,
                     context_tokens: None,
                     cached_input_tokens: None,
+                    ttft_ms: None,
                     images: None,
                 },
             );
@@ -1551,6 +1554,7 @@ pub(crate) async fn run_agent_turn_inner(
                         output_tokens: None,
                         context_tokens: None,
                         cached_input_tokens: None,
+                        ttft_ms: None,
                         images: None,
                     },
                 );

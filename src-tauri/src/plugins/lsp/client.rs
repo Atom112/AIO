@@ -9,6 +9,7 @@ use super::error::LspResult;
 use super::transport::{encode_message, read_frame};
 use crate::core::events as ev;
 use crate::ierr;
+use crate::utils::exec_resolve::HiddenConsole;
 use crate::utils::jsonrpc::{PendingMap, WaitError};
 use dashmap::DashMap;
 use lsp_types::PublishDiagnosticsParams;
@@ -18,10 +19,6 @@ use std::time::Duration;
 use tokio::io::{AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 use tokio::sync::Mutex;
-
-#[allow(unused_imports)]
-#[cfg(windows)]
-use std::os::windows::process::CommandExt;
 
 // ====== LspClient ======
 
@@ -88,12 +85,8 @@ impl LspClient {
             .stderr(std::process::Stdio::piped())
             .kill_on_drop(true);
 
-        // Windows: hide the console window
-        #[cfg(windows)]
-        {
-            const CREATE_NO_WINDOW: u32 = 0x08000000;
-            cmd.creation_flags(CREATE_NO_WINDOW);
-        }
+        // Windows: hide the console window (the release build owns no console to inherit)
+        cmd.hidden_console();
 
         let mut child = cmd.spawn().map_err(|e| {
             super::error::LspError::TransportStartup(ierr!(

@@ -23,6 +23,12 @@ function fmt(n: number): string {
   return String(n);
 }
 
+/** Milliseconds for a latency readout: "820ms" below one second, "1.2s" above. */
+function fmtMs(ms: number): string {
+  if (ms < 1000) return `${Math.round(ms)}ms`;
+  return `${(ms / 1000).toFixed(1)}s`;
+}
+
 function fmtPrice(n: number): string {
   if (n <= 0) return '$0';
   if (n < 0.0001) return '<$0.0001';
@@ -52,6 +58,7 @@ const TokenStatsBar: Component = () => {
         maxContext: 128_000,
         contextInput: 0,
         price: 0,
+        ttft: 0,
       };
     let input = 0,
       output = 0,
@@ -83,6 +90,17 @@ const TokenStatsBar: Component = () => {
     }
     let maxCtx = 128_000;
     let price = 0;
+    // Time-to-first-token of the most recent turn that reported one (scan backwards).
+    // Distinct from the other stats, which are cumulative: TTFT is a per-request latency,
+    // so only the latest measurement is meaningful.
+    let ttft = 0;
+    for (let i = history.length - 1; i >= 0; i--) {
+      const msg = history[i];
+      if (msg.role === 'assistant' && (msg.ttftMs || 0) > 0) {
+        ttft = msg.ttftMs!;
+        break;
+      }
+    }
     const cat = getCachedCatalog();
     const mdl = selectedModel();
     if (cat && mdl) {
@@ -102,6 +120,7 @@ const TokenStatsBar: Component = () => {
       maxContext: maxCtx,
       contextInput,
       price,
+      ttft,
     };
   });
 
@@ -133,6 +152,7 @@ const TokenStatsBar: Component = () => {
           maxContext: fmt(stats().maxContext),
           pct: (pct() * 100).toFixed(0),
           cacheHit: hasCacheStats() ? `${cachePct()}%` : '—',
+          ttft: stats().ttft > 0 ? fmtMs(stats().ttft) : '—',
         })}
       >
         {/* Mini progress bar */}
@@ -174,6 +194,20 @@ const TokenStatsBar: Component = () => {
         <span class="whitespace-nowrap" style={{ color: 'rgba(var(--text-base-rgb),0.22)' }}>
           {t('chat.messageCount', { count: stats().messages })}
         </span>
+
+        {/* Time-to-first-token: per-request latency of the last turn (backend-measured,
+            request start -> first streamed token). Hidden until a measurement exists. */}
+        <Show when={stats().ttft > 0}>
+          <span style={{ color: 'rgba(var(--text-base-rgb),0.10)' }}>·</span>
+          <span
+            class="inline-flex items-center gap-1 whitespace-nowrap"
+            style={{ color: 'rgba(var(--text-base-rgb),0.22)' }}
+            title={t('chat.statsTtft', { ms: fmtMs(stats().ttft) })}
+          >
+            <Icon name="clock" size={12} />
+            <span class="font-mono">{fmtMs(stats().ttft)}</span>
+          </span>
+        </Show>
 
         <Show when={stats().tools > 0}>
           <span

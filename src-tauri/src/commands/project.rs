@@ -292,8 +292,12 @@ pub fn open_project_directory(_app: AppHandle, path: String) -> Result<(), Strin
             opener_name
         )
     })?;
+    // hidden_console: harmless for a GUI binary, and keeps the rule "every spawn hides
+    // its console" uniform (see utils::exec_resolve::HiddenConsole).
+    use crate::utils::exec_resolve::HiddenConsole;
     std::process::Command::new(opener)
         .arg(&path)
+        .hidden_console()
         .spawn()
         .map_err(|e| ierr!("打开目录失败: {}", "Failed to open directory: {}", e))?;
     Ok(())

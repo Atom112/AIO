@@ -75,6 +75,7 @@ export interface Message {
   parentMessageId?: string; // Parent message ID (for the conversation branch tree)
   branchIndex?: number; // Branch index (defaults to 0; old data may lack this field)
   cachedInputTokens?: number; // Cache-hit tokens this turn (OpenAI cached_tokens / DeepSeek prompt_cache_hit_tokens)
+  ttftMs?: number; // Time-to-first-token (ms) of the latest round: request start -> first streamed token
   images?: GeneratedImageInfo[]; // Model-generated images (assistant messages), for download and history replay
 }
 

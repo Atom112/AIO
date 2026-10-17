@@ -15,6 +15,7 @@
 //! - Permission system: reuses the existing Allow/Ask/Deny rule engine
 
 use crate::core::models::{ToolFunctionSpec, ToolResult, ToolSpec};
+use crate::utils::exec_resolve::HiddenConsole;
 use serde_json::json;
 use std::process::Command;
 use std::time::Duration;
@@ -1057,7 +1058,29 @@ fn pwsh_script(command: &str) -> String {
     } else {
         command.to_string()
     };
-    format!("{body}\nif ($null -ne $LASTEXITCODE) {{ exit $LASTEXITCODE }} elseif (-not $?) {{ exit 1 }}")
+    // UTF-8 console prelude (harness environment report item 3): zh-CN Windows
+    // defaults the console to code page 936, and PowerShell encodes its own
+    // output — as well as what it relays from native children — through
+    // [Console]::OutputEncoding. GBK system messages therefore mixed with
+    // UTF-8 (node/cargo output) into one stream, which failed UTF-8
+    // validation and reached us decoded wholly as GBK mojibake. Forcing UTF-8
+    // makes the whole stream consistent; decode_console_output keeps its GBK
+    // fallback for anything emitted by raw GBK writers (direct git spawns).
+    // Best-effort (try/catch) so an exotic console-less host still runs.
+    let prelude = "try { [Console]::OutputEncoding=[System.Text.UTF8Encoding]::new($false); $OutputEncoding=[Console]::OutputEncoding } catch { }";
+    format!(
+        "{prelude}\n{body}\nif ($null -ne $LASTEXITCODE) {{ exit $LASTEXITCODE }} elseif (-not $?) {{ exit 1 }}"
+    )
+}
+
+/// cmd path: flip the hidden console to UTF-8 before the user command. cmd's
+/// own messages and console-API-aware children (git, ver, echo) then emit
+/// UTF-8 on the pipes instead of GBK, keeping mixed streams UTF-8-consistent.
+/// The `&` sequence leaves errorlevel handling to the user command; `>nul`
+/// keeps "Active code page: 65001" out of the output. Added AFTER the
+/// metacharacter/danger scans run, so it never trips them.
+fn cmd_utf8_prelude(command: &str) -> String {
+    format!("chcp 65001 >nul & {command}")
 }
 
 /// `-EncodedCommand` payload: UTF-16LE base64 — immune to every quote-escaping
@@ -1231,7 +1254,7 @@ pub fn execute_command(
                 use std::os::windows::process::CommandExt;
                 c.raw_arg("/S")
                     .raw_arg("/C")
-                    .raw_arg(format!("\"{command}\""));
+                    .raw_arg(format!("\"{}\"", cmd_utf8_prelude(command)));
             }
         }
         #[cfg(not(windows))]
@@ -1240,7 +1263,10 @@ pub fn execute_command(
     };
     cmd.current_dir(project_root)
         .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped());
+        .stderr(std::process::Stdio::piped())
+        // GUI-subsystem release build owns no console: without this the shell child
+        // allocates one and the user sees a terminal flash on every command.
+        .hidden_console();
     // Non-Windows: run the command in its own process group so timeout/cleanup kills the whole subtree
     #[cfg(unix)]
     {
@@ -1354,6 +1380,7 @@ pub fn execute_command(
                     let _ = std::process::Command::new(kill)
                         .arg("-KILL")
                         .arg(format!("-{child_pid}"))
+                        .hidden_console()
                         .status();
                 }
             }
@@ -1380,6 +1407,7 @@ pub fn execute_command(
 
     build_command_result(
         command,
+        project_root,
         exit_code,
         timed_out,
         timeout,
@@ -1445,7 +1473,7 @@ fn execute_command_in_appcontainer(
         )
     } else {
         // /S + 包裹引号：cmd 只剥最外层包裹引号，多引号命令不触发「剥首尾引号」规则
-        format!("\"{program}\" /S /C \"{command}\"")
+        format!("\"{program}\" /S /C \"{}\"", cmd_utf8_prelude(command))
     };
     let (mut child, job) = match crate::utils::sandbox::spawn_in_appcontainer(
         &cmdline,
@@ -1522,6 +1550,7 @@ fn execute_command_in_appcontainer(
 
     build_command_result(
         command,
+        project_root,
         exit_code,
         timed_out,
         timeout,
@@ -1536,6 +1565,7 @@ fn execute_command_in_appcontainer(
 #[allow(clippy::too_many_arguments)]
 fn build_command_result(
     command: &str,
+    project_root: &str,
     exit_code: Option<i32>,
     timed_out: bool,
     timeout: u64,
@@ -1544,6 +1574,13 @@ fn build_command_result(
     stderr: Vec<u8>,
     stderr_total: usize,
 ) -> ToolResult {
+    // A command that could have created/removed a repository invalidates the memoized
+    // `is_git_repo` answer, so the git tools appear (or disappear) on the next turn
+    // instead of after the cache TTL. git init / clone / rm -rf .git must not appear
+    // to have had no effect on the tool set.
+    if crate::utils::git_tools::command_may_change_repo(command) {
+        crate::utils::git_tools::invalidate_git_repo_cache(project_root);
+    }
     let mut result = String::new();
     result.push_str(&format!("$ {command}\n"));
 
@@ -2027,10 +2064,13 @@ mod tests {
         }
     }
 
-    /// E2E decode verification (harness round 3): a real cmd.exe run whose console
-    /// code page is GBK (zh-CN default) must surface readable Chinese in the tool
-    /// result — previously "拒绝访问。" arrived as mojibake and killed the
-    /// signature detectors (expansion dialog / env-class breaker).
+    /// E2E decode verification (harness round 3 + environment-report fix): a real
+    /// cmd.exe run whose hidden console starts at the zh-CN default (code page
+    /// 936) must surface readable Chinese in the tool result. The UTF-8 prelude
+    /// (`chcp 65001`) now flips the console before the user command, so this
+    /// exercises the UTF-8 path end-to-end; the decoder's GBK fallback remains
+    /// covered by `decode_console_output_utf8_and_gbk` (raw GBK writers like
+    /// direct git spawns still exist).
     #[test]
     #[cfg(windows)]
     fn gbk_console_output_decodes_e2e() {
@@ -2048,7 +2088,7 @@ mod tests {
         let text = text_of(&r);
         assert!(
             !r.is_error && text.contains("拒绝访问测试OK"),
-            "GBK 控制台输出应正确解码: {text}"
+            "控制台输出应正确解码: {text}"
         );
     }
 

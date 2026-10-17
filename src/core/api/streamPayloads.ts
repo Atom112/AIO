@@ -33,6 +33,8 @@ export interface LlmChunkPayload {
   /** Peak context tokens (progress-bar driver; distinct from cumulative input_tokens). */
   context_tokens?: number;
   cached_input_tokens?: number;
+  /** Time-to-first-token (ms) for the latest round (backend-measured; absent when the round produced no token). */
+  ttft_ms?: number;
   /** Model-generated image metadata (done=true with images). */
   images?: GeneratedImageInfo[];
 }

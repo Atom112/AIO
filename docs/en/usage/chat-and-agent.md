@@ -31,7 +31,7 @@ When the model catalog provides context window information, the interface shows 
 
 - **SessionStats**: Total session input tokens, output tokens, tool call count, and context window usage percentage.
 - **TokenBar**: Context window progress bar with color coding (green -> yellow -> red), showing used tokens / max tokens in real time.
-- **TokenStatsBar**: Summary bar showing total tokens, request count, and estimated cost.
+- **TokenStatsBar**: Summary bar showing total tokens, request count, estimated cost, cache hit rate, and time to first token (TTFT — taken from the most recent request; hover for the full breakdown).
 
 When usage reaches approximately 75% and there are more than 10 messages, AIO summarizes older messages while keeping the most recent messages within a token budget (about 20k tokens, at least one full turn); the new summary fully replaces the old one to avoid bloat. You can also use `/compact` to compress manually.
 

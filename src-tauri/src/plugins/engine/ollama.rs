@@ -8,10 +8,9 @@
 use crate::core::state::LocalEngineState;
 use crate::ierr;
 use crate::plugins::engine::LocalEnginePlugin;
+use crate::utils::exec_resolve::HiddenConsole;
 use std::future::Future;
 use std::io::Write;
-#[cfg(target_os = "windows")]
-use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::time::Duration;
@@ -94,7 +93,7 @@ fn ollama_service_exists() -> bool {
         .args(["query", "ollama"])
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
-        .creation_flags(0x08000000)
+        .hidden_console()
         .status()
         .map(|s| s.success())
         .unwrap_or(false)
@@ -166,9 +165,8 @@ fn ollama_version_from_cli() -> Option<String> {
     let mut cmd = std::process::Command::new(exe);
     cmd.arg("--version")
         .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped());
-    #[cfg(target_os = "windows")]
-    cmd.creation_flags(0x08000000);
+        .stderr(std::process::Stdio::piped())
+        .hidden_console();
     match cmd.output() {
         Ok(output) => {
             let raw = String::from_utf8_lossy(if output.stderr.is_empty() {
@@ -249,6 +247,7 @@ async fn import_model(model_path: &str, api_url: &str) -> Result<String, String>
         .arg(&modelfile_path)
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
+        .hidden_console()
         .output()
         .await
         .map_err(|e| {
@@ -352,12 +351,11 @@ impl LocalEnginePlugin for OllamaPlugin {
         // 64KB 管道填满后引擎静默挂死（长会话必现）。日志本就无人消费，改 null。
         cmd.arg("serve")
             .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null());
+            .stderr(std::process::Stdio::null())
+            .hidden_console();
         if port != 11434 {
             cmd.env("OLLAMA_HOST", format!("127.0.0.1:{}", port));
         }
-        #[cfg(target_os = "windows")]
-        cmd.creation_flags(0x08000000);
         cmd
     }
 

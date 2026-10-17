@@ -202,6 +202,7 @@ mod tests {
             input_tokens: None,
             output_tokens: None,
             cached_input_tokens: None,
+            ttft_ms: None,
             context_tokens: None,
             agent_steps: None,
             interim_content: None,

@@ -209,6 +209,9 @@ impl AgentTurnRunner {
         let mut last_finish_reason: Option<String> = None;
         // Peak context tokens: input_tokens of the last API call (for the context-window display)
         let mut context_input_tokens: u32 = 0;
+        // TTFT of the most recent round (ms): request start -> first streamed token. Drives
+        // the input-bar latency readout; None until a round produces its first token.
+        let mut last_ttft_ms: Option<u32> = None;
         // Final text and generated images accumulated across rounds (sent once at done; idempotently replaces frontend chunk accumulation)
         // Resume turns start from the crashed turn's recovered text (see resume_seed).
         let mut accumulated_content = resume_seed;
@@ -333,6 +336,7 @@ impl AgentTurnRunner {
                         output_tokens: None,
                         context_tokens: None,
                         cached_input_tokens: None,
+                        ttft_ms: None,
                         images: None,
                     },
                 );
@@ -442,10 +446,15 @@ impl AgentTurnRunner {
             }
             // Record peak context (input_tokens of the last round)
             context_input_tokens = round_result.input_tokens;
+            // Latest measured TTFT (only rounds that actually produced a token have one)
+            if round_result.ttft_ms.is_some() {
+                last_ttft_ms = round_result.ttft_ms;
+            }
             // Per-round usage ping (no content): lets the frontend context bar track the
             // growing prompt across a multi-round turn (mainstream agent harnesses update
             // context per API call, not only at turn end). input/output carry the running
             // turn totals so the mid-turn display matches the final done event.
+            // ttft_ms carries the LATEST round's latency so the readout updates per round.
             let _ = window.emit(
                 ev::LLM_CHUNK,
                 StreamPayload {
@@ -458,6 +467,7 @@ impl AgentTurnRunner {
                     output_tokens: Some(total_output_tokens),
                     context_tokens: Some(context_input_tokens),
                     cached_input_tokens: Some(total_cached_tokens),
+                    ttft_ms: last_ttft_ms,
                     images: None,
                 },
             );
@@ -1092,6 +1102,7 @@ impl AgentTurnRunner {
                             output_tokens: None,
                             context_tokens: None,
                             cached_input_tokens: None,
+                            ttft_ms: None,
                             images: None,
                         },
                     );
@@ -1174,6 +1185,7 @@ impl AgentTurnRunner {
                 } else {
                     None
                 },
+                ttft_ms: last_ttft_ms,
                 images: if all_images.is_empty() {
                     None
                 } else {

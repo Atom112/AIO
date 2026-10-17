@@ -217,8 +217,8 @@ pub async fn append_message(
          (id, topic_id, role, content, model_id, display_files, display_text, reasoning,
           tool_call_id, name, tool_calls_json, input_tokens, output_tokens,
           agent_steps_json, interim_content, agent_start_time, parent_message_id, branch_index,
-          images_json, cached_input_tokens, context_tokens)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)",
+          images_json, cached_input_tokens, context_tokens, ttft_ms)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)",
         params![
             message_id,
             topic_id,
@@ -241,6 +241,7 @@ pub async fn append_message(
             serde_json::to_string(&message.images).ok(),
             message.cached_input_tokens,
             message.context_tokens,
+            message.ttft_ms,
         ],
     )
     .map_err(|e| e.to_string())?;

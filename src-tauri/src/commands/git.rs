@@ -47,9 +47,11 @@ fn revert_one(
     project_path: &str,
     file_path: &str,
 ) -> Result<String, String> {
+    use crate::utils::exec_resolve::HiddenConsole;
     let status = std::process::Command::new(git)
         .args(["checkout", "HEAD", "--", file_path])
         .current_dir(project_path)
+        .hidden_console()
         .status()
         .map_err(|e| ierr!("git 执行失败: {}", "Failed to run git: {}", e))?;
     if status.success() {

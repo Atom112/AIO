@@ -1565,30 +1565,37 @@ mod tests {
                 FILE_GENERIC_READ | FILE_GENERIC_EXECUTE,
                 "gitro-e2e",
             );
-            if let Err(gerr) = grant {
-                // Environmental precondition failure (deterministic, not a
-                // product regression): this session cannot write the DACL on
-                // the git install directory — reproduced outside the test via
-                // `icacls D:\Git\cmd /grant ...` → Access denied (directory
-                // owned by Administrators, no WRITE_DAC for the medium-IL
-                // user; see docs/zh/development/harness-environment-report.md).
-                // Production's own contract is best-effort ("尽力 R+X 授权"):
-                // with the grant refused, git inside the AppContainer is
-                // deterministically unavailable and the in-sandbox git leg
-                // cannot assert anything meaningful. Skip it with a loud
-                // diagnostic instead of failing the suite; every other leg of
-                // this test (deny-write, allow-read, root-write) stays hard.
-                // Recheck under an elevated session: grant once, then rerun.
-                eprintln!(
-                    "[SKIP appcontainer_git_history_protection] 无法对 git 安装目录 \
-                     {git_dir} 写入 R+X 授权: {gerr} — 环境性限制（DACL 拒写），\
-                     非产品回归；提权后可复检"
-                );
-                let _ = std::fs::remove_dir_all(&project);
-                return;
-            }
+            // Run the leg FIRST, then decide: the profile-SID grant is
+            // best-effort (production contract「尽力 R+X 授权」), and the
+            // environment may already allow the run through a pre-existing
+            // ALL APPLICATION PACKAGES ACE (the one-time elevated fix) even
+            // when this session cannot write the DACL at all — AppContainer
+            // tokens natively carry that SID.
             let git_cmd = format!("\"{}\" log --oneline -1", git_exe.to_string_lossy());
             let (out3, err3, code3) = run_ac_protected(&git_cmd, &project, false, true);
+            if let Err(gerr) = &grant {
+                // Skip ONLY on the true environmental blocker: grant refused
+                // AND the run came back as an ACL-silent denial (no output,
+                // no error text — the signature this test exists to detect).
+                // Reproduced outside the test: `icacls D:\Git\cmd /grant ...`
+                // → Access denied (owner Administrators, no WRITE_DAC for
+                // the medium-IL user; harness-environment-report.md item 2).
+                // A working run (pre-existing ACE) or a loud git failure both
+                // carry real signal and proceed to the hard assertion below;
+                // every other leg (deny-write, allow-read, root-write) stays
+                // hard either way.
+                if code3 != Some(0) && err3.trim().is_empty() && out3.trim().is_empty() {
+                    eprintln!(
+                        "[SKIP appcontainer_git_history_protection] 无法对 git 安装目录 \
+                         {git_dir} 写入 R+X 授权 ({gerr})，且沙箱内运行为静默拒绝 \
+                         (code={code3:?}) — 环境性限制（尽力授权被拒且运行零输出：本机 \
+                         EDR 过滤驱动对安装目录 in-AC 执行的拦截实录见环境报告第 2 项），\
+                         非产品回归；安全软件白名单放行后可复检"
+                    );
+                    let _ = std::fs::remove_dir_all(&project);
+                    return;
+                }
+            }
             // 本层断言只保证「git 本体在沙箱内可执行」：成功则校验提交内容；失败
             // 必须是 git 自身的报错（stderr 有内容）而非 ACL 层的静默拒绝。EDR 对
             // 特定安装目录的额外过滤（本机实录）留给人工复查，不作硬断言。

@@ -26,6 +26,7 @@
 
 use crate::ierr;
 use crate::plugins::harness::registry;
+use crate::utils::exec_resolve::HiddenConsole;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::path::{Path, PathBuf};
@@ -1660,13 +1661,7 @@ fn run_omp_config(args: &[&str]) -> Result<String, String> {
     use std::process::Command as StdCommand;
     let program = crate::utils::exec_resolve::resolve_or_keep("omp");
     let mut cmd = StdCommand::new(&program);
-    cmd.args(args);
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x08000000;
-        cmd.creation_flags(CREATE_NO_WINDOW);
-    }
+    cmd.args(args).hidden_console();
     let output = cmd
         .output()
         .map_err(|e| format!("无法启动 omp ({program}): {e}"))?;

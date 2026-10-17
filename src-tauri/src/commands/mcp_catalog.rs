@@ -610,10 +610,14 @@ pub async fn check_mcp_catalog_runtime(package_type: String) -> Result<bool, Str
         return Ok(false);
     };
     // Windows batch wrappers (npx.cmd) must run through cmd /C; POSIX shebangs run via sh -c.
+    // hidden_console: the GUI-subsystem release build owns no console, so a bare
+    // cmd.exe child would flash a terminal window on every runtime probe.
+    use crate::utils::exec_resolve::HiddenConsole;
     let status = if cfg!(windows) {
         tokio::process::Command::new(shell)
             .args(["/C", &runtime.to_string_lossy(), "--version"])
             .kill_on_drop(true)
+            .hidden_console()
             .status()
             .await
     } else {
@@ -621,6 +625,7 @@ pub async fn check_mcp_catalog_runtime(package_type: String) -> Result<bool, Str
             .arg("-c")
             .arg(format!("{} --version", runtime.to_string_lossy()))
             .kill_on_drop(true)
+            .hidden_console()
             .status()
             .await
     };

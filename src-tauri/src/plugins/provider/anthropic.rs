@@ -581,6 +581,7 @@ pub fn handle_anthropic_stream_event(
                                     output_tokens: None,
                                     context_tokens: None,
                                     cached_input_tokens: None,
+                                    ttft_ms: None,
                                     images: None,
                                 },
                             );
@@ -606,6 +607,7 @@ pub fn handle_anthropic_stream_event(
                                     output_tokens: None,
                                     context_tokens: None,
                                     cached_input_tokens: None,
+                                    ttft_ms: None,
                                     images: None,
                                 },
                             );

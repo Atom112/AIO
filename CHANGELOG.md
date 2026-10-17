@@ -2,7 +2,105 @@
 
 # Changelog
 
+## [v0.8.2]
+
+<sup>Released on **2026-10-17**</sup>
+
+本版本主题：**CLI Harness 图形化兼容层完整成型**——8 个 CLI 编码工具（Claude Code / Codex / OpenCode / Oh My Pi / Gemini CLI / Qwen Code / goose / DSH）在 AIO 内获得接近原生的使用体验：输入栏与对话页同款控件实时切换模型/思考强度/审批模式，设置页提供每工具配置子页（凭据、常用配置表单、带校验的原始配置编辑器、全局指令与技能管理、MCP 服务器管理），会话历史可靠持久化、选中话题即连即用。
+
+### Harness 工作台核心（PR #184–#188）
+
+- **工作台骨架 + ACP 通用驱动（#184）**：/harness 页面与对话页同构（两级工具/工作区侧栏 + 消息区 + 话题栏），`agent-client-protocol` 驱动让任何 ACP 工具接入；归一化事件流渲染消息/思维链/工具调用/审批气泡/任务板；本机 DSH 实测全链路跑通
+- **Claude Code 原生驱动（#185）**：原生二进制直驱 stream-json 协议——`set_permission_mode` 热切换、can_use_tool 审批回路、子代理流、中断；探测四级（官方安装器 → PATH → npm 包内真身 ≥1MB → 回退 ACP）
+- **自定义 ACP 工具 + 后台任务菜单联动（#186）**：任意「说 ACP 协议」的 CLI 注册为工具；运行中的 harness 话题出现在对话页后台任务菜单
+- **Codex 原生驱动（#187）**：`codex exec --json` 逐回合进程模型——prompt 走 stdin 永不进 argv、`resume` 跨重启续聊、完整事件映射；npm 安装检测修复（#188）
+
+### 工作台体验打磨（PR #189–#199）
+
+- **UI 严格复刻对话页（#189/#190/#196/#197）**：侧栏收展把手与宽度拖拽修复、工作区独立折叠持久化、CLI 工具品牌 logo（lobehub icons + 自绘 π）、输入栏控件复用对话页形态（模型图标下拉/思考滑杆/模式菜单）
+- **模型/思考/审批三通道配置（#191–#194）**：ACP configOptions 数据驱动 + claude `set_model` 热切 + codex 每回合 `-m/-c`；spawn 期选项机制覆盖全工具（omp/gemini/qwen `--approval-mode`、goose `GOOSE_MODE`、codex `-s` 沙箱）
+- **供应商凭据（#195）**：API Key 存 OS 钥匙串、spawn 时注入供应商环境变量（ANTHROPIC_API_KEY/OPENAI_API_KEY/GEMINI_API_KEY/DASHSCOPE_API_KEY）
+- **会话体验修复（#193/#198）**：历史消息读取修复（此前从未加载）、选中话题即时连接（不待首条消息）、空闲会话不再被误标「运行中」
+
+### 工具设置页体系（PR #199–#203）
+
+- **设置 → CLI 工具分区（#199）**：8 工具列表 + 每工具二级页；**工具自己的配置文件是唯一事实源**——AIO 直接读写 CLI 读的同一份文件，带格式校验（JSON/JSONC/TOML/YAML）、首次写入前 `.aio-bak` 备份、外部改动陈旧检测、原子写
+- **结构化配置表单（#200/#201）**：高频键 GUI 直改——claude（权限模式/规则/env 等）、gemini/qwen、opencode（JSONC 守卫）、codex（toml_edit 保注释）、goose（YAML 行级手术只动目标行）、**omp 官方通道**（`config list --json` 448 键全目录 + `config set/reset`，与 CLI 完全同源）
+- **指令与技能（#202）**：全局指令文件（CLAUDE.md/AGENTS.md/GEMINI.md/QWEN.md/~/AGENTS.md）+ markdown 集合管理（claude skills、goose 提示词、opencode 命令）——新建/编辑/删除，名称白名单防路径逃逸
+- **MCP 服务器管理（#203）**：5 工具原生形状增删改（claude `~/.claude.json`、gemini/qwen settings、opencode `mcp`、codex `[mcp_servers]` 保注释、goose `extensions`）
+- **omp 路径修正（#204）**：全局指令为 `~/AGENTS.md`（agents-md 发现约定）
+
+### 验证基线
+
+cargo 424 Rust 测试（6 ignored 真机项）、78 前端测试、gates 全过、i18n 双语 1198 键；omp/codex/dsh/claude 本机探针实测（含 omp 448 键目录形状、`omp acp --approval-mode` 注入、DSH ACP 全链路）
+
+<p align="right"><a href="#top"><img src="/public/icons/top.svg"></img></a></p>
+
+[v0.8.2]: https://github.com/Atom112/AIO/releases/tag/v0.8.2
+
+## [v0.8.1]
+
+<sup>Released on **2026-10-16**</sup>
+
+### 📋 后台任务上拉菜单（新增）
+
+- **应用后台作业的实时视图**：状态栏新增「后台任务」菜单（子智能体菜单左侧）——记忆自动提取/整理（每轮异步 + 每日调度）、索引重建、代码索引、嵌入/本地模型下载、**执行超 5 秒的长时命令**（构建/测试等应用正在等待的 shell 脚本，含子智能体发起）逐类入列：进度条 / 已运行时长 / 错误行 / 完成时长，终态 10 秒自动消隐、运行中 30 分钟无事件兜底清除（错过终态不悬挂）
+- 后端六类作业补全事件生命周期：`memory-extract-progress` 正式双端注册、新增 `memory-consolidate-progress` 与 `command-progress`；下载器终态事件兼容旧契约
+
+### 🛡 权限与沙箱（自主权体系重构）
+
+- **模式阶梯定型**：off=「只读」/ normal=「工作区内修改」/ auto=「完全权限」/ plan=「计划」，新增**「本机全权」（danger）**档——显式 opt-in 的无沙箱原生执行（进入时独立红色警告），对齐 Codex/DSH danger 档语义
+- **完全权限无人值守自愈**：沙箱拒绝命中签名即自动补救（Auto 不受防弹窗节流）、授权未落地自动降级重试、成功授权永久写入工具链配置；`.git` 递归只读防提示注入篡改历史（Windows PROTECTED+REVOKE ACE / Linux ro-bind / macOS SBPL）；「跳出沙箱兜底」开关化
+- **审批「始终允许」持久化**：项目内调用原子写入 `.aio/permissions.json`；未信任 MCP 门与网络命令闸尊重用户 Allow 规则（点了不再白点）；审批/扩权弹窗超时统一 600s
+- **Windows 默认 shell 切换 PowerShell**：`-EncodedCommand`（UTF-16LE base64）免疫引号转义、退出码正确传播、可经 `shellWindows` 切回 cmd；`cmd /S /C` 引号语义修复（本机全权档实测暴露）
+- MCP 项目级信任与 spawn 门同源（完全权限免逐次确认）；MCP stdio 子进程树泄漏修复（`taskkill /T` 整树终止 + autoStart 单飞去重，npx 型 server 三份并存根因）；授权失败目录进程级去重
+
+### 🧠 上下文压缩
+
+- **压缩不再删除消息记录**：`context_trim_count` 作为上下文边界——LLM 请求只发摘要 + 边界后消息，完整对话记录始终可见；压缩中显示内嵌胶囊动效
+- **压缩摘要升级 + 读回通道**：pi 式章节结构 + DSH 逐字规则（路径/命令/错误串不可转述）；归档保真度无损化（单条预算对齐管线截断上限），`read_artifact` 可读回被压缩的工具结果细节
+- 保留区 token 估算 CJK 感知（原 chars/4 对中文低估 4 倍）；长对话分段渲染（切话题只挂载最近 40 条 + 哨兵增量加载）；上下文 token 口径修复（`context_tokens` 落库贯通，重启不再虚高数倍）；缓存命中率分母修复（真实 80% 不再显示为 ~44%）
+
+### 🤖 子智能体
+
+- **DSH 级实时流式**：`subagent-chunk`/`subagent-reasoning` 事件把子代理正文/思维链/巨型工具参数（每 2KB 进度心跳）实时转发到独立会话视图——多分钟子代理不再「卡思考无反馈」
+- **10 角色专属图标/配色/动效**：`--role-<id>-rgb` 注册表统一驱动设置行徽标、对话视图头像、拉起菜单、时间线着色；工作中状态环绕动效
+- 后台（wait=false）子代理完成状态修复（全历史定位翻转，状态条转圈不停根因）；「不限制」并发档 panic 修复（tokio 信号量上限映射）；Skill npx 导入分源读取 + 项目设置面板陈旧 store 修复
+
+### ⚡ Agent 稳定性与可见性
+
+- **流稳定**：停止按钮永远生效（两阶段 stop：取消令牌贯通 500ms 分片命令等待 + 2s 宽限升级终止）；命令执行带可取消语义
+- **崩溃轮次可见性**：回合增量持久化（轮次开始/结束/工具结果三锚点），异常中断的回合重启后经「从断点继续」按钮恢复（压缩种子续跑）
+- **流式闪烁根修**：消息身份稳定化（`produce` 原地变异替代路径 setter 重建，入场动画不再逐 token 重放）；思维链步骤时间线自动滚动修复（ResizeObserver 改观察增长的内容包裹层）；嵌入模型行开关不再整行重载（store + reconcile）
+- 推理强度真参数化（OpenAI `reasoning_effort` / Anthropic thinking 预算，不再只是提示词）+ GPT 式滑杆（每档一色 + 过渡动画）
+
+### 🎨 UI 统一
+
+- **弹层亚克力 token 体系**：`--popup-bg`/`--popup-blur`/`--dialog-bg` 三 token 贯通 15+ 组件面；浅色模式弹窗透底亚克力化（backdrop-filter 直接模糊主页面真实背景，任意高度弹窗一致）
+- **控件规范入档并门禁化**：下拉唯一组件（禁原生 select）、勾选框唯一组件（禁原生 checkbox）、图形语义必须 SVG 图标（禁字符）、同行控件等高、语义色按钮一律 outline——`check-gates` 新增 3 道门禁强制执行
+- 子智能体设置行角色徽标；嵌入模型页重设计（embedding 专属图标 + 图标徽标分区头 + 通知独立行自动消隐）；任务清单与授权/问答并入状态条（DSH 风格）；ask_user 逐题引导；用量热力图滚动条闪现修复；子智能体模型下拉按供应商分组；流式气泡切页返回不再消失
+
+### 🛠 Engineering
+
+- 工作流（workflow）可视化功能移除（create_tasks 任务清单保留并并入状态条）；主代理工具集/并行写入隔离/完全放手三个配置项端到端移除（策略固化为自动）
+- 视觉回归脚本体系：headless Edge 双主题截图（12 个 `gen-*.mjs` 生成器）+ CDP 逐帧复现工具链；模型列表三源缓存（目录/ModelScope/HuggingFace 可选下载源）
+- i18n 1030 键 zh/en 全对齐；FE 78 单测 / cargo 387 测试 / clippy -D warnings / prettier / eslint / tsc / vite build 全绿基线
+
+<p align="right"><a href="#top"><img src="/public/icons/top.svg"></img></a></p>
+
+[v0.8.1]: https://github.com/Atom112/AIO/releases/tag/v0.8.1
+
 ## [Unreleased]
+
+### 🔁 AIO 自迭代成果（审查通过后合入）+ 环境问题修复（修复轮）
+
+- **TTFT（首 token 延迟）读出（自迭代 #1）**：输入栏统计区新增每轮 TTFT——后端在发请求前起表、任意流 delta（文本/思考/工具调用）首达停表，覆盖网关排队与 prefill 的真实等待；首个 token 落地即经无内容 `llm-chunk` ping 上报（长回合不必等结束）；`messages.ttft_ms` v19 迁移落库，重启后读出存活；输入栏显示 `820ms` / `1.2s`
+- **Windows 控制台闪窗根修（自迭代 #2）**：安装版是 GUI 子系统进程——无 `CREATE_NO_WINDOW` 的控制台子进程每次都会让 Windows 新建控制台窗口（管道化并不能阻止），用户在每次 agent 命令与 MCP 连接时看到终端一闪。新增 `HiddenConsole::hidden_console()`（`std`/`tokio` Command 双实现、跨平台 no-op），贯通全部 25+ 生产 spawn（shell 原生与 AppContainer 路径、git、skills npx、MCP/LSP/引擎/harness、注册表自启动写入等）；裸 `CreateProcessW` AppContainer 路径补 `CREATE_NO_WINDOW` + `STARTF_USESHOWWINDOW/SW_HIDE`；四处重复字面量收敛为共享常量；**新增 console-window 门禁**（裸 `CREATE_NO_WINDOW` 字面量与无前导 spawn 即报错）防回归；`is_git_repo` 10s TTL 记忆化（此前每回合 + 每个子代理拉起都 spawn 一次 `git rev-parse`），git init/clone/rm .git 后主动失效
+- **环境问题修复轮（依据 `docs/zh/development/harness-environment-report.md`，逐项根因复核）**：
+  - **node_modules junction 不可遍历（报告第 1 项）**：根因修正——非「本机 junction 整体失效」，而是受限进程（AIO 自迭代沙箱 = AppContainer）的 reparse 穿越被 Windows 按设计拒绝（「不受信任的装入点」）；普通会话同一 junction 全部可读（实测反证）。修复：`.npmrc` 增加 `install-links=true`，`file:` 依赖装成项目内**真实目录副本**——宿主与沙箱会话同样可读，`tsc` / `cargo check` / `verify` 在任何环境直接可用，原 `TAURI_CONFIG` 覆盖绕过不再需要
+  - **`appcontainer_git_history_protection` 时红时绿（第 2 项）**：根因实测定位——`D:\Git\cmd` DACL 属主 Administrators、中完整性用户无 WRITE_DAC（`icacls /grant` 直接 Access denied 复现），测试的尽力 R+X 授权 `SetNamedSecurityInfoW` 失败（错误 5）却被 `let _ =` 吞掉 → 授权从未写入 → 静默拒绝必然触发；发版前后时绿时红是安全层周期性改写该目录授权状态。修复：**捕获授权结果**——授权失败时打印根因诊断（`[SKIP ...]` 前缀 + 提权复检指引）后跳过沙箱内 git 断言，其余断言（.git 拒写/可读/根可写）保持硬断言；干净机器或提权一次后完整断言自动恢复（与 `ac_python_forwarding` 的机器级过滤忽略先例同构）
+  - **控制台 GBK 乱码（第 3 项）**：解码器本就 UTF-8 优先，乱码源是**混合编码流**（GBK 系统消息 + UTF-8 工具输出合流，整体 UTF-8 校验失败后按 GBK 解码）。修复在源头统一：PowerShell 路径前导 `[Console]::OutputEncoding=UTF-8`（本会话输出与转发的原生子进程输出均为 UTF-8）、cmd 路径（原生 + AppContainer 两处）`chcp 65001 >nul &` 前导；GBK 解码回退保留（直接 spawn 的 git 等仍按 ACP 输出）
+  - **分支拓扑复位（第 4 项）**：三项迭代提交从 `master` 挪回 `dev-` 分支经 PR 合入 `dev`，`master` 复位到 v0.8.2 发布点——`master` 重新只含已发布内容
 
 ### 🪜 第十二轮：模式阶梯改名 + 完全权限内置化 + 工作流功能移除（PR #131）
 

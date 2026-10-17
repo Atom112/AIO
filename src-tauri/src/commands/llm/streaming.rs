@@ -41,6 +41,9 @@ pub(crate) struct RoundResult {
     pub(crate) output_tokens: u32,
     /// Cache-hit input tokens (OpenAI cached_tokens / DeepSeek prompt_cache_hit_tokens)
     pub(crate) cached_input_tokens: u32,
+    /// Time-to-first-token for this round (ms): request start -> first content/reasoning/
+    /// tool-call delta. None when the round produced no token at all (early error/cancel).
+    pub(crate) ttft_ms: Option<u32>,
     /// Metadata of images generated/saved this round
     pub(crate) images: Vec<GeneratedImage>,
     /// Raw payload shape resent to the API / persisted (unrewritten-token array or string), used for the next round
@@ -137,6 +140,13 @@ pub(crate) async fn stream_one_round(
     }
     let body = serde_json::Value::Object(body_map);
 
+    // TTFT measurement: the clock starts right before the HTTP request is issued, so
+    // the number covers gateway/queue time as well as model prefill — that is what the
+    // user actually waits for. The first token of ANY kind (text delta, reasoning /
+    // thinking delta, or tool-call delta) stops the clock.
+    let request_started = std::time::Instant::now();
+    let mut ttft_ms: Option<u32> = None;
+
     // Unified request entry with pre-stream retries: adapts to the Anthropic native protocol;
     // transport errors and 429/5xx retry with backoff only before any content is emitted; mid-stream errors are not retried.
     // Token-guarded: the pre-header wait is bounded by the client's 600s total timeout, but the
@@ -159,6 +169,39 @@ pub(crate) async fn stream_one_round(
     // tested across every chunk boundary incl. multi-byte UTF-8 splits).
     const SSE_LINE_BUFFER_LIMIT: usize = 4 * 1024 * 1024;
     let mut line_buffer = sse_lines::SseLineBuffer::new(SSE_LINE_BUFFER_LIMIT);
+    // Marks the first token of the round: called on any content/reasoning/tool-call
+    // delta, idempotent so later deltas never overwrite the recorded TTFT. On the very
+    // first hit it also pushes a content-free llm-chunk ping carrying ttft_ms, so the
+    // input-bar latency readout appears the moment the first token lands instead of
+    // waiting for the end of a long round.
+    let mark_first_token = |ttft: &mut Option<u32>| {
+        if ttft.is_some() {
+            return;
+        }
+        let ms = request_started
+            .elapsed()
+            .as_millis()
+            .min(u128::from(u32::MAX)) as u32;
+        *ttft = Some(ms);
+        if !suppress_events {
+            let _ = window.emit(
+                ev::LLM_CHUNK,
+                StreamPayload {
+                    assistant_id: assistant_id.to_string(),
+                    topic_id: topic_id.to_string(),
+                    content: String::new(),
+                    done: false,
+                    error: None,
+                    input_tokens: None,
+                    output_tokens: None,
+                    context_tokens: None,
+                    cached_input_tokens: None,
+                    ttft_ms: Some(ms),
+                    images: None,
+                },
+            );
+        }
+    };
     // tool_call accumulator: index -> (id, name, arguments); BTreeMap keeps flush ordered by index
     let mut tc_accum: BTreeMap<usize, (String, String, String)> = BTreeMap::new();
 
@@ -213,6 +256,11 @@ pub(crate) async fn stream_one_round(
                 if let Ok(val) = serde_json::from_str::<serde_json::Value>(json_str) {
                     if is_anthropic_request {
                         // Anthropic Messages stream events: content/thinking/tool calls/usage accumulated uniformly
+                        // TTFT probe: any growth of the accumulators after handling this event
+                        // means a real token arrived (text / thinking / tool-call delta).
+                        let tokens_before = content_buf.len()
+                            + reasoning_buf.len()
+                            + tc_accum.values().map(|(_, _, a)| a.len()).sum::<usize>();
                         if let Some(err) =
                             crate::plugins::provider::anthropic::handle_anthropic_stream_event(
                                 &val,
@@ -240,12 +288,20 @@ pub(crate) async fn stream_one_round(
                             saw_done = true;
                             break;
                         }
+                        // TTFT: this event grew one of the accumulators => the first token arrived
+                        let tokens_after = content_buf.len()
+                            + reasoning_buf.len()
+                            + tc_accum.values().map(|(_, _, a)| a.len()).sum::<usize>();
+                        if tokens_after > tokens_before {
+                            mark_first_token(&mut ttft_ms);
+                        }
                     } else if let Some(err) = crate::plugins::llm::chat_error_message(&val) {
                         // PROV-2（OpenAI 兼容分支，与 btw.rs 对齐——此前双实现漂移）：
                         // 200 + {"error":{...}} 的流式错误事件不再被静默吞掉
                         return Err(ierr!("LLM 流错误: {}", "LLM stream error: {}", err));
                     } else if let Some(content) = val["choices"][0]["delta"]["content"].as_str() {
                         content_buf.push_str(content);
+                        mark_first_token(&mut ttft_ms);
                         if let Some(ctx) = &subagent_ctx {
                             let _ = window.emit(
                                 ev::SUBAGENT_CHUNK,
@@ -271,6 +327,7 @@ pub(crate) async fn stream_one_round(
                                     output_tokens: None,
                                     context_tokens: None,
                                     cached_input_tokens: None,
+                                    ttft_ms: None,
                                     images: None,
                                 },
                             );
@@ -283,6 +340,7 @@ pub(crate) async fn stream_one_round(
                                 Some("text") => {
                                     if let Some(s) = part.get("text").and_then(|v| v.as_str()) {
                                         content_buf.push_str(s);
+                                        mark_first_token(&mut ttft_ms);
                                         if let Some(ctx) = &subagent_ctx {
                                             let _ = window.emit(
                                                 ev::SUBAGENT_CHUNK,
@@ -310,6 +368,7 @@ pub(crate) async fn stream_one_round(
                                                     output_tokens: None,
                                                     context_tokens: None,
                                                     cached_input_tokens: None,
+                                                    ttft_ms: None,
                                                     images: None,
                                                 },
                                             );
@@ -341,6 +400,7 @@ pub(crate) async fn stream_one_round(
                     {
                         if !reasoning.is_empty() {
                             reasoning_buf.push_str(reasoning);
+                            mark_first_token(&mut ttft_ms);
                             if let Some(ctx) = &subagent_ctx {
                                 let _ = window.emit(
                                     ev::SUBAGENT_REASONING,
@@ -366,6 +426,7 @@ pub(crate) async fn stream_one_round(
                                         output_tokens: None,
                                         context_tokens: None,
                                         cached_input_tokens: None,
+                                        ttft_ms: None,
                                         images: None,
                                     },
                                 );
@@ -375,6 +436,7 @@ pub(crate) async fn stream_one_round(
                     // Accumulate tool_calls
                     if let Some(tcs) = val["choices"][0]["delta"]["tool_calls"].as_array() {
                         for tc in tcs {
+                            mark_first_token(&mut ttft_ms);
                             let index =
                                 tc.get("index").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
                             let entry = tc_accum
@@ -552,6 +614,7 @@ pub(crate) async fn stream_one_round(
         input_tokens,
         output_tokens,
         cached_input_tokens,
+        ttft_ms,
         images,
         api_content,
         finish_reason,

@@ -227,6 +227,7 @@ mod tests {
             input_tokens: 0,
             output_tokens: 0,
             cached_input_tokens: 0,
+            ttft_ms: None,
             images: Vec::new(),
             api_content,
             finish_reason: None,

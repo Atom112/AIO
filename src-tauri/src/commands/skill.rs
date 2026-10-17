@@ -907,11 +907,13 @@ pub async fn discover_npx_skills(app: AppHandle) -> Result<Vec<NpxSkillInfo>, St
 
     // Use tokio spawn_blocking to avoid blocking an async worker thread
     let skills_cli_result = tokio::task::spawn_blocking(move || {
+        use crate::utils::exec_resolve::HiddenConsole;
         let npx_cmd = resolve_command("npx");
         let child = match std::process::Command::new(&npx_cmd)
             .args(["--yes", "skills", "list", "-g", "--json"])
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
+            .hidden_console()
             .spawn()
         {
             Ok(c) => c,
@@ -1048,9 +1050,13 @@ pub async fn discover_npx_skills(app: AppHandle) -> Result<Vec<NpxSkillInfo>, St
         }
 
         // 3) Scan global npm packages with skill-like traits (fallback)
-        let npm_output = std::process::Command::new(resolve_command("npm"))
-            .args(["list", "-g", "--depth=0", "--json"])
-            .output();
+        let npm_output = {
+            use crate::utils::exec_resolve::HiddenConsole;
+            std::process::Command::new(resolve_command("npm"))
+                .args(["list", "-g", "--depth=0", "--json"])
+                .hidden_console()
+                .output()
+        };
         if let Ok(output) = npm_output {
             if output.status.success() {
                 if let Ok(json) = serde_json::from_str::<serde_json::Value>(
@@ -1158,12 +1164,16 @@ fn run_npx_sandboxed(
     max_output_bytes: usize,
 ) -> Result<Option<String>, String> {
     let npx_cmd = resolve_command("npx");
-    let child = std::process::Command::new(&npx_cmd)
-        .args(args)
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-        .map_err(|e| ierr!("启动 {} 失败: {}", "Failed to start {}: {}", npx_cmd, e))?;
+    let child = {
+        use crate::utils::exec_resolve::HiddenConsole;
+        std::process::Command::new(&npx_cmd)
+            .args(args)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .hidden_console()
+            .spawn()
+            .map_err(|e| ierr!("启动 {} 失败: {}", "Failed to start {}: {}", npx_cmd, e))?
+    };
 
     // Windows: assign each run to its own Job Object. Dropping the guard (including the
     // early `?` return on timeout) triggers KILL_ON_JOB_CLOSE and tears down the whole
@@ -1525,10 +1535,12 @@ pub async fn refresh_npx_skill(
 fn try_read_package_meta(package_name: &str) -> (String, String, String) {
     use std::io::Read;
 
+    use crate::utils::exec_resolve::HiddenConsole;
     let mut child = match std::process::Command::new(resolve_command("npm"))
         .args(["list", "-g", "--depth=0", "--json"])
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null())
+        .hidden_console()
         .spawn()
     {
         Ok(c) => c,

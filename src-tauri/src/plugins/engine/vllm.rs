@@ -16,8 +16,7 @@ use tokio::time::{sleep, Duration};
 use tracing::debug;
 
 use crate::core::events as ev;
-#[cfg(target_os = "windows")]
-use std::os::windows::process::CommandExt;
+use crate::utils::exec_resolve::HiddenConsole;
 
 pub struct VllmPlugin;
 
@@ -25,10 +24,8 @@ fn create_progress_cmd(program: &str, args: &[&str]) -> std::process::Command {
     let mut cmd = std::process::Command::new(program);
     cmd.args(args)
         .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped());
-
-    #[cfg(target_os = "windows")]
-    cmd.creation_flags(0x08000000);
+        .stderr(std::process::Stdio::piped())
+        .hidden_console();
 
     cmd
 }

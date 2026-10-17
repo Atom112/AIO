@@ -7,6 +7,7 @@ use crate::core::state::LocalEngineState;
 use crate::ierr;
 use crate::plugins::engine::installer::EngineInstaller;
 use crate::plugins::engine::LocalEnginePlugin;
+use crate::utils::exec_resolve::HiddenConsole;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Emitter};
@@ -15,8 +16,6 @@ use tokio::time::{sleep, Duration};
 use tracing::debug;
 
 use crate::core::events as ev;
-#[cfg(target_os = "windows")]
-use std::os::windows::process::CommandExt;
 
 pub struct LlamaCppPlugin;
 
@@ -190,9 +189,8 @@ impl LlamaCppPlugin {
         let mut cmd = std::process::Command::new(&exe);
         cmd.arg("--version")
             .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped());
-        #[cfg(target_os = "windows")]
-        cmd.creation_flags(0x08000000);
+            .stderr(std::process::Stdio::piped())
+            .hidden_console();
         match cmd.output() {
             Ok(output) => {
                 let raw = String::from_utf8_lossy(if output.stderr.is_empty() {
@@ -271,10 +269,9 @@ impl LocalEnginePlugin for LlamaCppPlugin {
             // ENG-07: stdout piped 从无人读——64KB 管道填满后引擎静默挂死（长会话
             // 必现）；stderr 有人读保持 piped，stdout 改 null
             .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::piped());
+            .stderr(std::process::Stdio::piped())
+            .hidden_console();
 
-        #[cfg(target_os = "windows")]
-        cmd.creation_flags(0x08000000);
         cmd
     }
 

@@ -23,6 +23,7 @@ use crate::plugins::harness::model::{
     HarnessEvent, HarnessFileChange, HarnessPlanEntry, HarnessUsage,
 };
 use crate::plugins::harness::registry::SpawnOptionSpec;
+use crate::utils::exec_resolve::HiddenConsole;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -140,10 +141,7 @@ impl CodexDriver {
                                 crate::utils::exec_resolve::resolve_or_keep("taskkill"),
                             );
                             cmd.args(["/PID", &pid.to_string(), "/T", "/F"]);
-                            #[allow(unused_imports)]
-                            use std::os::windows::process::CommandExt;
-                            const CREATE_NO_WINDOW: u32 = 0x08000000;
-                            cmd.creation_flags(CREATE_NO_WINDOW);
+                            cmd.hidden_console();
                             if let Ok(mut killed) = cmd.spawn() {
                                 let _ = killed.wait().await;
                             } else {

@@ -183,9 +183,9 @@ cargo +1.97.1 test --quiet   # 除第 2 项外应全绿
 
 **AIO 自迭代的全部绕过手段（TAURI_CONFIG 覆盖、间接验证 tsc）自此不再需要**——在它自己的沙箱里直接跑全量门禁即可。
 
-### 遗留（需人工）
+### 遗留 → 已完成（次日提权执行）
 
-`fltmc filters` 仍需管理员会话执行一次，确认本机过滤驱动清单（与 EDR 行为对照）。这与第 2 项共用一个提权动作。
+`fltmc filters` 已跑（输出存 `%TEMP%\aio-elev-diag.txt`）：标准系统筛选器（bindflt/UCPD/WdFilter/storqosflt/wcifs/CldFlt/bfs/FileCrypt/luafv/UnionFS/npsvctrig/Wof/FileInfo）之外，存在两支**非系统过滤驱动 `ACE-CORE202706` / `ACE-CORE102706`**（高度 366667.x、9 实例）——本机第三方安全软件的文件系统过滤层，即「EDR 对安装目录的额外过滤」系列实录（python 的 D:\Anaconda、git 的 D:\Git）的载体。AppLocker（AppIDSvc Stopped、无策略、无事件）、Defender ASR（无规则、无 1121/1122 阻断事件）、WDAC/CodeIntegrity（无 git 相关阻断事件）全部排除。
 
 ## 第 2 项根因确认：DACL 拒写 → 授权从未生效 → 静默拒绝
 
@@ -195,15 +195,15 @@ cargo +1.97.1 test --quiet   # 除第 2 项外应全绿
 2. 直接复现：`icacls D:\Git\cmd /grant ...` → **Access is denied**（该目录 DACL 全部为继承项、属主 Administrators；中完整性用户无 WRITE_DAC）
 3. 测试内 `grant_dir_access(...)` 返回 `SetNamedSecurityInfoW` 失败（Win32 错误 5），但结果被 `let _ =` 吞掉——授权从未写入，断言随后的静默拒绝必然触发
 
-即：**非产品回归，非 fltmc 级过滤驱动拦截 exec——是授权写不进 DACL 这一步确定性失败**。0.8.2 发版前后该测试时绿时红，是因为 `D:\Git` 的授权状态被安全层周期性改写（0.8.1 开发期已有同款实录，测试注释里的 EDR 提示即此）。
+即：**非产品回归——当时定位到的是「授权写不进 DACL」这一步的确定性失败**。0.8.2 发版前后该测试时绿时红，是因为 `D:\Git` 的授权状态被安全层周期性改写（0.8.1 开发期已有同款实录，测试注释里的 EDR 提示即此）。（次日提权复检后结论再精化一层：把 DACL 修好后 in-AC exec 仍被静默拦截——见下方「遗留」段的过滤驱动证据，「授权写不进」只是第一层，「exec 被过滤」是第二层，两层叠加构成完整根因。）
 
-### 修复（已落地）
+### 修复（已落地，次日按实测精化为「先运行、后判定」）
 
-测试改为**捕获授权结果**：授权失败 → 打印诊断后跳过沙箱内 git 断言（带 `[SKIP ...]` 前缀与根因、复检指引），其余断言（.git 拒写、.git 可读、项目根可写）全部保持硬断言。授权成功（干净机器 / 提权后）时完整断言照旧。与 `ac_python_forwarding` 的机器级过滤 `#[ignore]` 先例同构，但本例是运行时判定而非静态忽略。
+测试改为**先运行、后判定**：授权结果不再被 `let _ =` 吞掉；沙箱内 git leg 先跑，仅当「尽力授权失败 **且** 运行为静默拒绝（无输出无报错——本测试要抓的签名）」双条件成立时才跳过（`[SKIP]` 前缀 + 根因与复检指引）；运行成功（预置 AAP ACE 等环境路径）或 git 响亮失败均照走原硬断言，其余断言（.git 拒写、.git 可读、项目根可写）全程硬断言。与 `ac_python_forwarding` 的机器级过滤 `#[ignore]` 先例同构，但本例是运行时判定而非静态忽略。
 
-### 遗留（需人工）
+### 遗留 → 已执行 + 结论修正（次日提权）
 
-提权会话执行一次 `icacls D:\Git\cmd /grant "*S-1-15-2-1:(RX)"`（ALL APPLICATION PACKAGES 读+执行，一行永久解决本机沙箱内 git 可用性），随后 rerun `cargo test appcontainer`——硬断言将自动重新生效。
+已提权执行 `icacls D:\Git /grant "*S-1-15-2-1:(OI)(CI)(RX)" "*S-1-15-2-2:(OI)(CI)(RX)" /T /C`——ACE 全树生效（root 显式、cmd/mingw64 继承，icacls 回读确认）。**但 in-AC `git log` 仍为静默拒绝**（exit 1、零输出）——结合上面 fltmc 的证据：安装目录的 in-AC 执行被 ACE-CORE 过滤驱动拦截（读放行、exec 否决，与 DACL 无关），这就是完整根因的第二层。**机器侧唯一根治路径**：在该安全软件的管理控制台放行（用户侧动作，仓库无能为力）；仓库侧的正确行为即上述确定性跳过。AAP 授予保留——在没有这类过滤的机器上，它就是生产沙箱内 git 可用的那一行修复。
 
 ## 第 3 项修复（已落地）：UTF-8 控制台前导
 

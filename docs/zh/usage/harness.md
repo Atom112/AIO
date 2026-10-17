@@ -118,6 +118,7 @@ Oh My Pi / OpenCode / goose / DSH 使用各自的登录或配置体系（无 API
 
 每个工具页还提供：
 
+- **MCP 服务器**：管理工具自己配置文件里的 MCP 服务器——claude `~/.claude.json` 的 `mcpServers`（新增槽位）、gemini/qwen `settings.json` 的 `mcpServers`、opencode 的 `mcp`（local/remote）、codex `config.toml` 的 `[mcp_servers.<名>]`、goose 的 `extensions`——列表（stdio 命令或 HTTP URL 一行预览）/添加/编辑（stdio：命令 + 参数（每行一个）+ 环境变量；HTTP：URL）/删除，写入按各工具的原生形状（名称白名单防路径逃逸；codex 走 toml_edit 保注释；goose 全文件重写有备份提示）。omp/dsh 的 MCP 走原始编辑器；
 - **指令与技能**：工具自己发现的全局指令文件（claude `~/.claude/CLAUDE.md`、codex `~/.codex/AGENTS.md`、gemini `~/.gemini/GEMINI.md`、qwen `~/.qwen/QWEN.md`、opencode `~/.config/opencode/AGENTS.md`、omp `~/.omp/AGENTS.md`——走高级配置的带备份编辑器）与 **markdown 目录管理**：claude skills（`~/.claude/skills/<名称>/SKILL.md`，目录型）、goose 提示词模板（`prompts/*.md`）、opencode 自定义命令（`commands/*.md`）——列表/新建/编辑/删除，名称限字母数字连字符（防路径逃逸），原子写入 + 首次覆盖前备份。工作区级指令文件仍在 Harness 页工作区行内编辑。
 
 ## 数据与隐私

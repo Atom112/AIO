@@ -10,7 +10,7 @@ use crate::plugins::harness::store::{
 };
 use crate::plugins::harness::toolconf::{
     ConfigFileContent as ToolConfigContent, ConfigSlotInfo as ToolConfigSlotInfo, DshProfileInfo,
-    MarkdownEntryInfo, StructuredKeyInfo,
+    MarkdownEntryInfo, McpEntryInfo, StructuredKeyInfo,
 };
 use tauri::{AppHandle, Manager, State};
 
@@ -610,4 +610,27 @@ pub async fn harness_tool_md_delete(
     name: String,
 ) -> Result<(), String> {
     crate::plugins::harness::toolconf::markdown_delete(&tool_id, &kind, &name)
+}
+/// List the tool's MCP servers from its own config file (claude
+/// ~/.claude.json mcpServers, gemini settings, opencode mcp, codex
+/// config.toml [mcp_servers], goose extensions).
+#[tauri::command]
+pub async fn harness_tool_mcp_list(tool_id: String) -> Result<Vec<McpEntryInfo>, String> {
+    crate::plugins::harness::toolconf::mcp_list(&tool_id)
+}
+
+/// Add/update one MCP server entry in the tool's native config shape.
+#[tauri::command]
+pub async fn harness_tool_mcp_set(
+    tool_id: String,
+    name: String,
+    entry: McpEntryInfo,
+) -> Result<(), String> {
+    crate::plugins::harness::toolconf::mcp_set(&tool_id, &name, &entry)
+}
+
+/// Delete one MCP server entry.
+#[tauri::command]
+pub async fn harness_tool_mcp_delete(tool_id: String, name: String) -> Result<(), String> {
+    crate::plugins::harness::toolconf::mcp_delete(&tool_id, &name)
 }

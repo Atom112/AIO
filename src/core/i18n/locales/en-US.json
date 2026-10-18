@@ -1198,5 +1198,17 @@
   "harness.customAgent.commandPlaceholder": "Command (e.g. my-agent)",
   "harness.customAgent.argsPlaceholder": "Arguments (one per line, e.g. acp)",
   "harness.customAgent.save": "Save",
-  "harness.customAgent.required": "Name and command must not be empty"
+  "harness.customAgent.required": "Name and command must not be empty",
+  "feedback.title": "Feedback & Support",
+  "feedback.envHint": "Environment snapshot (click to copy, paste into the Issue Form's \"Environment snapshot\" field)",
+  "feedback.copySnapshot": "Click to copy environment info",
+  "feedback.loading": "Collecting environment info...",
+  "feedback.reportBug": "Report a bug",
+  "feedback.alphaFeedback": "Alpha feedback",
+  "feedback.featureRequest": "Feature request",
+  "feedback.discussions": "Join discussions",
+  "feedback.exportDiagnostics": "Export diagnostics",
+  "feedback.exporting": "Exporting...",
+  "feedback.exportedTo": "Exported to Downloads/",
+  "feedback.privacyNote": "The diagnostic zip contains only version/system/tool-detection states — no API keys or conversation content. Attach it to a GitHub issue yourself."
 }

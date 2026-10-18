@@ -133,6 +133,19 @@ For the full index, see the [AIO Documentation Center](docs/en/README.md). For v
 
 ---
 
+## 📝 Feedback & Community
+
+| Channel                                                            | What it's for                                                                                                                |
+| ------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------- |
+| [🐛 Issue Forms](https://github.com/Atom112/AIO/issues/new/choose) | Structured bug reports / feature requests / alpha experience feedback                                                        |
+| [💬 Discussions](https://github.com/Atom112/AIO/discussions)       | Questions, ideas, and open discussion (Q&A + feature ideas)                                                                  |
+| [In-app feedback](docs/en/usage/app-settings-and-shortcuts.md)     | Settings → App → "Feedback & Support" — copy your environment snapshot, open a pre-filled issue, or export a diagnostics zip |
+| 中文用户交流群                                                     | QQ 群 / Telegram 入口见 [Discussions 公告](https://github.com/Atom112/AIO/discussions) 置顶帖                                |
+
+> The in-app "environment snapshot" and diagnostic zip contain **no API keys and no conversation content** — you paste/upload them to GitHub yourself; nothing leaves your machine automatically.
+
+---
+
 ## Contributing
 
 Found a bug or have an idea? Visit [GitHub Issues](https://github.com/Atom112/AIO/issues):

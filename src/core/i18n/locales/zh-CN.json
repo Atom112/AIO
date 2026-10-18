@@ -1198,5 +1198,17 @@
   "harness.customAgent.commandPlaceholder": "命令（如 my-agent）",
   "harness.customAgent.argsPlaceholder": "参数（每行一个，如 acp）",
   "harness.customAgent.save": "保存",
-  "harness.customAgent.required": "名称与命令不能为空"
+  "harness.customAgent.required": "名称与命令不能为空",
+  "feedback.title": "反馈与支持",
+  "feedback.envHint": "环境信息（点击复制，粘贴到 Issue 表单的「环境快照」字段）",
+  "feedback.copySnapshot": "点击复制环境信息",
+  "feedback.loading": "正在收集环境信息...",
+  "feedback.reportBug": "报告问题",
+  "feedback.alphaFeedback": "Alpha 体验反馈",
+  "feedback.featureRequest": "功能建议",
+  "feedback.discussions": "参与讨论",
+  "feedback.exportDiagnostics": "导出诊断包",
+  "feedback.exporting": "导出中...",
+  "feedback.exportedTo": "已导出到 Downloads/",
+  "feedback.privacyNote": "诊断包仅含版本/系统/工具检测状态，不含 API Key 或会话内容——请自行拖拽上传到 GitHub Issue。"
 }

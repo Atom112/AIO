@@ -92,6 +92,14 @@ cargo 424 Rust 测试（6 ignored 真机项）、78 前端测试、gates 全过�
 
 ## [Unreleased]
 
+### 📝 Alpha 反馈基础设施（零服务器方案）
+
+- **GitHub Issue Forms**（3 个 YAML 结构化模板）：`bug_report`（环境快照 + 问题区域下拉 + 复现步骤 + 检查清单）、`alpha_feedback`（一句话总评 + 满意度打分 + 阻碍/惊喜）、`feature_request`（问题→方案→替代方案三段式）+ `config.yml` contact-links（Discussions + 中文群引导）——结构化收集、可检索、直接进开发工作流
+- **应用内「反馈与支持」节**（设置 → 应用页底部）：环境快照单行展示 + 点击复制（含版本/OS/架构/locale/RAM/8 工具检测状态/引擎版本——**不含 API Key 与会话内容**）；四个 GitHub 渠道按钮（报告问题→bug 表单 + 剪贴板自动复制快照、Alpha 反馈、功能建议、参与讨论）；诊断包导出（zip：快照 JSON + 配置槽状态 + 隐私说明——写到 Downloads 目录用户自行上传，不经任何网络上传）
+- **更新弹窗反馈入口**：更新完成对话框底部新增「Alpha 体验反馈」链接——用户刚升级完是反馈意愿峰值时刻
+- **README 反馈社区段**：渠道表（Issue Forms / Discussions / 应用内反馈 / 中文群）+ 隐私承诺说明
+- 后端新命令 ×2：`get_feedback_snapshot`（sysinfo OS/RAM + registry 探针 + 引擎扫描）与 `export_diagnostic_package`（zip deflate 写 Downloads）；i18n +12 键（1212 双语对齐）
+
 ### 🧹 审查遗留清偿轮：SEC-7/8/9 + 性能与前端遗留 9 项全部落地（详见 docs/reviews/code-review-2026-10.md 末节）
 
 - **[SEC-7 · MEDIUM] SSRF 防线公共化 + 钉扎接入**：`web_fetch` 的解析防线提取为 `utils/ssrf.rs`（策略分级：`PublicOnly` 保持全公网语义；`AllowLocalNoMetadata` 允许用户配置端点的本地/局域网（引擎与本地 MCP 合法）、云元数据段恒拒（169.254/16 + CGNAT + fe80::/10 + AWS fd00:ec2::254））。三面接线——MCP HTTP transport 启动时解析+`ClientBuilder::resolve` 钉扎（rebinding 无从翻转）；供应商连接测试 `build_http_client_pinned`（保留代理支持）；聊天热路径（post_chat_completion 全部 9 个调用点）经带 10 分钟 TTL 的 per-origin 钉扎客户端缓存——策略违规硬失败经既有错误通道透出，DNS 故障降级未钉扎保持连通语义

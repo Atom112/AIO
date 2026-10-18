@@ -1,0 +1,33 @@
+name: ✨ 功能建议
+description: 提出一个新功能或对现有行为的改进建议
+title: '[feat] '
+labels: ['enhancement']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        建议先在 Discussions 的「功能想法」分类发帖讨论——收集到足够 👍 后再开 Issue，优先级更高。
+  - type: textarea
+    id: problem
+    attributes:
+      label: 你遇到的问题 / 场景
+      description: 你想解决什么？先说问题，再说方案
+      placeholder: 当我…的时候，不得不…
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: 期望的解决方案
+      description: 你希望 AIO 怎么做？（如果你只是想报告问题，方案可以留空）
+      placeholder: 我希望…
+    validations:
+      required: false
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: 替代方案 / 现有做法
+      description: 你现在怎么绕过这个问题？其他工具（如 Claude Code CLI / Codex CLI 等）是怎么做的？
+      placeholder: 可选
+    validations:
+      required: false

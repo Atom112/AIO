@@ -1,5 +1,6 @@
 import { Component, createSignal, onCleanup, onMount, Show } from 'solid-js';
 import { installAppUpdate, restartApp } from '../../core/api/update';
+import { openSafeUrl } from '../../core/utils/safeUrl';
 import { listen } from '@tauri-apps/api/event';
 import { EVENTS } from '../../core/api/events';
 import { Transition } from 'solid-transition-group';
@@ -211,6 +212,19 @@ const UpdateNotification: Component = () => {
                   {t('update.later')}
                 </button>
               </Show>
+            </div>
+            {/* Alpha feedback link — the post-update moment is peak feedback willingness */}
+            <div class="text-center mt-2">
+              <span
+                class="text-[11px] text-white/25 cursor-pointer hover:text-white/50 transition-colors"
+                onClick={() =>
+                  void openSafeUrl(
+                    'https://github.com/Atom112/AIO/issues/new?template=alpha_feedback.yml',
+                  )
+                }
+              >
+                {t('feedback.alphaFeedback')}
+              </span>
             </div>
           </div>
         </div>

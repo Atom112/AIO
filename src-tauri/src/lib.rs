@@ -175,6 +175,8 @@ pub fn run() {
             commands::update::install_app_update,
             commands::update::restart_app,
             commands::update::get_updater_endpoint,
+            commands::feedback::get_feedback_snapshot,
+            commands::feedback::export_diagnostic_package,
             commands::catalog::load_models_catalog,
             commands::catalog::load_models_catalog_full,
             commands::catalog::update_models_catalog,

@@ -89,6 +89,7 @@ impl LlamaCppPlugin {
     }
 
     /// Search a directory (non-recursively) for the given file name, returning the first matching full path.
+    #[cfg(target_os = "windows")]
     fn search_dir_for(dir: &std::path::Path, exe_name: &str) -> Option<std::path::PathBuf> {
         let entries = std::fs::read_dir(dir).ok()?;
         for entry in entries.filter_map(|e| e.ok()) {

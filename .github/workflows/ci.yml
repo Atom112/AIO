@@ -1,9 +1,11 @@
 name: CI
 
 # PR / dev push 验证管线 —— 与 `npm run verify` 同一套基线。
-# 前端与 Rust 分两个 job 并行；均跑在 ubuntu-22.04 上（Windows 专属测试
-# 如 AppContainer 沙箱项在 Linux 上不编译不执行，避免 runner 环境噪音）。
-# models-data 检出与 release.yml 同一 pin，保证 CI 与发布构建素材一致。
+# 前端在 ubuntu 上单跑；Rust 跑三平台矩阵——cfg 分支各自在本平台编译，
+# 跨平台 dead-code/lint 才各自暴露（Linux runner 抓不到 Windows 分支的
+# 问题，反之亦然）；Windows 的 AppContainer 沙箱测试自 0.8.3 起「先运行
+# 后判定」，受限环境自动 [SKIP]。models-data 检出与 release.yml 同一
+# pin，保证 CI 与发布构建素材一致。
 
 on:
   pull_request:
@@ -55,8 +57,12 @@ jobs:
         run: npm run check:frontend
 
   rust:
-    name: Rust checks
-    runs-on: ubuntu-22.04
+    name: Rust checks (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-latest, macos-15]
+    runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout AIO
         uses: actions/checkout@v4
@@ -76,6 +82,7 @@ jobs:
           components: rustfmt, clippy
 
       - name: Install Linux dependencies
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -92,6 +99,11 @@ jobs:
 
       - name: Install frontend dependencies
         run: npm ci
+
+      - name: Cache cargo build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
 
       - name: Rust checks (fmt / clippy / tests)
         run: npm run check:rust

@@ -894,6 +894,9 @@ pub(crate) fn forwarded_interpreter_of(command: &str) -> Option<String> {
 /// command performs (post cmd-unwrap), not the raw first token — `cmd /c del x`
 /// and `del x` share the key "del"; `cmd /c python -V` and `python -V` share
 /// "python"; unrelated cmd invocations do not collide.
+// Windows-only at runtime (only the AppContainer expansion consumes it); the
+// unit test keeps running on the Windows CI runner.
+#[cfg(windows)]
 pub(crate) fn expansion_key(command: &str) -> String {
     operation_token_span(command)
         .map(|(_, tok)| tok.to_ascii_lowercase())
@@ -988,13 +991,17 @@ fn drain_pipe_capped<R: std::io::Read>(mut pipe: R, cap: usize) -> (Vec<u8>, usi
 
 /// Windows shell selection (config `shellWindows`): `"powershell"` (default —
 /// pwsh 7 with a `powershell.exe` 5.1 fallback) or `"cmd"`.
+/// `Cmd` stays constructible on all platforms (the non-Windows execute path
+/// passes it as a placeholder argument); `PowerShell` is Windows-only.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WindowsShell {
     Cmd,
+    #[cfg(windows)]
     PowerShell,
 }
 
 /// Parses the config value; unknown values fall back to PowerShell (the default).
+#[cfg(windows)]
 pub fn parse_windows_shell(value: &str) -> WindowsShell {
     match value {
         "cmd" => WindowsShell::Cmd,
@@ -1003,6 +1010,7 @@ pub fn parse_windows_shell(value: &str) -> WindowsShell {
 }
 
 /// Resolved shell executable.
+#[cfg(windows)]
 struct ShellInvocation {
     program: String,
     is_powershell: bool,
@@ -1011,6 +1019,7 @@ struct ShellInvocation {
 /// Resolves the Windows shell binary: cmd via ComSpec/PATH; PowerShell prefers
 /// pwsh 7 (App Execution Alias on PATH) and falls back to `powershell.exe` 5.1
 /// (System32, always present).
+#[cfg(windows)]
 fn resolve_windows_shell(kind: WindowsShell) -> Result<ShellInvocation, String> {
     match kind {
         WindowsShell::Cmd => {
@@ -1052,6 +1061,7 @@ fn resolve_windows_shell(kind: WindowsShell) -> Result<ShellInvocation, String> 
 /// call operator (pwsh treats a bare quoted string as output, not invocation), and
 /// the trailing lines propagate the exit code — `pwsh -Command` otherwise always
 /// exits 0, which would break error detection / the breaker / sandbox expansion.
+#[cfg(windows)]
 fn pwsh_script(command: &str) -> String {
     let body = if command.trim_start().starts_with('"') {
         format!("& {command}")
@@ -1079,12 +1089,14 @@ fn pwsh_script(command: &str) -> String {
 /// The `&` sequence leaves errorlevel handling to the user command; `>nul`
 /// keeps "Active code page: 65001" out of the output. Added AFTER the
 /// metacharacter/danger scans run, so it never trips them.
+#[cfg(windows)]
 fn cmd_utf8_prelude(command: &str) -> String {
     format!("chcp 65001 >nul & {command}")
 }
 
 /// `-EncodedCommand` payload: UTF-16LE base64 — immune to every quote-escaping
 /// problem on both the argv and raw-command-line invocation paths.
+#[cfg(windows)]
 fn pwsh_encoded(script: &str) -> String {
     use base64::Engine as _;
     let utf16: Vec<u16> = script.encode_utf16().collect();
@@ -1148,6 +1160,11 @@ pub fn execute_command(
     let command = command.as_str();
     #[cfg(not(windows))]
     let _ = &interpreter_dir; // only the AppContainer branch consumes the dir
+                              // Windows-only sandbox inputs have no role on Unix (ac_dirs = AppContainer
+                              // dir list, shell = Windows shell selection): consume them so the
+                              // cross-platform signature stays unchanged, mirroring interpreter_dir above.
+    #[cfg(not(windows))]
+    let _ = (ac_dirs, shell);
 
     // dangerous shell metacharacter check
     if let Some(reason) = check_shell_metacharacters(command) {
@@ -1210,7 +1227,7 @@ pub fn execute_command(
         (None::<Vec<String>>, inv.program, inv.is_powershell)
     };
     #[cfg(not(windows))]
-    let (sandbox_argv, shell_program, shell_is_powershell) = {
+    let (sandbox_argv, shell_program, _shell_is_powershell) = {
         let Some(shell) = crate::utils::exec_resolve::resolve_executable("sh") else {
             return tool_err("无法定位系统 shell（PATH 中未找到 sh），拒绝执行");
         };
@@ -1388,7 +1405,9 @@ pub fn execute_command(
         // - non-Windows: kill the process group (process_group(0) put the subtree in its own group).
         //   The group kill must precede the lock: the waiter thread holds it until the child exits,
         //   so acquiring it before killing would deadlock on Unix.
-        drop(job_guard.take());
+        // `let _ =` instead of drop(): the non-Windows JobGuard has no Drop impl
+        // (drop_non_drop lint); the value still releases at the statement end.
+        let _ = job_guard.take();
         #[cfg(unix)]
         {
             if child_pid > 0 {
@@ -2004,6 +2023,7 @@ mod tests {
     /// expansion_key: operation-level dedup for the sandbox-expansion window —
     /// `cmd /c X` and bare `X` share one key; unrelated operations do not.
     #[test]
+    #[cfg(windows)]
     fn expansion_key_is_operation_level() {
         assert_eq!(expansion_key("cmd /c python --version"), "python");
         assert_eq!(expansion_key("python -V"), "python");

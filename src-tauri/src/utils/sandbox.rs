@@ -573,9 +573,7 @@ pub fn sandbox_command_prefix(
         // SEC-06: resolve the sandbox wrapper PATH-only — spawning a bare `bwrap`
         // would consult untrusted lookup rules; the resolved absolute path is the
         // binary that the existence check validated.
-        let Some(bwrap) = crate::utils::exec_resolve::resolve_executable("bwrap") else {
-            return None;
-        };
+        let bwrap = crate::utils::exec_resolve::resolve_executable("bwrap")?;
         let mut argv = build_bwrap_argv(
             project_root,
             shell,

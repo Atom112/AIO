@@ -23,6 +23,7 @@ use crate::plugins::harness::model::{
     HarnessEvent, HarnessFileChange, HarnessPlanEntry, HarnessUsage,
 };
 use crate::plugins::harness::registry::SpawnOptionSpec;
+#[cfg(windows)]
 use crate::utils::exec_resolve::HiddenConsole;
 use serde_json::Value;
 use std::collections::HashMap;

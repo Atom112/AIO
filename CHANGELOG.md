@@ -2,6 +2,43 @@
 
 # Changelog
 
+## [v0.8.3]
+
+<sup>Released on **2026-10-17**</sup>
+
+本版本主题：**体验打磨**——TTFT（首 token 延迟）可见、安装版控制台闪窗根修、中文控制台输出编码统一；由 AIO 在自身 Harness 工作台内自迭代驱动（经独立审查后合入）。
+
+### ⚡ TTFT（首 token 延迟）读出
+
+- 输入栏统计区新增每轮 TTFT（`820ms` / `1.2s`）
+- 后端在发请求前起表、任意流 delta（文本/思考/工具调用）首达停表——覆盖网关排队与 prefill 的真实等待，全供应商/本地引擎口径统一
+- 首个 token 落地即经无内容 `llm-chunk` ping 上报（长回合不必等结束）；`messages.ttft_ms` v19 迁移落库，重启后读出存活
+
+### 🪟 Windows 控制台闪窗根修
+
+- 安装版是 GUI 子系统进程——无 `CREATE_NO_WINDOW` 的控制台子进程每次都会让 Windows 新建控制台窗口（管道化并不能阻止），此前用户在每次 agent 命令与 MCP 连接时看到终端一闪
+- 新增 `HiddenConsole::hidden_console()`（`std`/`tokio` Command 双实现、跨平台 no-op），贯通全部 25+ 生产 spawn（shell 原生与 AppContainer 路径、git、skills npx、MCP/LSP/引擎/harness、注册表自启动写入等）；裸 `CreateProcessW` AppContainer 路径补 `CREATE_NO_WINDOW` + `STARTF_USESHOWWINDOW/SW_HIDE`
+- **新增 console-window 门禁**（裸 `CREATE_NO_WINDOW` 字面量与无前导 spawn 即报错）防回归
+- `is_git_repo` 10s TTL 记忆化（此前每回合 + 每个子代理拉起都 spawn 一次 `git rev-parse`），git init/clone/rm .git 后主动失效
+
+### 🔤 控制台输出编码统一（zh-CN 乱码根修）
+
+- 解码器本就 UTF-8 优先，乱码源是**混合编码流**（GBK 系统消息 + UTF-8 工具输出合流，整体 UTF-8 校验失败后按 GBK 解码成「鏋舵瀯闂ㄧ鍚」）
+- 修复在源头统一：PowerShell 路径前导 `[Console]::OutputEncoding=UTF-8`（本会话输出与转发的原生子进程输出均为 UTF-8）、cmd 路径（原生 + AppContainer 两处）`chcp 65001 >nul &` 前导；GBK 解码回退保留（直接 spawn 的 git 等仍按 ACP 输出）
+
+### 🧰 开发环境修复（自迭代沙箱）
+
+- **node_modules junction 不可遍历**：根因修正——受限进程（AppContainer 沙箱）的 reparse 穿越被 Windows 按设计拒绝（「不受信任的装入点」），非本机文件系统损坏（普通会话同一 junction 全部可读）。修复：`.npmrc` 增加 `install-links=true`，`file:` 依赖装成项目内**真实目录副本**——宿主与沙箱会话同样可读，`tsc` / `cargo check` / `verify` 在任何环境直接可用
+- **`appcontainer_git_history_protection` 时红时绿**：根因两层——① git 安装目录 DACL 拒写（尽力授权失败曾被测试吞掉）；② 提权授予 ALL APPLICATION PACKAGES 读+执行后 in-AC exec 仍被本机第三方安全软件过滤驱动（`ACE-CORE202706/102706`，fltmc 实录）静默拦截（读放行、exec 否决；AppLocker/ASR/WDAC 已排除）。测试精化为**先运行后判定**：仅当「授权失败 + 静默拒绝」双条件成立才 `[SKIP]` 跳过并给出根因诊断，其余断言保持硬断言。**agent 的 git 工具（status/diff/log/add/commit/分支/worktree）全部走宿主进程直 spawn，不受该过滤影响，本机实测全绿**
+
+### 验证基线
+
+cargo 429 Rust 测试（+5：TTFT/记忆化/门禁负控/编码 E2E）、78 前端测试、gates 全过（含新 console-window 门禁）、i18n 双语 1199 键；验证链在宿主会话与 AIO 自身沙箱内均直接可用
+
+<p align="right"><a href="#top"><img src="/public/icons/top.svg"></img></a></p>
+
+[v0.8.3]: https://github.com/Atom112/AIO/releases/tag/v0.8.3
+
 ## [v0.8.2]
 
 <sup>Released on **2026-10-17**</sup>
@@ -138,16 +175,6 @@ cargo 424 Rust 测试（6 ignored 真机项）、78 前端测试、gates 全过�
 - **Harness 消息列表分段渲染**（照搬 ChatInterface 已验证模式）：尾窗 60 条 + 顶部哨兵 IntersectionObserver 自动扩页 + 滚动锚定 + 「载入更早的消息」按钮（复用 chat.loadEarlier 文案与 formatNumber）；话题切换即重置窗口；流式追加与尾窗天然兼容（窗口随流滑动，上滚时哨兵自动补页）
 - **历史回合步骤尾窗**（AgentProcessBlock）：非活跃回合默认只挂最近 100 张步骤卡，列表顶部「展开更早的 N 条步骤」一键展开全部（用户主动触发时才承担全量挂载成本）；流式活跃块不受影响（逐条入队渲染机制原样保留）；队列恢复/remount 语义零改动（窗口只作用于 For 数据源）
 - i18n +1 键（`agent.step.showEarlier`，双语）；verify 全绿：429 Rust / 78 FE / gates / i18n 1200
-
-### 🔁 AIO 自迭代成果（审查通过后合入）+ 环境问题修复（修复轮）
-
-- **TTFT（首 token 延迟）读出（自迭代 #1）**：输入栏统计区新增每轮 TTFT——后端在发请求前起表、任意流 delta（文本/思考/工具调用）首达停表，覆盖网关排队与 prefill 的真实等待；首个 token 落地即经无内容 `llm-chunk` ping 上报（长回合不必等结束）；`messages.ttft_ms` v19 迁移落库，重启后读出存活；输入栏显示 `820ms` / `1.2s`
-- **Windows 控制台闪窗根修（自迭代 #2）**：安装版是 GUI 子系统进程——无 `CREATE_NO_WINDOW` 的控制台子进程每次都会让 Windows 新建控制台窗口（管道化并不能阻止），用户在每次 agent 命令与 MCP 连接时看到终端一闪。新增 `HiddenConsole::hidden_console()`（`std`/`tokio` Command 双实现、跨平台 no-op），贯通全部 25+ 生产 spawn（shell 原生与 AppContainer 路径、git、skills npx、MCP/LSP/引擎/harness、注册表自启动写入等）；裸 `CreateProcessW` AppContainer 路径补 `CREATE_NO_WINDOW` + `STARTF_USESHOWWINDOW/SW_HIDE`；四处重复字面量收敛为共享常量；**新增 console-window 门禁**（裸 `CREATE_NO_WINDOW` 字面量与无前导 spawn 即报错）防回归；`is_git_repo` 10s TTL 记忆化（此前每回合 + 每个子代理拉起都 spawn 一次 `git rev-parse`），git init/clone/rm .git 后主动失效
-- **环境问题修复轮（依据 `docs/zh/development/harness-environment-report.md`，逐项根因复核）**：
-  - **node_modules junction 不可遍历（报告第 1 项，根因经二次修正）**：初判「AppContainer reparse 按设计拒绝」被用户实测证伪——自迭代会话在**「本机全权」（danger 无沙箱）档**运行（`AgentMode::Danger → ac_dirs=None`；报告 whoami 佐证 Medium 完整性、无 AppContainer SID = 普通令牌）穿越仍失败；同一 junction 在另一进程树（修复轮 harness 会话）始终可读——两个普通令牌一成一败，判别维度只剩**进程树**：本机第三方安全软件过滤驱动（`ACE-CORE202706/102706`）对 AIO 进程树的差异化拦截（与沙箱内 exec 静默否决同源）。danger 档解除的是 AIO 自己的沙箱，解除不了机器的安全软件层。修复：`.npmrc` 增加 `install-links=true`，`file:` 依赖装成项目内**真实目录副本**——reparse 穿越不复存在，与过滤机制无关地对两边环境同时生效；`tsc` / `cargo check` / `verify` 直接可用，原 `TAURI_CONFIG` 覆盖绕过不再需要（根治需在安全软件控制台放行 AIO——用户侧动作）
-  - **`appcontainer_git_history_protection` 时红时绿（第 2 项）**：根因实测定位（两层）——① `D:\Git\cmd` DACL 属主 Administrators、中完整性用户无 WRITE_DAC（`icacls /grant` 直接 Access denied 复现），测试的尽力 R+X 授权 `SetNamedSecurityInfoW` 失败（错误 5）却被 `let _ =` 吞掉；② 提权全树授予 ALL APPLICATION PACKAGES 读+执行（AppContainer 令牌原生携带该 SID——无过滤的机器上即生产沙箱内 git 可用）后 in-AC exec 仍被静默拦截——fltmc 实录两支非系统过滤驱动 `ACE-CORE202706/102706`（本机第三方安全软件；AppLocker/ASR/WDAC 已排除），根治需在该安全软件白名单放行（用户侧动作）。修复：**先运行后判定**——授权结果不再被吞：仅当「授权失败 + 运行为静默拒绝（零输出零报错）」双条件成立时打印 `[SKIP]` 根因诊断后跳过（环境性限制，非产品回归）；运行成功（预置 ACE）或 git 响亮失败均照走硬断言，其余断言（.git 拒写/可读/根可写）保持硬断言（与 `ac_python_forwarding` 的机器级过滤忽略先例同构，但为运行时判定）
-  - **控制台 GBK 乱码（第 3 项）**：解码器本就 UTF-8 优先，乱码源是**混合编码流**（GBK 系统消息 + UTF-8 工具输出合流，整体 UTF-8 校验失败后按 GBK 解码）。修复在源头统一：PowerShell 路径前导 `[Console]::OutputEncoding=UTF-8`（本会话输出与转发的原生子进程输出均为 UTF-8）、cmd 路径（原生 + AppContainer 两处）`chcp 65001 >nul &` 前导；GBK 解码回退保留（直接 spawn 的 git 等仍按 ACP 输出）
-  - **分支拓扑复位（第 4 项）**：三项迭代提交从 `master` 挪回 `dev-` 分支经 PR 合入 `dev`，`master` 复位到 v0.8.2 发布点——`master` 重新只含已发布内容
 
 ### 🪜 第十二轮：模式阶梯改名 + 完全权限内置化 + 工作流功能移除（PR #131）
 

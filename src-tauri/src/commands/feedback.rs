@@ -84,7 +84,12 @@ fn detect_os_version() -> String {
 }
 
 fn detect_ram_gb() -> f64 {
-    let sys = sysinfo::System::new_all();
+    // Memory-only refresh: `System::new_all()` enumerates every process, disk,
+    // component and network interface (seconds on Windows) just to read one
+    // number. Total RAM only needs the memory refresh kind.
+    let sys = sysinfo::System::new_with_specifics(
+        sysinfo::RefreshKind::nothing().with_memory(sysinfo::MemoryRefreshKind::everything()),
+    );
     let bytes = sys.total_memory();
     // Round to 1 decimal (16.0, 32.0, 8.0…)
     let gb = bytes as f64 / (1024.0 * 1024.0 * 1024.0);
@@ -97,7 +102,15 @@ fn detect_ram_gb() -> f64 {
 ///
 /// The caller passes the current frontend locale (the store's `locale` signal) —
 /// the backend does not track UI language state itself.
-#[tauri::command]
+///
+/// `(async)` — M-11 (HOR-4 范式): the detection chain is real I/O (sysinfo pass,
+/// PATH walks per harness tool, engine installation probes incl. an HTTP reach
+/// check and possibly a `ollama --version` spawn). As a sync command it ran on
+/// the main thread and froze the whole window for the duration — entering
+/// Settings → App felt janky with scroll/click blocked. The blocking pool keeps
+/// the UI responsive; the frontend already renders a loading placeholder until
+/// the snapshot lands.
+#[tauri::command(async)]
 pub fn get_feedback_snapshot(app: AppHandle, locale: String) -> Result<FeedbackSnapshot, String> {
     let app_version = app.package_info().version.to_string();
 

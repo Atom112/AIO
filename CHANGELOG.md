@@ -190,6 +190,12 @@ cargo 424 Rust 测试（6 ignored 真机项）、78 前端测试、gates 全过�
 
 ## [Unreleased]
 
+### ⚡ 设置页卡顿根修：反馈快照命令下主线程（M-11 漏网项）
+
+- **症状**：从其他页面进入「设置 → 应用」明显卡顿——页面挂载即冻结滚动/点击数百毫秒到数秒
+- **根因**：`get_feedback_snapshot` 是同步 Tauri 命令（同步命令在主线程执行），而它内部做的是真实 I/O——`sysinfo::System::new_all()`（Windows 上枚举全部进程/磁盘/组件/网络，秒级）+ 每工具 PATH 探测 + 引擎安装探测（ollama 含 localhost HTTP 可达性检查与 `ollama --version` 子进程）——整条链把窗口事件循环堵死。审查轮的「5 个同步命令改 async」（M-11/HOR-4）漏了这一条：同文件的 `export_diagnostic_package` 是 async 的，`harness_detect_tools` 也已下沉阻塞池，唯独它不是
+- **修复**：命令改 `#[tauri::command(async)]`（阻塞池执行，前端本就有 loading 占位，快照就绪后填充）；`detect_ram_gb` 的 `new_all()` 收敛为仅内存刷新（`RefreshKind::nothing().with_memory(...)`——读一个数字不再枚举全系统）
+
 ### 🪜 第十二轮：模式阶梯改名 + 完全权限内置化 + 工作流功能移除（PR #131）
 
 - **Agent 模式阶梯改名（wire 值稳定，assistants DB 无迁移）**：`off`=「只读」、`normal`=「工作区内修改」、`auto`=「完全权限」、`plan`=「计划」不变——

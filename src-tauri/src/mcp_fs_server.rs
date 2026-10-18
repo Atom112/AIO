@@ -15,7 +15,7 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::io::{BufRead, Write};
+use std::io::Write;
 
 // ====== JSON-RPC models ======
 
@@ -131,27 +131,61 @@ fn tools_list() -> Value {
 
 // ====== Entry Point ======
 
+/// MCP-5/MCP-9 对齐：stdin 请求行硬上限。可信的 AIO 客户端远不会触达；
+/// 恶意/失控客户端触达时以显式错误断开，而不是任由其撑爆内存。
+const MAX_REQUEST_LINE_BYTES: usize = 16 * 1024 * 1024;
+
+/// 日志安全的截断（字符边界安全）：`&line[..200]` 在多字节字符中间会 panic
+/// （JSON 含中文路径时 200 字节处极可能落在 UTF-8 序列内）。
+fn log_head(s: &str) -> String {
+    let end = s.len().min(200);
+    let end = s.floor_char_boundary(end);
+    s[..end].to_string()
+}
+
 pub fn run(allowed_dir: String) {
     eprintln!("[aio-fs-server] starting, dir: {}", allowed_dir);
     let server = FileServer { dir: allowed_dir };
-    let stdin = std::io::stdin();
     let mut stdout = std::io::stdout();
     let mut _initialized = false;
 
-    for line in stdin.lock().lines() {
-        let line = match line {
-            Ok(l) => l,
-            Err(e) => {
-                eprintln!("[aio-fs-server] stdin read error: {e}");
-                break;
+    loop {
+        // MCP-5/MCP-9 对齐：stdin 请求行硬上限。可信的 AIO 客户端远不会触达；
+        // 恶意/失控客户端触达时以显式错误断开，而不是任由其撑爆内存。
+        // BufReader 包裹 Take 后 read_line 仍可用（Take 只透传 Read）。
+        let raw = {
+            use std::io::{BufRead, Read};
+            let stdin = std::io::stdin();
+            let mut reader =
+                std::io::BufReader::new(stdin.lock().take(MAX_REQUEST_LINE_BYTES as u64));
+            let mut buf = String::new();
+            match reader.read_line(&mut buf) {
+                Ok(0) | Err(_) => break, // EOF or read error: exit the loop
+                Ok(_) => buf,
             }
         };
-        let line = line.trim().to_string();
+        // read_line did not end with a newline -> the take cap cut the line (the
+        // trusted AIO client always terminates with \n), or stdin closed mid-line:
+        // never process a silently-truncated request line.
+        if !raw.ends_with('\n') {
+            eprintln!(
+                "[aio-fs-server] request line exceeds {}B cap (or truncated); dropping connection",
+                MAX_REQUEST_LINE_BYTES
+            );
+            let _ = writeln!(
+                stdout,
+                "{}",
+                respond_error(None, -32603, "request too large")
+            );
+            let _ = stdout.flush();
+            break;
+        }
+        let line = raw.trim().to_string();
         if line.is_empty() {
             continue;
         }
 
-        eprintln!("[aio-fs-server] <- {}", &line[..line.len().min(200)]);
+        eprintln!("[aio-fs-server] <- {}", log_head(&line));
 
         let req: JsonRpcRequest = match serde_json::from_str(&line) {
             Ok(r) => r,
@@ -192,13 +226,15 @@ pub fn run(allowed_dir: String) {
                 let params = req.params.as_ref().unwrap_or(&empty_params);
                 let tool_name = params["name"].as_str().unwrap_or("");
                 let arguments = params.get("arguments").unwrap_or(&empty_args);
-                eprintln!("[aio-fs-server] call tool: {tool_name} args: {arguments}");
+                // SEC（LOW-3）：只记工具名 + path。完整 arguments（write_file 的
+                // content、replace_in_file 的 old/new 串）不得流入 stderr——父进程
+                // 会把它作为 `mcp-server-stderr` 事件转发进 UI 与日志流，等于把
+                // 被写文件（可能是 .env/密钥文件）的前 2KB 广播出去。
+                let path_summary = arguments.get("path").and_then(|p| p.as_str()).unwrap_or("");
+                eprintln!("[aio-fs-server] call tool: {tool_name} path: {path_summary}");
                 let result = server.handle(tool_name, arguments);
                 let resp = respond(req.id.clone(), result);
-                eprintln!(
-                    "[aio-fs-server] -> tool result: {}",
-                    &resp[..resp.len().min(200)]
-                );
+                eprintln!("[aio-fs-server] -> tool result: {}", log_head(&resp));
                 let _ = writeln!(stdout, "{resp}");
                 let _ = stdout.flush();
             }

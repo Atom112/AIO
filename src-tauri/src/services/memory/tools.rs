@@ -544,12 +544,15 @@ async fn run_search(
     };
     let ids: Vec<String> = results.iter().map(|f| f.id.clone()).collect();
     store.bump_access(&ids);
-    // Quality probes: query count and hit count (7-day rolling window)
-    store.rolling_bump(crate::services::memory::store::STAT_QUERIES, 1);
-    store.rolling_bump(
-        crate::services::memory::store::STAT_HITS,
-        results.len() as i64,
-    );
+    // Quality probes: query count and hit count (7-day rolling window).
+    // M-8: one transactional batch instead of one autocommit per bump.
+    store.rolling_bump_many(&[
+        (crate::services::memory::store::STAT_QUERIES, 1),
+        (
+            crate::services::memory::store::STAT_HITS,
+            results.len() as i64,
+        ),
+    ]);
     Ok(results)
 }
 

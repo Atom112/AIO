@@ -50,6 +50,14 @@ pub struct McpTrustStore {
     path: PathBuf,
 }
 
+/// 进程级互斥：串行化信任文件的读-改-写（与 secure_store 的 FALLBACK_MUTEX 同款
+/// 范式）。无锁时两个并发 `set_trusted` 的后写覆盖先写 → 信任记录静默丢失
+/// （失败回退为"未信任"，fail-safe 但用户操作白做）。
+fn trust_write_mutex() -> &'static std::sync::Mutex<()> {
+    static M: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+    M.get_or_init(|| std::sync::Mutex::new(()))
+}
+
 impl McpTrustStore {
     /// 打开（或延迟创建）应用数据目录下的信任存储。
     pub fn open(app_data: &Path) -> Self {
@@ -81,13 +89,16 @@ impl McpTrustStore {
             .is_some_and(|fp| fp == fingerprint)
     }
 
-    /// 记录信任（原子写）。
+    /// 记录信任（原子写；读-改-写全程持进程锁，防并发丢更新）。
     pub fn set_trusted(
         &self,
         project_path: &str,
         server_id: &str,
         fingerprint: &str,
     ) -> Result<(), String> {
+        let _guard = trust_write_mutex()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let key = normalize_project_key(project_path);
         let mut file = self.load();
         file.version = 1;
@@ -98,8 +109,12 @@ impl McpTrustStore {
         self.save(&file)
     }
 
-    /// 移除某项目下某 server 的信任条目（server 被删除时调用；不存在的条目为 no-op）。
+    /// 移除某项目下某 server 的信任条目（server 被删除时调用；不存在的条目为 no-op；
+    /// 读-改-写全程持进程锁，防并发丢更新）。
     pub fn remove_trust(&self, project_path: &str, server_id: &str) -> Result<(), String> {
+        let _guard = trust_write_mutex()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let key = normalize_project_key(project_path);
         let mut file = self.load();
         let Some(servers) = file.entries.get_mut(&key) else {

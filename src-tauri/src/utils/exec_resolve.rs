@@ -168,11 +168,23 @@ pub fn resolve_or_keep(name: &str) -> String {
 /// `sandbox::win_appcontainer`.
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+/// SEC-8: start the child frozen (Windows `dwCreationFlags`); the caller joins it
+/// to its Job Object and then resumes it via `sandbox::resume_suspended_child`.
+#[cfg(windows)]
+const CREATE_SUSPENDED: u32 = 0x0000_0004;
 
 /// Applies [`CREATE_NO_WINDOW`] so a spawned child never opens a console window.
 /// No-op off Windows, so call sites carry no `cfg` attribute of their own.
 pub trait HiddenConsole {
     fn hidden_console(&mut self) -> &mut Self;
+
+    /// SEC-8 variant for the native command path: hidden console AND suspended
+    /// start — spawn frozen, join the per-execution Job Object, then resume
+    /// (`sandbox::resume_suspended_child`). Without the suspension there is a
+    /// CreateProcess→AssignProcessToJobObject window in which a fast-spawning
+    /// child can put grandchildren outside the job (they would survive the
+    /// timeout teardown). No-op off Windows; call sites still carry no cfg.
+    fn hidden_console_suspended(&mut self) -> &mut Self;
 }
 
 impl HiddenConsole for std::process::Command {
@@ -184,6 +196,15 @@ impl HiddenConsole for std::process::Command {
         }
         self
     }
+
+    fn hidden_console_suspended(&mut self) -> &mut Self {
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            self.creation_flags(CREATE_NO_WINDOW | CREATE_SUSPENDED);
+        }
+        self
+    }
 }
 
 impl HiddenConsole for tokio::process::Command {
@@ -192,6 +213,15 @@ impl HiddenConsole for tokio::process::Command {
         {
             // tokio's Command exposes creation_flags as an inherent Windows method.
             self.creation_flags(CREATE_NO_WINDOW);
+        }
+        self
+    }
+
+    fn hidden_console_suspended(&mut self) -> &mut Self {
+        #[cfg(windows)]
+        {
+            // tokio's Command exposes creation_flags as an inherent Windows method.
+            self.creation_flags(CREATE_NO_WINDOW | CREATE_SUSPENDED);
         }
         self
     }

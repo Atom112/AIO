@@ -47,6 +47,13 @@ export function usePanelResize(deps: PanelResizeDeps) {
   /** Live width preview (%) while dragging: rendered during tracking, cleared on release to fall back to the remembered leftPanelWidth */
   const [leftDragWidth, setLeftDragWidth] = createSignal<number | null>(null);
   /**
+   * (审查修复 H-3) 右栏拖拽预览信号：与左栏同款"预览信号 + 释放提交"模式。
+   * 此前拖拽期间每个 mousemove 直接写 rightPanelWidth，其 createEffect 持久化
+   * 随之每像素一次 localStorage.setItem（60-240 次/秒同步 I/O）。
+   * 拖拽中只更新本预览；释放时一次性提交进持久信号。
+   */
+  const [rightDragWidth, setRightDragWidth] = createSignal<number | null>(null);
+  /**
    * "Curtain" layout width of the expanded content (px, = content-box width of the 15% minimal panel).
    * While narrowing, content neither reflows nor fades — it is progressively clipped by the panel's left
    * edge (curtain reveal), avoiding an empty transition frame with both content sets invisible.
@@ -70,26 +77,6 @@ export function usePanelResize(deps: PanelResizeDeps) {
       if (leftSnapRaf !== undefined) cancelAnimationFrame(leftSnapRaf);
     });
   });
-
-  /** Plain percentage drag (right panel): reports the cursor position as % of the layout width. */
-  const attachResizeDrag = (e: MouseEvent, onDragMove: (pct: number) => void) => {
-    e.preventDefault();
-    setIsResizing(true);
-
-    const totalW = chatPageRef()?.offsetWidth ?? window.innerWidth;
-    const handleMove = (moveEvent: MouseEvent) => {
-      onDragMove((moveEvent.clientX / totalW) * 100);
-    };
-
-    const stopResize = () => {
-      setIsResizing(false);
-      document.removeEventListener('mousemove', handleMove);
-      document.removeEventListener('mouseup', stopResize);
-    };
-
-    document.addEventListener('mousemove', handleMove);
-    document.addEventListener('mouseup', stopResize);
-  };
 
   /**
    * Drag-resize the left panel: strict 1:1 cursor tracking in both expand and collapse directions; snap only on release.
@@ -174,17 +161,38 @@ export function usePanelResize(deps: PanelResizeDeps) {
     document.addEventListener('mouseup', stopResize);
   };
 
-  /** Drag-resize the right panel (original behavior: only available when expanded). */
+  /** Drag-resize the right panel (preview while dragging; commit to the persisted width on release). */
   const startResizeRight = (e: MouseEvent) => {
-    attachResizeDrag(e, (pct) => {
-      setRightPanelWidth(Math.min(Math.max(100 - pct, 15), 30));
-    });
+    e.preventDefault();
+    setIsResizing(true);
+    const totalW = chatPageRef()?.offsetWidth ?? window.innerWidth;
+
+    const handleMove = (moveEvent: MouseEvent) => {
+      const pct = (moveEvent.clientX / totalW) * 100;
+      // Preview only: no persistence writes until mouseup (H-3).
+      setRightDragWidth(Math.min(Math.max(100 - pct, 15), 30));
+    };
+
+    const stopResize = () => {
+      document.removeEventListener('mousemove', handleMove);
+      document.removeEventListener('mouseup', stopResize);
+      setIsResizing(false);
+      const dragged = rightDragWidth();
+      if (dragged !== null) {
+        setRightPanelWidth(dragged);
+        setRightDragWidth(null);
+      }
+    };
+
+    document.addEventListener('mousemove', handleMove);
+    document.addEventListener('mouseup', stopResize);
   };
 
   return {
     isResizing,
     leftDragWidth,
     leftRevealMinPx,
+    rightDragWidth,
     startLeftResize,
     startResizeRight,
   };

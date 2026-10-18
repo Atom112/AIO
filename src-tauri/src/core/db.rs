@@ -17,6 +17,17 @@ pub fn init_db(app: &AppHandle) -> Result<Connection, String> {
     conn.execute("PRAGMA foreign_keys = ON;", [])
         .map_err(|e| e.to_string())?;
 
+    // (审查修复 M-1) 与记忆库（services/memory/store 的 WAL 调优）对齐：主聊天库是
+    // agent 回合里最高频的写入点（每轮 usage_log INSERT + 多 MB 检查点快照），默认
+    // DELETE journal 下每条 commit 约 2-3 次 fsync，大快照写入被 journal 放大。
+    // WAL 下写入为 append-only；busy_timeout 与 per-project 记忆库同款（5000ms）。
+    conn.execute_batch(
+        "PRAGMA journal_mode = WAL;
+         PRAGMA busy_timeout = 5000;
+         PRAGMA wal_autocheckpoint = 100;",
+    )
+    .map_err(|e| e.to_string())?;
+
     // Create the base table schema, then run versioned migrations on top.
     create_base_schema(&conn)?;
     run_migrations_and_clean_orphans(&conn)?;

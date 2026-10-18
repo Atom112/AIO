@@ -1547,19 +1547,42 @@ fn try_read_package_meta(package_name: &str) -> (String, String, String) {
         Err(_) => return (String::new(), String::new(), "0.0.0".to_string()),
     };
 
+    // M-10: stdout is taken NOW and drained by the reader thread OUTSIDE the cell
+    // lock, so the timeout path below can always acquire the lock and kill a hung
+    // npm — the historic arrangement (child moved into the reader) leaked both the
+    // npm subprocess and the blocked reader thread on every timed-out probe.
+    let stdout = child.stdout.take();
+    let cell = std::sync::Arc::new(std::sync::Mutex::new(child));
+    let reader_cell = cell.clone();
+
     // Wait with a 10s timeout
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
-        let mut stdout = Vec::new();
-        let _ = child.stdout.as_mut().map(|s| s.read_to_end(&mut stdout));
-        let status = child.wait();
-        let _ = tx.send((status, stdout));
+        let mut out = Vec::new();
+        if let Some(mut s) = stdout {
+            let _ = s.read_to_end(&mut out);
+        }
+        // stdout EOF => the process has exited; wait() here only reaps it, so the
+        // lock is held for a negligible window (the timeout path may still block
+        // on this lock momentarily, but never on the hang itself).
+        let status = {
+            let mut guard = reader_cell.lock().unwrap_or_else(|e| e.into_inner());
+            guard.wait()
+        };
+        let _ = tx.send((status, out));
     });
 
     let (status, stdout): (std::io::Result<std::process::ExitStatus>, Vec<u8>) =
         match rx.recv_timeout(std::time::Duration::from_secs(10)) {
             Ok((s, o)) => (s, o),
-            Err(_) => return (String::new(), String::new(), "0.0.0".to_string()),
+            Err(_) => {
+                // M-10: kill the hung probe — the reader thread unblocks on the
+                // pipe EOF and exits; nothing leaks.
+                let mut guard = cell.lock().unwrap_or_else(|e| e.into_inner());
+                let _ = guard.kill();
+                drop(guard);
+                return (String::new(), String::new(), "0.0.0".to_string());
+            }
         };
 
     if !status.is_ok_and(|s: std::process::ExitStatus| s.success()) {

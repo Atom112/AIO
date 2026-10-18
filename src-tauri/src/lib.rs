@@ -58,6 +58,25 @@ pub fn run() {
             .decorations(false)
             .transparent(transparent)
             .shadow(false)
+            // F1 纵深防御（SEC 审查）：主窗口默认对一切导航放行——模型输出里的
+            // 链接（Markdown.tsx 已做点击拦截）之外的任何未来渲染点一旦漏拦，
+            // 无边框无地址栏的可信窗口即可被整体导航到任意远程页面（应用内钓鱼）。
+            // 此处只放行应用自身来源：release 的 tauri:// 与 http://tauri.localhost、
+            // dev 的 localhost:1420、asset 协议（convertFileSrc 图像）、以及分享预览
+            // 的 about:srcdoc iframe。
+            .on_navigation(|url| {
+                let s = url.as_str();
+                let allowed = s.starts_with("tauri://localhost")
+                    || s.starts_with("http://tauri.localhost")
+                    || s.starts_with("http://localhost:1420")
+                    || s.starts_with("asset://localhost")
+                    || s.starts_with("http://asset.localhost")
+                    || s.starts_with("about:");
+                if !allowed {
+                    tracing::warn!("[navigation] 拒绝外部导航: {s}");
+                }
+                allowed
+            })
             .build()?;
             // Webview base color: transparent on non-Linux (desktop shows through outside the rounded corners); opaque on Linux to avoid compositing overhead
             #[cfg(not(target_os = "linux"))]
@@ -112,6 +131,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::config::load_assistants,
             commands::config::save_assistant,
+            commands::config::upsert_topic_messages,
             commands::config::delete_assistant,
             commands::config::set_locale,
             commands::config::save_app_config,
@@ -155,6 +175,8 @@ pub fn run() {
             commands::update::install_app_update,
             commands::update::restart_app,
             commands::update::get_updater_endpoint,
+            commands::feedback::get_feedback_snapshot,
+            commands::feedback::export_diagnostic_package,
             commands::catalog::load_models_catalog,
             commands::catalog::load_models_catalog_full,
             commands::catalog::update_models_catalog,

@@ -1,0 +1,22 @@
+# cargo-audit 配置（运行目录：src-tauri，即 `cargo audit` 在 src-tauri 下执行）。
+#
+# 当前仅忽略 RUSTSEC-2026-0367 / 0368 / 0369（zip 4.6.1）：
+# 该副本唯一来源是 tauri-plugin-updater 的 Windows 目标依赖（上游要求 zip ^4，
+# 2.14.0 仍未升级；AIO 自身的 zip 已升至 9.0.5，不受影响）。
+#
+# 触发面评估（2026-10，针对 tauri-plugin-updater 2.14.0 源码核实）：
+# 1. updater 在 download() 中先对下载字节做 minisign 签名校验，之后才调用
+#    ZipArchive::extract（updater.rs: verify_signature 先于 install/extract），
+#    即解压的永远是已签名、由 tauri-bundler 生成的更新包；
+# 2. 端点固定为 GitHub Releases（HTTPS），签名私钥不在制品里；
+# 3. 三条告警均为 extract() 的符号链接/Unix 权限逃逸类问题，解压目标是用户级
+#    临时目录；利用需同时攻破发布渠道与 minisign 私钥。
+#
+# 复查条件：tauri-plugin-updater 升级到要求 zip >= 9 的版本后，删除本忽略列表。
+
+[advisories]
+ignore = [
+    "RUSTSEC-2026-0367",
+    "RUSTSEC-2026-0368",
+    "RUSTSEC-2026-0369",
+]

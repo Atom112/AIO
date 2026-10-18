@@ -30,7 +30,7 @@ import Markdown from '../../../shared/components/Markdown';
 import { subagentProfileLabel } from './SubagentConversationView';
 import { getSubagentProfileStyle } from '../../../core/utils/subagentProfileStyle';
 import { stopSubagent } from '../../../core/api/chat';
-import { t } from '../../../core/i18n';
+import { formatNumber, t } from '../../../core/i18n';
 
 interface AgentProcessBlockProps {
   /** Native chain-of-thought text from the model (old mode) */
@@ -68,8 +68,16 @@ function stepTypeLabel(type: AgentStep['type']): string {
   }
 }
 
-// Step IDs that have already played their entrance animation; prevents replaying when the agentSteps array is rebuilt
+// Step IDs that have already played their entrance animation; prevents replaying when the agentSteps array is rebuilt.
+// M3 (leak): bounded — ids accumulate for the whole session (every step ever rendered);
+// past the cap the set clears once (rare one-time animation replay, self-healing), the
+// same degenerate-LRU policy as Markdown.tsx's render cache.
+const MAX_ANIMATED_STEP_IDS = 4096;
 const animatedStepIds = new Set<string>();
+function markStepAnimated(stepId: string): void {
+  if (animatedStepIds.size >= MAX_ANIMATED_STEP_IDS) animatedStepIds.clear();
+  animatedStepIds.add(stepId);
+}
 
 // Render-buffer state (indexed by round startTime).
 // Streaming updates to agentSteps create new message object references; the parent <For> compares by
@@ -84,6 +92,14 @@ interface RoundRenderQueue {
   /** Dequeue timer; non-null means the queue is dequeuing one by one */
   dequeueTimer: number | null;
 }
+// M3 (leak): the queue must survive component remounts (see above), so it cannot be
+// cleared in onCleanup — but an abandoned active round (page switch mid-stream that
+// never re-renders, topic deletion) leaks its entry, timer and subscriber closure
+// forever. Bounded instead: past MAX_QUEUED_ROUNDS the oldest entries are evicted
+// (timers cleared so no dangling setTimeout keeps the closure alive). Real sessions
+// have 1-2 live rounds at a time, so the cap only ever hits leaked rounds.
+const MAX_QUEUED_ROUNDS = 16;
+
 const perRoundQueue = new Map<string, RoundRenderQueue>();
 
 // Dequeue-notification subscribers (indexed by round): the component may remount while the dequeue
@@ -93,6 +109,15 @@ const queueSubscribers = new Map<string, (id: string) => void>();
 function getRoundQueue(roundKey: string): RoundRenderQueue {
   let q = perRoundQueue.get(roundKey);
   if (!q) {
+    // Evict the oldest leaked rounds first (insertion order = first-touch order).
+    while (perRoundQueue.size >= MAX_QUEUED_ROUNDS) {
+      const oldest = perRoundQueue.keys().next().value as string | undefined;
+      if (oldest === undefined || oldest === roundKey) break;
+      const stale = perRoundQueue.get(oldest);
+      if (stale?.dequeueTimer) clearTimeout(stale.dequeueTimer);
+      perRoundQueue.delete(oldest);
+      queueSubscribers.delete(oldest);
+    }
     q = { renderedIds: new Set(), pendingIds: [], dequeueTimer: null };
     perRoundQueue.set(roundKey, q);
   }
@@ -149,7 +174,7 @@ const StepCard: Component<{
   const stepId = untrack(() => props.step.id);
   const isNew = !animatedStepIds.has(stepId);
   if (isNew) {
-    animatedStepIds.add(stepId);
+    markStepAnimated(stepId);
   }
 
   // The entrance-animation class is present from the first frame (animation "backwards" starts at
@@ -604,6 +629,24 @@ const AgentProcessBlock: Component<AgentProcessBlockProps> = (props) => {
 
   const [visibleIds, setVisibleIds] = createSignal<string[]>([...queue.renderedIds]);
 
+  // ---- Historical-round step window (the chat page's paged-rendering pattern,
+  // one level deeper): an inactive giant round can carry hundreds of steps (a
+  // single 5MB round is a real case on the dev machine). The outer collapse
+  // does NOT prevent mounting — max-height:0 still builds every card's DOM —
+  // so switching to a long session mounted all of them at once (the reported
+  // switch wait). Inactive blocks mount only the most recent STEP_WINDOW
+  // steps; the "show earlier" control reveals the rest. Active blocks stream
+  // through the render queue and are unaffected by the window.
+  const STEP_WINDOW = 100;
+  const [showAllSteps, setShowAllSteps] = createSignal(false);
+  const windowedIds = createMemo(() => {
+    const ids = visibleIds();
+    if (props.isActive || showAllSteps() || ids.length <= STEP_WINDOW) return ids;
+    return ids.slice(ids.length - STEP_WINDOW);
+  });
+  const hiddenStepCount = () =>
+    props.isActive || showAllSteps() ? 0 : Math.max(0, visibleIds().length - STEP_WINDOW);
+
   const stepById = (id: string): AgentStep | undefined => timelineSteps().find((s) => s.id === id);
 
   // Dequeue-render subscriber: after a remount only the newest instance receives dequeue notifications; the old DOM was already destroyed by <For>.
@@ -705,7 +748,16 @@ const AgentProcessBlock: Component<AgentProcessBlockProps> = (props) => {
               {/* === New mode: timeline cards === */}
               <Show when={hasSteps()}>
                 <div class="flex flex-col gap-2 px-3">
-                  <For each={visibleIds()}>
+                  <Show when={hiddenStepCount() > 0}>
+                    <button
+                      type="button"
+                      class="flex justify-center w-full cursor-pointer select-none bg-transparent border-none text-xs text-white/40 transition-colors duration-200 hover:text-white/70 py-1"
+                      onClick={() => setShowAllSteps(true)}
+                    >
+                      {t('agent.step.showEarlier', { count: formatNumber(hiddenStepCount()) })}
+                    </button>
+                  </Show>
+                  <For each={windowedIds()}>
                     {(id) => {
                       // Use a memo to fetch the latest step object: status updates (running→complete)
                       // show live, while <For>'s each is a stable id list so the DOM is not rebuilt

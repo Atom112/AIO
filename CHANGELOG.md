@@ -2,6 +2,67 @@
 
 # Changelog
 
+## [v1.0.0-alpha]
+
+<sup>Released on **2026-10-18**</sup>
+
+本版本主题：**v1.0.0 alpha 公测启动**——1.0 正式版前的收敛轮：全量代码审查（2 HIGH 安全修复 + 13 条 RustSec 依赖漏洞清零 + 性能批修复）、Alpha 反馈基础设施（零服务器、GitHub 原生）、长会话切换提速与 UI 文案克制清偿；QQ 中文交流群开群（1130943633），README 与文档对齐现状全面刷新（模式阶梯更名、Harness 工作台、项目记忆、预发布渠道说明）。Alpha 不走自动更新——从 Releases 页面手动下载，`releases/latest` 恒指稳定版。
+
+### 🛡 全量代码审查轮：安全加固 + 性能修复 + 依赖漏洞清偿（PR #211，详见 docs/reviews/code-review-2026-10.md）
+
+- **依赖漏洞**：本地 lockfile 实测 13 条 RustSec 清零——`zip` 4.6.1→9.0.5（0369 为 CVSS 9.1 critical，附件解析只读 docx/pptx 故收敛为最小特性集 deflate，依赖树 -13 个解压器）、`tauri-plugin-updater` 2.10.1→2.14.0（其内部 zip ^4 经 audit.toml 带条件忽略：minisign 签名校验先于 extract，触发面已核实并注明复查条件）、`h2`/`quinn-proto`/`rustls`/`event-listener` 传递依赖升级；`cargo audit` 0 漏洞
+- **安全修复（2 HIGH / 2 MEDIUM / 1 LOW 批量）**：
+  - **[SEC-1] web_fetch SSRF 绕过根修**：`is_public_addr` 的 V6 分支未查 IPv4-mapped 形态——攻击者发布一条 `::ffff:169.254.169.254` 的 AAAA 记录即可穿过全部防线经双栈套接字连进内网/元数据端点。修复：`to_ipv4()` 前置（mapped+compatible 双形态）+ 6to4 `2002::/16` 与 NAT64 `64:ff9b::/96` 内嵌 v4 判定，+14 条正负回归断言（测试当场抓出初版 NAT64 位索引错误）
+  - **[SEC-2] `sandboxUnsandboxedFallback` 默认值四源对齐 false**：字段文档承诺 "Default false" 但 `AppConfig::default()` 与 serde 缺字段均为 true——全新安装等于默认打开完全权限档下唯一的沙箱逃逸通道。修复 + 默认一致性回归测试（已装用户磁盘显式值不受影响）
+  - **[SEC-3] 链接整体导航拦截**：模型输出链接可整体导航无边框可信窗口（应用内钓鱼）。双层：Markdown 渲染面事件委托拦截 → `openSafeUrl`（http/https 白名单 + 系统浏览器）；`lib.rs` 补 `on_navigation` 白名单（tauri/asset/dev 端口/about:）作纵深
+  - **[SEC-4] DOMPurify 收敛 + aio-image 闸**：FORBID 封表单类标签（防气泡内仿冒 UI）、`target` 属性移除、`aio-image://` 解码后强制绝对路径+attachments 段双校验、`src/alt/title` 全转义
+  - **[SEC-5/6] 并发与加固**：`atomic_write` 唯一 tmp 后缀（并发写同一目标不再可能 rename 出双方半写拼接——「绝不半写」承诺修复 + 双线程×20 次交替写回归测试）；mcp 信任存储与 mcp-servers.json 读-改-写全程持进程锁（后写不再覆盖先写）；taskkill 走 PATH 解析（SEC-06 自约定）；mcp_fs_server stderr 不再广播文件内容 + 16MB stdin 上限 + 字符边界截断（中文 JSON 不再 panic）；secure_store 降级分支首访互斥（不再可能生成两把密钥致条目永久失解）
+- **性能修复（3 HIGH + 主要 MEDIUM）**：`reqwest::Client` 双 LazyLock 单例（连接池复用，ollama 就绪轮询不再每 500ms 新建 Client）；`scan_installed_engines` 整链 spawn_blocking（启动扫描不再占用 async worker 数秒~数十秒，vLLM 探测 3 次/候选 → 1 次）；主聊天库 WAL + busy_timeout（每轮多次 fsync → append-only）；多 MB 检查点快照 spawn_blocking 落盘（顺序语义不变）；非 Anthropic 路径去整消息数组深拷贝；ollama 启动超时杀子进程撤销注册（不再留孤儿 + 假「运行中」）；5 个同步 Tauri 命令改 async；**子代理流补 80ms 键控批处理管线**（此前逐 token 写 store 绕过批处理，并发子代理放大）；右栏拖拽改「预览信号 + 释放提交」（不再逐像素写 localStorage 60-240 次/秒）；截断提示改字符数（中文不再虚高 3 倍）
+- **可维护性**：2 处 i18n 违规（硬编码「默认话题」/ 命令中文 label）修正；AgentProcessBlock 两个模块级无界缓存加上界（动画 ID 4096 / 泄漏轮 16 + 逐出清 timer）；4 处吞错可见化（检查点写/终态标记/用量记录/代码索引向量写——失败不再静默丢数据）
+- 验证：cargo **431** 测试全绿（+2 回归）/ 78 FE / gates / i18n 1200 / `cargo audit` 0 / `npm audit` 0
+
+### 🧹 审查遗留清偿轮：SEC-7/8/9 + 性能与前端遗留 9 项全部落地（PR #212，详见 docs/reviews/code-review-2026-10.md 末节）
+
+- **[SEC-7 · MEDIUM] SSRF 防线公共化 + 钉扎接入**：`web_fetch` 的解析防线提取为 `utils/ssrf.rs`（策略分级：`PublicOnly` 保持全公网语义；`AllowLocalNoMetadata` 允许用户配置端点的本地/局域网（引擎与本地 MCP 合法）、云元数据段恒拒（169.254/16 + CGNAT + fe80::/10 + AWS fd00:ec2::254））。三面接线——MCP HTTP transport 启动时解析+`ClientBuilder::resolve` 钉扎（rebinding 无从翻转）；供应商连接测试 `build_http_client_pinned`（保留代理支持）；聊天热路径（post_chat_completion 全部 9 个调用点）经带 10 分钟 TTL 的 per-origin 钉扎客户端缓存——策略违规硬失败经既有错误通道透出，DNS 故障降级未钉扎保持连通语义
+- **[SEC-8 · LOW] 原生命令路径 TOCTOU 消除**：spawn 改 `CREATE_SUSPENDED`（`hidden_console_suspended`）→ 入 Job Object → Toolhelp32 定位主线程 `ResumeThread`（AC 路径同款挂起顺序）——子进程在入 Job 前无法执行，孙进程不再可能逃逸进程树围栏；恢复失败 fail-closed
+- **[SEC-9 · INFO] 降级密钥文件 DPAPI 包裹**：Windows 上 `.fallback-key` 改为 `dpapi-v1:` 前缀的 `CryptProtectData` 包裹（绑定当前用户+机器，拷贝/外传不可解）；旧 hex 格式首读时就地迁移（失败非致命下次重试）；keyring 路径不变（本就 DPAPI 支撑）
+- **性能遗留 7 项**：`load_app_config` 进程级 mtime 指纹缓存（一次工具调用 2-3 次磁盘读+JSON 解析+keychain IPC → 命中零成本）；代码索引每文件单事务（~2 万次 fsync → ~文件数次）；engine 停止 kill+wait 出锁上阻塞池；harness stop 固定 3s 睡眠改 50ms 协作轮询（3s 兜底）；检索质量探针单事务批量；npm 探针超时杀子进程（不再泄漏进程+线程）；harness 全部 16 个设置类命令走 spawn_blocking
+- **[前端 H-2] 消息粒度增量持久化（架构级）**：新命令 `upsert_topic_messages`（`TopicCore` 瘦载荷——绝不序列化 history + 逐消息 upsert 单事务）；4 个热路径（回合边界/占位符/done/工具结果）换装——UI 线程不再每回合做 O(session) 的全助手深克隆与全量 IPC，只克隆被改消息（长 agent 会话从每回合数 MB 降到 KB）；rename/压缩等低频路径保留全量保存
+- **[前端 M-4/M-5/M-12]**：TokenStatsBar 模型目录查找抽独立 memo（不再每工具事件重扫 models 数组）；harness `tool_call_update` 80ms 合并批处理（end/终结同步冲刷保序）；尾窗 append 方向锚定（chat+harness 两处）——上翻阅读时新回合追加不再顶替视口（窗口顶部锚点钉住），回底自动裁回尾窗
+- 验证：cargo **434** 测试全绿（+3：SSRF 策略/元数据段/DPAPI 往返回归）/ FE 15 套件 / gates（console-window 门禁同步接受 suspended 变体）/ i18n 1200
+
+### 📝 Alpha 反馈基础设施（零服务器方案，PR #213）
+
+- **GitHub Issue Forms**（3 个 YAML 结构化模板）：`bug_report`（环境快照 + 问题区域下拉 + 复现步骤 + 检查清单）、`alpha_feedback`（一句话总评 + 满意度打分 + 阻碍/惊喜）、`feature_request`（问题→方案→替代方案三段式）+ `config.yml` contact-links（Discussions + 中文群引导）——结构化收集、可检索、直接进开发工作流
+- **应用内「反馈与支持」节**（设置 → 应用页底部）：环境快照单行展示 + 点击复制（含版本/OS/架构/locale/RAM/8 工具检测状态/引擎版本——**不含 API Key 与会话内容**）；四个 GitHub 渠道按钮（报告问题→bug 表单 + 剪贴板自动复制快照、Alpha 反馈、功能建议、参与讨论）；诊断包导出（zip：快照 JSON + 配置槽状态 + 隐私说明——写到 Downloads 目录用户自行上传，不经任何网络上传）
+- **更新弹窗反馈入口**：更新完成对话框底部新增「Alpha 体验反馈」链接——用户刚升级完是反馈意愿峰值时刻
+- **README 反馈社区段**：渠道表（Issue Forms / Discussions / 应用内反馈 / 中文群）+ 隐私承诺说明
+- 后端新命令 ×2：`get_feedback_snapshot`（sysinfo OS/RAM + registry 探针 + 引擎扫描）与 `export_diagnostic_package`（zip deflate 写 Downloads）；i18n +12 键（1212 双语对齐）
+
+### ⚡ 长会话切换加载提速（消息列表分段渲染补全，PR #210）
+
+- **根因实测**：切换到消息记录很长的会话时等待较久——两层全量挂载：① Harness 工作台话题消息**完全没有分页**（`For each` 全量渲染，chat 页 0.8.1 起就有 40 条尾窗 + 哨兵机制）；② chat 页虽然消息级有尾窗，但**历史回合的步骤时间线走「一次性全渲染」路径**（Inactive 分支 `setVisibleIds(全部)`），而外层折叠（max-height:0）**不阻止挂载**——本机实测最大话题 12 条消息但单回合 4.9MB `agent_steps_json`（数百步骤卡，每张带信号与入场动画），切话题时全部一次性建 DOM，这就是卡顿主体
+- **Harness 消息列表分段渲染**（照搬 ChatInterface 已验证模式）：尾窗 60 条 + 顶部哨兵 IntersectionObserver 自动扩页 + 滚动锚定 + 「载入更早的消息」按钮（复用 chat.loadEarlier 文案与 formatNumber）；话题切换即重置窗口；流式追加与尾窗天然兼容（窗口随流滑动，上滚时哨兵自动补页）
+- **历史回合步骤尾窗**（AgentProcessBlock）：非活跃回合默认只挂最近 100 张步骤卡，列表顶部「展开更早的 N 条步骤」一键展开全部（用户主动触发时才承担全量挂载成本）；流式活跃块不受影响（逐条入队渲染机制原样保留）；队列恢复/remount 语义零改动（窗口只作用于 For 数据源）
+- i18n +1 键（`agent.step.showEarlier`，双语）；verify 全绿：429 Rust / 78 FE / gates / i18n 1200
+
+### 🎨 UI 文案克制规范清偿轮：全量清除描述性语言（PR #214）
+
+按 AGENTS.md「UI 文案克制」规则（界面上只放功能性文字——标签、状态、操作结果、错误提示、一句话占位符；解释性描述一律不写入 UI）对全部 UI 文案做了三轮审计与清偿：
+
+- **整体删除 20 组描述行**（键 + 渲染点）：设置页六个开关的说明句（语言/深色/自启/开源/快捷键/更新——标签自明）、MCP 详情两个勾选框旁的解释句、本地模型文件区引导句、CLI 工具设置页五个区块 note（常用配置/高级配置/指令与技能/MCP——标题已述）、markdown 编辑器说明句、备份说明行、自定义工具引导句、反馈区环境信息引导句（复制提示并入点击行为的 title 提示）、死键 `export.pdfHint`
+- **裁剪至功能最小句 20 组**：`最大工具调用轮数/最大并发子智能体` 说明——「…仍是后盾」等原理解释全部移除，只保留取值语义（-1 不限制、0 无效）；Agent 模式四档说明——内部机制（沙箱自动补救细节、`sandboxUnsandboxedFallback` 配置键名、条件分支说明）移除，只保留权限语义；完全权限模式确认弹窗——跨 UI 操作指引与配置键名移除；嵌入/重排切换确认——机制解释压缩为后果声明；断点续跑 tooltip——归因括注移除；信任确认/审批「始终允许」提示/交接消息/API key 说明——文件路径与实现细节移除；用量页与 Skill 页空态——机制解释改为功能空态；harness 空态与自定义 Provider 引导——长描述改一句话
+- **保留的功能性体裁**：命令面板与斜杠命令的动作副标题（菜单选择的依据）、参数占位符（[问题]/[文本或文件]）、数据统计 tooltip、确认弹窗的后果声明（风险知情文案）、`ollama pull` 这类唯一操作路径提示
+- i18n 1192 键（-20）；操作状态反馈回归「控件自身状态变化」表达（更新行无结果时不再显示占位说明句）
+
+### 验证基线
+
+cargo 434 Rust 测试（本机 427 绿；7 项 AppContainer 沙箱测试在本会话受限环境内无法创建 AC profile——已知环境性限制，非产品回归，见 docs/zh/development/harness-environment-report.md；6 项真机 ignored）、前端 tsc / eslint / prettier / gates / i18n 双语 1192 键全绿；vitest 与 vite build 在受限会话内无法 spawn 子进程，由 release CI 全量验证
+
+<p align="right"><a href="#top"><img src="/public/icons/top.svg"></img></a></p>
+
+[v1.0.0-alpha]: https://github.com/Atom112/AIO/releases/tag/v1.0.0-alpha
+
 ## [v0.8.3]
 
 <sup>Released on **2026-10-17**</sup>

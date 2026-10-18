@@ -6,7 +6,6 @@
  * can configure, this can edit byte-faithfully.
  */
 import { Component, createSignal, onMount, Show } from 'solid-js';
-import Icon from '../../../shared/components/Icon';
 import {
   btnDangerOutline,
   btnPrimaryOutlineSm,
@@ -105,11 +104,8 @@ const HarnessConfigFileEditor: Component<HarnessConfigFileEditorProps> = (props)
         {props.slot.path}
       </div>
 
-      {/* Notes: YAML comment loss + one-time backup */}
-      <div class="flex items-center gap-3 mb-2 text-[11px] text-white/35">
-        <span class="inline-flex items-center gap-1">
-          <Icon name="info" size={11} /> {t('harness.conf.backupNote')}
-        </span>
+      {/* Note: YAML comment loss warning */}
+      <div class="items-center gap-3 mb-2 text-[11px] text-white/35 flex">
         <Show when={props.slot.commentsLostOnWrite}>
           <span class="text-warn">{t('harness.conf.commentsLost')}</span>
         </Show>

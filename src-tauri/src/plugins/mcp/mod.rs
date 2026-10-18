@@ -402,7 +402,19 @@ pub(crate) fn resolve_project_path(app: &AppHandle, project_id: &str) -> McpResu
     crate::utils::project_index::project_path(app, project_id).map_err(McpError::Server)
 }
 
+/// 进程级互斥：串行化全局与项目级 mcp-servers.json 的读-改-写（与
+/// core::secure_store 的 FALLBACK_MUTEX 同款范式）。无锁时并发
+/// upsert/remove 的后写覆盖先写 → 服务器配置静默丢失（数据丢失）。
+/// 写入均为低频用户操作，单一互斥足够。
+fn mcp_config_write_mutex() -> &'static std::sync::Mutex<()> {
+    static M: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+    M.get_or_init(|| std::sync::Mutex::new(()))
+}
+
 pub fn upsert_config(app: &AppHandle, config: McpServerConfig) -> McpResult<()> {
+    let _guard = mcp_config_write_mutex()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let mut file = load_mcp_servers(app);
     file.servers.insert(config.id.clone(), config);
     file.updated_at = now_timestamp();
@@ -411,6 +423,9 @@ pub fn upsert_config(app: &AppHandle, config: McpServerConfig) -> McpResult<()> 
 
 /// Upsert into the project-level file.
 pub fn upsert_project_config(project_path: &str, config: McpServerConfig) -> McpResult<()> {
+    let _guard = mcp_config_write_mutex()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let mut file = load_project_mcp_servers(project_path);
     file.servers.insert(config.id.clone(), config);
     file.updated_at = now_timestamp();
@@ -418,6 +433,9 @@ pub fn upsert_project_config(project_path: &str, config: McpServerConfig) -> Mcp
 }
 
 pub fn remove_config(app: &AppHandle, id: &str) -> McpResult<()> {
+    let _guard = mcp_config_write_mutex()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let mut file = load_mcp_servers(app);
     file.servers.remove(id);
     file.updated_at = now_timestamp();
@@ -426,6 +444,9 @@ pub fn remove_config(app: &AppHandle, id: &str) -> McpResult<()> {
 
 /// Remove from the project-level file.
 pub fn remove_project_config(project_path: &str, id: &str) -> McpResult<()> {
+    let _guard = mcp_config_write_mutex()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let mut file = load_project_mcp_servers(project_path);
     file.servers.remove(id);
     file.updated_at = now_timestamp();

@@ -1,6 +1,6 @@
 [package]
 name = "aio"
-version = "0.8.3"
+version = "1.0.0-alpha"
 description = "A lightweight cross-platform AI assistant desktop client"
 authors = ["Loch"]
 edition = "2021"
@@ -26,7 +26,7 @@ tauri-build = { version = "2", features = [] }
 # (~2.7 opener / ~2.7 dialog). Keep this table in sync with package.json.
 tauri = { version = "2.12", features = ["protocol-asset", "macos-private-api"] }
 tauri-plugin-opener = "2.7"
-tauri-plugin-updater = "2"
+tauri-plugin-updater = "2.14"
 serde = { version = "1", features = ["derive"] }
 # preserve_order: structured config edits rewrite the tool's settings.json
 # without re-alphabetizing the user's key order.
@@ -43,7 +43,10 @@ reqwest = { version = "0.13", features = ["json", "stream", "blocking"] }
 tokio = { version = "1", features = ["full"] }
 futures-util = "0.3"
 pdf-extract = "0.12"
-zip = "4.6"
+# 附件解析只读 docx/pptx（deflate），故最小特性集，避免 aes/bzip2/xz/zstd 等
+# 不必要的解压器进入信任面。zip 4.x 存在 RUSTSEC-2026-0367/0368/0369
+# （extract() 符号链接/Unix 权限逃逸），>= 9.0 修复。
+zip = { version = "9", default-features = false, features = ["deflate"] }
 xml-rs = "0.8"
 encoding_rs = "0.8"
 dashmap = "6.0"

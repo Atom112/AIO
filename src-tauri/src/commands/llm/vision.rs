@@ -8,7 +8,7 @@
 
 // 阶段4 第1项（消 glob）：显式 use 取代原父模块 glob。
 use crate::commands::llm::client::{
-    chat_error_message, chat_text_content, non_streaming_http_client, post_chat_completion,
+    chat_error_message, chat_text_content, non_streaming_http_client_pinned, post_chat_completion,
 };
 
 use crate::core::state::DbState;
@@ -141,7 +141,8 @@ pub async fn vision_analyze_images(
         "max_tokens": 1024
     });
 
-    let client = non_streaming_http_client();
+    // SEC-7: pinned resolution (key-bearing request; local/LAN allowed, metadata refused)
+    let client = non_streaming_http_client_pinned(&api_url).await?;
     let (res, is_anthropic) = tokio::time::timeout(
         std::time::Duration::from_secs(45),
         post_chat_completion(&client, &api_url, &api_key, &body),

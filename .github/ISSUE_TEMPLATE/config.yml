@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 💬 Discussions（提问 / 讨论 / 功能想法）
+    url: https://github.com/Atom112/AIO/discussions
+    about: 使用问题先来这里搜一搜——Q&A 分类可标记「已解答」；功能想法分类用 👍 投票。
+  - name: 🌏 中文用户交流群（QQ 群 1130943633）
+    url: https://github.com/Atom112/AIO#-feedback--community
+    about: QQ 群 1130943633；不方便上 GitHub 的中文反馈走这里。

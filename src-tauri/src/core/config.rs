@@ -57,11 +57,10 @@ struct AppConfigDisk {
         rename = "sandboxProtectGit"
     )]
     sandbox_protect_git: bool,
-    /// Full-permission sandbox self-heal may fall back to one unsandboxed retry (default true)
-    #[serde(
-        default = "crate::core::models::default_true",
-        rename = "sandboxUnsandboxedFallback"
-    )]
+    /// Full-permission sandbox self-heal may fall back to one unsandboxed retry
+    /// (SEC 审查修复：默认 false——安全默认，与 AppConfig::default、serde 缺字段、
+    /// 字段文档承诺四源一致；磁盘文件缺该字段时同样落 false，不再 default_true)
+    #[serde(default, rename = "sandboxUnsandboxedFallback")]
     sandbox_unsandboxed_fallback: bool,
     /// Consecutive env-class failures before a tool is disabled for the turn (0 = default 6)
     /// Windows shell selection (powershell default / cmd)
@@ -301,16 +300,71 @@ pub fn save_app_config(app: &AppHandle, config: &AppConfig) -> Result<(), String
     let json = serde_json::to_string_pretty(&disk).map_err(|e| e.to_string())?;
     // Atomic write (fsync before rename; a crash can never leave a truncated half-written config.json)
     crate::core::fs_util::atomic_write(&path, json.as_bytes()).map_err(|e| e.to_string())?;
+    // H-3: explicit invalidation — the keychain half of a save (api_key) does not
+    // touch the disk file, so the mtime fingerprint alone would miss it.
+    *config_cache().lock() = None;
     Ok(())
 }
 
+// ===== H-3: process-level config cache =====
+//
+// load_app_config is a tool hot path (the agent loop, memory pipeline and command
+// layer each read it — several loads per execute_command round, previously = several
+// disk reads + JSON parses + keychain IPC round-trips). The cache holds the loaded
+// AppConfig keyed by the config.json fingerprint (mtime, len); a save invalidates
+// it explicitly (the keychain half of a save does not change the file). Worst case
+// on a fingerprint alias (same mtime+len, different content — sub-mtime-granularity
+// external edits) is one stale read cycle, same class as any stat-based cache.
+
+struct ConfigCacheEntry {
+    config: AppConfig,
+    /// (modified, len) fingerprint of config.json at load time; None = no file.
+    fingerprint: Option<(std::time::SystemTime, u64)>,
+}
+
+static CONFIG_CACHE: std::sync::OnceLock<parking_lot::Mutex<Option<ConfigCacheEntry>>> =
+    std::sync::OnceLock::new();
+
+fn config_cache() -> &'static parking_lot::Mutex<Option<ConfigCacheEntry>> {
+    CONFIG_CACHE.get_or_init(|| parking_lot::Mutex::new(None))
+}
+
 /// Load the general app config (lazily migrates the legacy-schema plaintext api_key; returns defaults when no file exists).
+///
+/// H-3: served from the process-level cache while config.json's fingerprint holds;
+/// see the cache block above for the invalidation contract.
 pub fn load_app_config(app: &AppHandle) -> Result<AppConfig, String> {
     let path = crate::core::paths::app_config_dir()?.join("config.json");
+    let fingerprint = fs::metadata(&path).ok().map(|m| {
+        (
+            m.modified().unwrap_or(std::time::SystemTime::UNIX_EPOCH),
+            m.len(),
+        )
+    });
 
+    {
+        let cache = config_cache().lock();
+        if let Some(entry) = cache.as_ref() {
+            if entry.fingerprint == fingerprint {
+                return Ok(entry.config.clone());
+            }
+        }
+    }
+
+    let config = load_app_config_uncached(app, &path)?;
+    *config_cache().lock() = Some(ConfigCacheEntry {
+        config: config.clone(),
+        fingerprint,
+    });
+    Ok(config)
+}
+
+/// The uncached loader — the historic load_app_config body (file read + schema
+/// migration + keychain api_key resolution).
+fn load_app_config_uncached(app: &AppHandle, path: &std::path::Path) -> Result<AppConfig, String> {
     // Try the v2 schema first (no api_key field)
     if path.exists() {
-        if let Ok(content) = fs::read_to_string(&path) {
+        if let Ok(content) = fs::read_to_string(path) {
             if let Ok(disk) = serde_json::from_str::<AppConfigDisk>(&content) {
                 let api_key = secure_store::get(app, secure_store::accounts::APP_API_KEY)
                     .map_err(|e| e.to_string())?
@@ -339,7 +393,7 @@ pub fn load_app_config(app: &AppHandle) -> Result<AppConfig, String> {
                 };
                 if key_migrated {
                     if let Err(e) = crate::core::fs_util::atomic_write(
-                        &path,
+                        path,
                         serde_json::to_string_pretty(&disk)
                             .unwrap_or_default()
                             .as_bytes(),
@@ -411,5 +465,32 @@ mod tests {
             crate::core::models::default_auto_retry_count()
         );
         assert_eq!(back.api_url, "http://x");
+    }
+
+    /// 安全默认一致性（SEC 审查修复的回归防线）：`sandbox_unsandboxed_fallback`
+    /// （完全权限档下"会话授权无法落地时回退一次无沙箱重试"的唯一沙箱逃逸通道）
+    /// 在全部默认来源必须为 false——任何一处为 true 都等于默认开启沙箱逃逸：
+    /// 1. `AppConfig::default()`（全新安装 / unwrap_or_default 兜底）
+    /// 2. `AppConfigDisk::default()`（磁盘结构默认）
+    /// 3. serde 缺字段反序列化（磁盘文件没有该字段时）
+    ///
+    /// 与字段文档承诺的 "Default **false**" 对齐。
+    #[test]
+    fn sandbox_unsandboxed_fallback_defaults_to_false_in_all_sources() {
+        assert!(
+            !AppConfig::default().sandbox_unsandboxed_fallback,
+            "AppConfig::default() 必须默认关闭无沙箱回退"
+        );
+        assert!(
+            !AppConfigDisk::default().sandbox_unsandboxed_fallback,
+            "AppConfigDisk::default() 必须默认关闭无沙箱回退"
+        );
+        let disk: AppConfigDisk =
+            serde_json::from_str(r#"{"api_url":"","default_model":"","local_model_path":""}"#)
+                .unwrap();
+        assert!(
+            !disk.sandbox_unsandboxed_fallback,
+            "serde 缺字段默认必须关闭无沙箱回退"
+        );
     }
 }

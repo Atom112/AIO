@@ -30,34 +30,28 @@ fn create_progress_cmd(program: &str, args: &[&str]) -> std::process::Command {
     cmd
 }
 
-/// Check whether the vllm package is installed in the given Python interpreter
-fn check_vllm_installed(python: &str) -> bool {
-    let mut cmd = create_progress_cmd(python, &["-c", "import vllm; print(vllm.__version__)"]);
-    cmd.spawn()
-        .and_then(|mut c| c.wait())
-        .map(|s| s.success())
-        .unwrap_or(false)
-}
-
-/// Get the vLLM version string (using the resolved Python interpreter)
-fn get_vllm_version(python: &str) -> Option<String> {
+/// One-shot vLLM probe: `python -c "import vllm; print(vllm.__version__)"` with
+/// stdout captured — returns the reported version on success, None on failure
+/// (interpreter missing / import error).
+///
+/// (审查修复 H-2 附带) 合并了历史上两个分离的探测：`check_vllm_installed`
+/// （只 wait、丢弃 stdout）+ `get_vllm_version`（把同一个加载 torch 的 import
+/// 再跑一遍取版本）——import vllm 单次数秒，重复跑纯属浪费；且该探测本身即
+/// "解释器可运行"的证明（跑不起来的 python 不可能 import 成功），替代了原先
+/// 每个候选额外一次 `python --version` 子进程。
+fn vllm_version_probe(python: &str) -> Option<String> {
     let mut cmd = create_progress_cmd(python, &["-c", "import vllm; print(vllm.__version__)"]);
     match cmd.output() {
-        Ok(output) => {
-            let raw = String::from_utf8_lossy(&output.stdout);
-            Some(raw.trim().to_string())
+        Ok(output) if output.status.success() => {
+            let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if version.is_empty() {
+                None
+            } else {
+                Some(version)
+            }
         }
-        Err(_) => None,
+        _ => None,
     }
-}
-
-/// Run `python --version` to verify the interpreter works
-fn python_runs(python: &str) -> bool {
-    create_progress_cmd(python, &["--version"])
-        .spawn()
-        .and_then(|mut c| c.wait())
-        .map(|s| s.success())
-        .unwrap_or(false)
 }
 
 /// Collect all candidate Python interpreter paths.
@@ -187,7 +181,18 @@ fn find_python_impl(verify: impl Fn(&str) -> bool) -> Result<String, String> {
 /// the "detected in dev, undetected in the packaged app" problem caused by the
 /// incomplete PATH in desktop-launcher environments.
 fn find_python_with_vllm() -> Result<String, String> {
-    find_python_impl(|p| python_runs(p) && check_vllm_installed(p))
+    // (审查修复 H-2 附带) import 探测兼作解释器可用性检查：每个候选一次探测
+    // （此前是 python --version 一次 + import 两次 = 三次子进程）。
+    find_python_impl(|p| vllm_version_probe(p).is_some())
+}
+
+/// Scan all candidate Pythons; return the first interpreter with an importable
+/// vllm together with the version reported by that very probe run — one import
+/// total instead of find-probe + re-probe.
+fn find_python_with_vllm_version() -> Option<(String, String)> {
+    python_candidates()
+        .into_iter()
+        .find_map(|python| vllm_version_probe(&python).map(|v| (python, v)))
 }
 
 /// Check whether a vLLM service is already running on the default port 8000
@@ -241,16 +246,15 @@ impl LocalEnginePlugin for VllmPlugin {
     }
 
     fn detect_installation(&self, _app: &AppHandle) -> crate::core::models::EngineInstallInfo {
-        // Prefer find_python_with_vllm: scan all candidates for an interpreter that both runs and has vllm installed.
-        // If none is found (no interpreter with vllm, or the HTTP fallback hit), fall back to service detection.
-        let python = find_python_with_vllm().ok();
-        let has_vllm = python.is_some();
-        let installed = has_vllm || vllm_http_reachable();
-        let version = if let Some(ref p) = python {
-            get_vllm_version(p)
-        } else {
-            None
-        };
+        // Prefer find_python_with_vllm_version: scan all candidates for an interpreter
+        // that both runs and has vllm installed. If none is found (no interpreter with
+        // vllm, or the HTTP fallback hit), fall back to service detection.
+        // (审查修复 H-2 附带) 版本取自同一次 import 探测的 stdout——此前
+        // find_python_with_vllm 先 wait-only 探测一遍、get_vllm_version 再把同一个
+        // 加载 torch 的命令原样重跑一遍取版本。
+        let probed = find_python_with_vllm_version();
+        let installed = probed.is_some() || vllm_http_reachable();
+        let version = probed.map(|(_, v)| v);
         crate::core::models::EngineInstallInfo { installed, version }
     }
 

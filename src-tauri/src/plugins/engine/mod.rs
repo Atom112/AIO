@@ -105,7 +105,7 @@ pub trait LocalEnginePlugin: Send + Sync {
 
 /// Engine manager: holds all registered plugins
 pub struct EngineManager {
-    plugins: HashMap<String, Box<dyn LocalEnginePlugin>>,
+    plugins: HashMap<String, std::sync::Arc<dyn LocalEnginePlugin>>,
 }
 
 impl EngineManager {
@@ -120,18 +120,24 @@ impl EngineManager {
     }
 
     pub fn register(&mut self, plugin: Box<dyn LocalEnginePlugin>) {
-        self.plugins.insert(plugin.identifier().to_string(), plugin);
+        self.plugins.insert(
+            plugin.identifier().to_string(),
+            std::sync::Arc::from(plugin),
+        );
     }
 
     pub fn get(&self, id: &str) -> Option<&dyn LocalEnginePlugin> {
         self.plugins.get(id).map(|b| b.as_ref())
     }
 
-    /// Return references to all registered plugins (sorted alphabetically by identifier).
-    pub fn all_plugins(&self) -> Vec<&dyn LocalEnginePlugin> {
-        let mut plugins: Vec<&dyn LocalEnginePlugin> =
-            self.plugins.values().map(|b| b.as_ref()).collect();
-        plugins.sort_by_key(|p| p.identifier());
+    /// Owned Arc clones of all registered plugins (sorted alphabetically by identifier).
+    /// Owned form is required for scan_installed_engines to run the blocking
+    /// detection work (subprocess probes) on the blocking pool — trait-object
+    /// references cannot cross the `spawn_blocking` closure boundary.
+    pub fn all_plugins(&self) -> Vec<std::sync::Arc<dyn LocalEnginePlugin>> {
+        let mut plugins: Vec<std::sync::Arc<dyn LocalEnginePlugin>> =
+            self.plugins.values().cloned().collect();
+        plugins.sort_by(|a, b| a.identifier().cmp(b.identifier()));
         plugins
     }
 }

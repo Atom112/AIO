@@ -24,7 +24,7 @@ use tokio_util::sync::CancellationToken;
 
 use super::budget::estimate_context_tokens_offload;
 use super::checkpoints::finalize_checkpoints;
-use super::client::streaming_http_client;
+use super::client::streaming_http_client_pinned;
 use super::handoff::{build_extract_transcript, consume_handoff_doc, write_handoff_doc};
 use super::subagents::{
     drain_pending_subagent_notices, execute_get_subagent_result, handle_delegate_task,
@@ -138,7 +138,37 @@ impl AgentTurnRunner {
         let max_concurrent = resolve_subagent_concurrency(app_config.max_concurrent_subagents);
         let subagent_semaphore = Arc::new(Semaphore::new(max_concurrent));
 
-        let client = streaming_http_client();
+        // SEC-7: resolve + judge + pin the provider endpoint once per turn (the
+        // chat path carries the real API key). A policy violation (metadata /
+        // rebinding target) fails the turn outright — the request must not go out.
+        // Localhost / LAN endpoints (engines, gateways) stay legitimate. The
+        // early-exit mirrors the epilogue's terminal shape: done+error chunk so
+        // the frontend resets, plus the registry cleanup; no checkpoint rows
+        // exist yet, so there is nothing to finalize.
+        let client = match streaming_http_client_pinned(&api_url).await {
+            Ok(c) => c,
+            Err(ssrf_err) => {
+                tracing::error!("[SSRF] Provider endpoint refused: {ssrf_err}");
+                let _ = window.emit(
+                    ev::LLM_CHUNK,
+                    StreamPayload {
+                        assistant_id: assistant_id_c.clone(),
+                        topic_id: topic_id_c.clone(),
+                        content: format!("\n[Error: {}]", ssrf_err),
+                        done: true,
+                        error: Some(ssrf_err),
+                        input_tokens: None,
+                        output_tokens: None,
+                        context_tokens: None,
+                        cached_input_tokens: None,
+                        ttft_ms: None,
+                        images: None,
+                    },
+                );
+                state_inner.remove_own(&task_key_inner, &turn_id_c);
+                return;
+            }
+        };
 
         // Tool selection: inject a different tool set per agent mode
         // - Plan: research tools only (think + project_map + web)
@@ -1043,16 +1073,27 @@ impl AgentTurnRunner {
             // The turn's context is settled here: tool backfill + compression done.
             // LOOP-7: serialize BEFORE taking the global SQLite lock — serializing
             // a multi-MB context under `DbState` blocked every other database user.
+            // (审查修复 M-2) 写入本身也移出 async worker：多 MB 快照的同步
+            // INSERT/DELETE 内联执行会阻塞 tokio worker 数十 ms（WAL busy_timeout
+            // 最坏 5s）。spawn_blocking + await：worker 在阻塞写期间被释放，
+            // 顺序语义不变（下一轮开始前本轮快照必须落盘）。
             {
                 let messages_json = serde_json::to_string(&messages_for_api).unwrap_or_default();
-                let conn = app_c.state::<crate::core::state::DbState>();
-                crate::commands::llm::checkpoints::save_checkpoint_json(
-                    &conn.0.lock(),
-                    &topic_id_c,
-                    &turn_id,
-                    round,
-                    &messages_json,
-                );
+                let app_for_ckpt = app_c.clone();
+                let topic = topic_id_c.clone();
+                let turn = turn_id.clone();
+                let round_c = round;
+                let _ = tauri::async_runtime::spawn_blocking(move || {
+                    let conn = app_for_ckpt.state::<crate::core::state::DbState>();
+                    crate::commands::llm::checkpoints::save_checkpoint_json(
+                        &conn.0.lock(),
+                        &topic,
+                        &turn,
+                        round_c,
+                        &messages_json,
+                    );
+                })
+                .await;
             }
         }
 

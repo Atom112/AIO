@@ -5,6 +5,7 @@ import { createEffect, createSignal } from 'solid-js';
 import {
   deleteAssistant as deleteAssistantApi,
   saveAssistant as saveAssistantApi,
+  upsertTopicMessages,
 } from '../api/chat';
 import { listen } from '@tauri-apps/api/event';
 import { listSkills } from '../api/skills';
@@ -35,6 +36,7 @@ import {
 import { currentProjectId, projects } from './project';
 import { isDarkMode, themeColor } from './ui-prefs';
 import { selectAutoStartIds } from '../utils/mcp';
+import { t } from '../i18n';
 export interface DatasState {
   /** All assistants, including their topics and message trees */
   assistants: Assistant[];
@@ -328,6 +330,33 @@ export const saveSingleAssistantToBackend = async (id: string) => {
   }
 };
 
+/**
+ * Message-scoped incremental persistence (review H-2): upserts the topic's core
+ * row plus ONLY the named messages. Replaces the stream/tool-result hot path's
+ * full saveSingleAssistantToBackend, whose O(session-so-far) reactive-proxy deep
+ * clone blocked the UI thread at every round boundary (quadratic over a long
+ * agent session). Never deletes — removals and every other mutation kind stay
+ * on the full save.
+ */
+export const persistMessagesIncrementally = (
+  asstId: string,
+  topicId: string,
+  messageIds: string[],
+) => {
+  const asst = datas.assistants.find((a) => a.id === asstId);
+  const topic = asst?.topics.find((t) => t.id === topicId);
+  if (!asst || !topic) return;
+  const idSet = new Set(messageIds);
+  const messages = topic.history.filter((m) => m.id && idSet.has(m.id));
+  if (messages.length === 0) return;
+  // Clone ONLY the mutated messages (strip reactive proxies); the slim topic
+  // core is projected inside the API wrapper. O(mutated), not O(session).
+  const plain = JSON.parse(JSON.stringify(messages)) as Parameters<typeof upsertTopicMessages>[2];
+  void upsertTopicMessages(asstId, topic, plain).catch((err) =>
+    console.error('[persistMessagesIncrementally] failed:', err),
+  );
+};
+
 // ====== Topic title auto-rename ======
 
 /**
@@ -549,7 +578,16 @@ export const ensureProjectAssistant = async (projectId: string): Promise<string>
       projectId,
       mcpServerIds: ['__aio-filesystem__'],
       skillIds: [],
-      topics: [{ id: Date.now().toString(), name: '默认话题', history: [], summary: '' }],
+      topics: [
+        {
+          id: Date.now().toString(),
+          // M1 (i18n): 历史硬编码中文会随英文界面落库显示；与 ChatPage 的默认话题
+          // 创建路径对齐，走 t()（键 chat.defaultTopic 双语均有）。
+          name: t('chat.defaultTopic'),
+          history: [],
+          summary: '',
+        },
+      ],
     };
     setDatas('assistants', (prev) => [...prev, asst!]);
     await saveSingleAssistantToBackend(asst.id);

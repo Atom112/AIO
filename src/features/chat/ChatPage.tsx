@@ -166,11 +166,6 @@ const ChatPage: Component = () => {
 
   // Curtain-reveal target width: content-box width of the 15% minimal panel (asymmetric padding 15 left
   // + 21 right, plus a 2px safety margin so content never overflows at 15%); recomputed on resize; ProjectSidebar infers container width from -38
-  /**
-   * Compute the right panel display width.
-   * @returns {number} right panel width, or 0 when collapsed
-   */
-  const displayRightWidth = () => (isRightCollapsed() ? 0 : rightPanelWidth());
 
   /**
    * Set the left panel collapsed state and persist it (single entry point for collapse/expand, with width fallback).
@@ -185,17 +180,31 @@ const ChatPage: Component = () => {
   };
 
   // 阶段4 第2项（拆分切片）：面板拖拽/幕帘/吸附逻辑抽至 usePanelResize 钩子
-  const { isResizing, leftDragWidth, leftRevealMinPx, startLeftResize, startResizeRight } =
-    usePanelResize({
-      chatPageRef: () => chatPageRef,
-      isLeftCollapsed,
-      setLeftCollapsed,
-      leftPanelWidth,
-      setLeftPanelWidth,
-      rightPanelWidth,
-      setRightPanelWidth,
-      isRightCollapsed,
-    });
+  const {
+    isResizing,
+    leftDragWidth,
+    leftRevealMinPx,
+    rightDragWidth,
+    startLeftResize,
+    startResizeRight,
+  } = usePanelResize({
+    chatPageRef: () => chatPageRef,
+    isLeftCollapsed,
+    setLeftCollapsed,
+    leftPanelWidth,
+    setLeftPanelWidth,
+    rightPanelWidth,
+    setRightPanelWidth,
+    isRightCollapsed,
+  });
+
+  /**
+   * Compute the right panel display width.
+   * @returns {number} live tracking width while dragging (H-3: preview signal,
+   *   persistence commits only on release), otherwise the remembered width; 0 when collapsed
+   */
+  const displayRightWidth = () =>
+    isRightCollapsed() ? 0 : (rightDragWidth() ?? rightPanelWidth());
 
   /**
    * Toggle the left panel collapsed state.

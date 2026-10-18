@@ -89,39 +89,57 @@ impl MemoryStore {
 
     /// Adds +delta to the 7-day rolling counter (window anchored to the first event; auto-resets after 7 days). Used for quality probes; never blocks the main flow.
     pub fn rolling_bump(&self, key: &str, delta: i64) {
-        if delta == 0 {
+        self.rolling_bump_many(&[(key, delta)]);
+    }
+
+    /// M-8: batched variant for the retrieval hot path — all probe bumps of one
+    /// search land in a single transaction instead of one autocommit per bump
+    /// (each bump costs 1-3 statements: expiry read + window reset + increment,
+    /// so a recall's 5-7 probe writes previously meant 5-7 independent fsyncs).
+    /// Best-effort like rolling_bump: failures are logged, never block the flow.
+    pub fn rolling_bump_many(&self, bumps: &[(&str, i64)]) {
+        let bumps: Vec<(&str, i64)> = bumps.iter().copied().filter(|(_, d)| *d != 0).collect();
+        if bumps.is_empty() {
             return;
         }
         let Ok(conn) = self.conn.lock() else { return };
-        let now = now_iso();
-        let val_key = format!("{key}_val");
-        let ts_key = format!("{key}_ts");
-        let expired = match conn
-            .query_row("SELECT v FROM meta WHERE k = ?1", [&ts_key], |r| {
-                r.get::<_, String>(0)
-            })
-            .optional()
-        {
-            Ok(Some(ts)) => match (iso_to_secs(&ts), iso_to_secs(&now)) {
-                (Some(t0), Some(t1)) => t1.saturating_sub(t0) >= 7 * 86400,
-                _ => false,
-            },
-            _ => true,
+        let Ok(tx) = conn.unchecked_transaction() else {
+            return;
         };
-        if expired {
-            let _ = conn.execute(
-                "INSERT OR REPLACE INTO meta (k, v) VALUES (?1, ?2)",
-                params![&val_key, "0"],
-            );
-            let _ = conn.execute(
-                "INSERT OR REPLACE INTO meta (k, v) VALUES (?1, ?2)",
-                params![&ts_key, &now],
+        for (key, delta) in bumps {
+            let now = now_iso();
+            let val_key = format!("{key}_val");
+            let ts_key = format!("{key}_ts");
+            let expired = match tx
+                .query_row("SELECT v FROM meta WHERE k = ?1", [&ts_key], |r| {
+                    r.get::<_, String>(0)
+                })
+                .optional()
+            {
+                Ok(Some(ts)) => match (iso_to_secs(&ts), iso_to_secs(&now)) {
+                    (Some(t0), Some(t1)) => t1.saturating_sub(t0) >= 7 * 86400,
+                    _ => false,
+                },
+                _ => true,
+            };
+            if expired {
+                let _ = tx.execute(
+                    "INSERT OR REPLACE INTO meta (k, v) VALUES (?1, ?2)",
+                    params![&val_key, "0"],
+                );
+                let _ = tx.execute(
+                    "INSERT OR REPLACE INTO meta (k, v) VALUES (?1, ?2)",
+                    params![&ts_key, &now],
+                );
+            }
+            let _ = tx.execute(
+                "INSERT INTO meta (k, v) VALUES (?1, ?2) ON CONFLICT(k) DO UPDATE SET v = CAST(v AS INTEGER) + ?3",
+                params![&val_key, delta.to_string(), delta],
             );
         }
-        let _ = conn.execute(
-            "INSERT INTO meta (k, v) VALUES (?1, ?2) ON CONFLICT(k) DO UPDATE SET v = CAST(v AS INTEGER) + ?3",
-            params![&val_key, delta.to_string(), delta],
-        );
+        if let Err(e) = tx.commit() {
+            tracing::warn!("[memory] 检索质量探针批量写入失败（非阻塞）: {e}");
+        }
     }
 
     /// Reads the 7-day rolling counter.

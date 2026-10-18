@@ -28,6 +28,7 @@ pub mod project_index;
 pub mod project_map;
 pub mod sandbox;
 pub mod shell_tools;
+pub mod ssrf;
 pub mod think;
 pub mod time;
 pub mod token_counter;

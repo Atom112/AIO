@@ -156,6 +156,54 @@ const pushDelta = (sessionRowId: string, piece: 'content' | 'reasoning', text: s
   batch.timer = window.setTimeout(() => flushBatch(sessionRowId), FLUSH_MS);
 };
 
+// ===== M-5: tool_call_update coalescing =====
+//
+// Progressive tool-output updates arrive in bursts per tool call (each carrying
+// the FULL current content, so the last one wins). Unbatched, every update paid
+// a full draft-object clone + steps-array copy + a store write — the same
+// per-token amplification the text batches above already solved. Coalesce to
+// the LATEST update per (session, toolCallId) and apply once per 80ms window.
+// tool_call_end (final) and turn finalize flush synchronously first, so the
+// end's own content always lands after (and wins over) any pending update.
+
+interface ToolUpdateBatch {
+  text: string;
+  name?: string;
+  title?: string;
+  timer: number;
+}
+
+const toolUpdates = new Map<string, ToolUpdateBatch>();
+
+const toolUpdateKey = (sid: string, toolCallId: string) => `${sid}::${toolCallId}`;
+
+const flushToolUpdate = (key: string) => {
+  const entry = toolUpdates.get(key);
+  if (!entry) return;
+  toolUpdates.delete(key);
+  window.clearTimeout(entry.timer);
+  const sep = key.indexOf('::');
+  const sid = key.slice(0, sep);
+  const toolCallId = key.slice(sep + 2);
+  upsertDraft(sid, (draft) =>
+    upsertToolStep(
+      draft,
+      toolCallId,
+      (_step, toolCall) => {
+        if (entry.text) toolCall.content = entry.text;
+      },
+      { name: entry.name, title: entry.title },
+    ),
+  );
+};
+
+/** Flush every pending update of one session (turn finalize / error path). */
+const flushToolUpdatesFor = (sid: string) => {
+  for (const key of [...toolUpdates.keys()]) {
+    if (key.startsWith(`${sid}::`)) flushToolUpdate(key);
+  }
+};
+
 /** Diff text → "+N -M" summary for FileChangeInfo. */
 const diffSummary = (diff: string): string => {
   let added = 0;
@@ -185,6 +233,8 @@ const startDraft = (sessionRowId: string) => {
 /** Finalize the draft into a persisted assistant message. */
 const finalizeTurn = async (sessionRowId: string, error?: string) => {
   flushBatch(sessionRowId);
+  // M-5: pending tool-output updates must land before the draft is frozen.
+  flushToolUpdatesFor(sessionRowId);
   const draft = draftOf(sessionRowId);
   const drafts = { ...harnessDrafts() };
   delete drafts[sessionRowId];
@@ -258,20 +308,28 @@ const handleHarnessEvent = (payload: HarnessEventPayload) => {
         }),
       );
       break;
-    case 'tool_call_update':
-      upsertDraft(sid, (draft) =>
-        upsertToolStep(
-          draft,
-          event.toolCallId ?? '',
-          (_step, toolCall) => {
-            const text = event.content ?? event.rawOutput;
-            if (text) toolCall.content = text;
-          },
-          { name: event.name, title: event.title },
-        ),
-      );
+    case 'tool_call_update': {
+      // M-5: coalesce progressive updates — keep the latest per (session, tool
+      // call); the flush applies it once per 80ms window instead of per event.
+      const toolCallId = event.toolCallId ?? '';
+      if (!toolCallId) break;
+      const key = toolUpdateKey(sid, toolCallId);
+      const text = event.content ?? event.rawOutput;
+      const prev = toolUpdates.get(key);
+      if (text == null && !event.name && !event.title) break;
+      if (prev) window.clearTimeout(prev.timer);
+      toolUpdates.set(key, {
+        text: text ?? prev?.text ?? '',
+        name: event.name ?? prev?.name,
+        title: event.title ?? prev?.title,
+        timer: window.setTimeout(() => flushToolUpdate(key), FLUSH_MS),
+      });
       break;
+    }
     case 'tool_call_end':
+      // Final state — flush any pending update for this tool first so the end's
+      // content (the later, authoritative one) lands after it.
+      flushToolUpdate(toolUpdateKey(sid, event.toolCallId ?? ''));
       upsertDraft(sid, (draft) =>
         upsertToolStep(
           draft,

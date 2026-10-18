@@ -352,11 +352,16 @@ impl McpTransport for StdioTransportHandle {
 async fn kill_child_tree(child: &mut Child) {
     #[cfg(windows)]
     if let Some(pid) = child.id() {
-        let mut taskkill = Command::new("taskkill");
-        taskkill.args(["/PID", &pid.to_string(), "/T", "/F"]);
-        taskkill.hidden_console();
-        // taskkill 失败（权限/已退出）不阻塞关闭路径，下方 kill 兜底直接子进程
-        let _ = taskkill.output().await;
+        // SEC-06: AIO 自身的系统二进制 spawn 一律走 PATH-only 解析（裸名 spawn 的
+        // CreateProcess 搜索顺序先查应用目录/CWD 再查 PATH，违反本文件唯一入口约定）。
+        // 解析失败（极端 PATH 缺失）时跳过整树终止，由下方 kill 兜底直接子进程。
+        if let Some(taskkill) = crate::utils::exec_resolve::resolve_executable("taskkill") {
+            let mut cmd = Command::new(taskkill);
+            cmd.args(["/PID", &pid.to_string(), "/T", "/F"]);
+            cmd.hidden_console();
+            // taskkill 失败（权限/已退出）不阻塞关闭路径，下方 kill 兜底直接子进程
+            let _ = cmd.output().await;
+        }
     }
     // 直接子进程兜底（taskkill 失败/非 Windows）：tokio 的 child 只有 kill，无优雅关闭
     let _ = child.kill().await;

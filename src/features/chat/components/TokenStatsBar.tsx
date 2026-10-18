@@ -45,6 +45,17 @@ function usageColor(pct: number): string {
 }
 
 const TokenStatsBar: Component = () => {
+  // M-4: model-catalog meta lookup extracted into its own memo. It used to run
+  // inside the stats memo below, so EVERY stats-affecting event (each tool
+  // result / usage ping — 3-6 per tool call) re-scanned the whole models array;
+  // now it only recomputes when the selected model or catalog changes.
+  const modelMeta = createMemo(() => {
+    const cat = getCachedCatalog();
+    const mdl = selectedModel();
+    if (!cat || !mdl) return null;
+    return cat.models?.find((m: any) => m.id === mdl.model_id) ?? null;
+  });
+
   const stats = createMemo(() => {
     const asst = datas.assistants.find((a) => a.id === currentAssistantId());
     const topic = asst?.topics.find((t: Topic) => t.id === currentTopicId());
@@ -101,12 +112,10 @@ const TokenStatsBar: Component = () => {
         break;
       }
     }
-    const cat = getCachedCatalog();
-    const mdl = selectedModel();
-    if (cat && mdl) {
-      const meta = cat.models?.find((m: any) => m.id === mdl.model_id);
-      if (meta?.contextWindow && meta.contextWindow > 0) maxCtx = meta.contextWindow;
-      const pricing = meta?.pricing;
+    const meta = modelMeta();
+    if (meta) {
+      if (meta.contextWindow && meta.contextWindow > 0) maxCtx = meta.contextWindow;
+      const pricing = meta.pricing;
       if (pricing && pricing.input != null && pricing.output != null) {
         price = (input * pricing.input + output * pricing.output) / 1_000_000;
       }

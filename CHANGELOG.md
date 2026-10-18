@@ -92,6 +92,16 @@ cargo 424 Rust 测试（6 ignored 真机项）、78 前端测试、gates 全过�
 
 ## [Unreleased]
 
+### 🧹 审查遗留清偿轮：SEC-7/8/9 + 性能与前端遗留 9 项全部落地（详见 docs/reviews/code-review-2026-10.md 末节）
+
+- **[SEC-7 · MEDIUM] SSRF 防线公共化 + 钉扎接入**：`web_fetch` 的解析防线提取为 `utils/ssrf.rs`（策略分级：`PublicOnly` 保持全公网语义；`AllowLocalNoMetadata` 允许用户配置端点的本地/局域网（引擎与本地 MCP 合法）、云元数据段恒拒（169.254/16 + CGNAT + fe80::/10 + AWS fd00:ec2::254））。三面接线——MCP HTTP transport 启动时解析+`ClientBuilder::resolve` 钉扎（rebinding 无从翻转）；供应商连接测试 `build_http_client_pinned`（保留代理支持）；聊天热路径（post_chat_completion 全部 9 个调用点）经带 10 分钟 TTL 的 per-origin 钉扎客户端缓存——策略违规硬失败经既有错误通道透出，DNS 故障降级未钉扎保持连通语义
+- **[SEC-8 · LOW] 原生命令路径 TOCTOU 消除**：spawn 改 `CREATE_SUSPENDED`（`hidden_console_suspended`）→ 入 Job Object → Toolhelp32 定位主线程 `ResumeThread`（AC 路径同款挂起顺序）——子进程在入 Job 前无法执行，孙进程不再可能逃逸进程树围栏；恢复失败 fail-closed
+- **[SEC-9 · INFO] 降级密钥文件 DPAPI 包裹**：Windows 上 `.fallback-key` 改为 `dpapi-v1:` 前缀的 `CryptProtectData` 包裹（绑定当前用户+机器，拷贝/外传不可解）；旧 hex 格式首读时就地迁移（失败非致命下次重试）；keyring 路径不变（本就 DPAPI 支撑）
+- **性能遗留 7 项**：`load_app_config` 进程级 mtime 指纹缓存（一次工具调用 2-3 次磁盘读+JSON 解析+keychain IPC → 命中零成本）；代码索引每文件单事务（~2 万次 fsync → ~文件数次）；engine 停止 kill+wait 出锁上阻塞池；harness stop 固定 3s 睡眠改 50ms 协作轮询（3s 兜底）；检索质量探针单事务批量；npm 探针超时杀子进程（不再泄漏进程+线程）；harness 全部 16 个设置类命令走 spawn_blocking
+- **[前端 H-2] 消息粒度增量持久化（架构级）**：新命令 `upsert_topic_messages`（`TopicCore` 瘦载荷——绝不序列化 history + 逐消息 upsert 单事务）；4 个热路径（回合边界/占位符/done/工具结果）换装——UI 线程不再每回合做 O(session) 的全助手深克隆与全量 IPC，只克隆被改消息（长 agent 会话从每回合数 MB 降到 KB）；rename/压缩等低频路径保留全量保存
+- **[前端 M-4/M-5/M-12]**：TokenStatsBar 模型目录查找抽独立 memo（不再每工具事件重扫 models 数组）；harness `tool_call_update` 80ms 合并批处理（end/终结同步冲刷保序）；尾窗 append 方向锚定（chat+harness 两处）——上翻阅读时新回合追加不再顶替视口（窗口顶部锚点钉住），回底自动裁回尾窗
+- 验证：cargo **434** 测试全绿（+3：SSRF 策略/元数据段/DPAPI 往返回归）/ FE 15 套件 / gates（console-window 门禁同步接受 suspended 变体）/ i18n 1200
+
 ### 🛡 全量代码审查轮：安全加固 + 性能修复 + 依赖漏洞清偿（详见 docs/reviews/code-review-2026-10.md）
 
 - **依赖漏洞**：本地 lockfile 实测 13 条 RustSec 清零——`zip` 4.6.1→9.0.5（0369 为 CVSS 9.1 critical，附件解析只读 docx/pptx 故收敛为最小特性集 deflate，依赖树 -13 个解压器）、`tauri-plugin-updater` 2.10.1→2.14.0（其内部 zip ^4 经 audit.toml 带条件忽略：minisign 签名校验先于 extract，触发面已核实并注明复查条件）、`h2`/`quinn-proto`/`rustls`/`event-listener` 传递依赖升级；`cargo audit` 0 漏洞

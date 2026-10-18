@@ -42,6 +42,29 @@ export const loadAssistants = () => invoke<Assistant[]>('load_assistants');
 export const saveAssistant = (assistant: Assistant) =>
   invoke<void>('save_assistant', { assistant: assistant as unknown as Record<string, unknown> });
 
+/**
+ * Incrementally upsert one topic's core row plus the given messages (review H-2).
+ * The stream/tool-result hot path persists through this instead of a full
+ * saveAssistant (whose UI-thread deep clone + payload are O(session-so-far)).
+ * The topic payload is PROJECTED to its core fields — the history must never be
+ * serialized on this path. Never deletes — removals and every other mutation
+ * kind stay on the full save.
+ */
+export const upsertTopicMessages = (assistantId: string, topic: Topic, messages: Message[]) =>
+  invoke<void>('upsert_topic_messages', {
+    assistantId,
+    topic: {
+      id: topic.id,
+      name: topic.name,
+      summary: topic.summary,
+      renamed: topic.renamed,
+      branchedFromMessageId: topic.branchedFromMessageId,
+      parentTopicId: topic.parentTopicId,
+      contextTrimCount: topic.contextTrimCount,
+    },
+    messages: messages as unknown as Record<string, unknown>[],
+  });
+
 /** Delete an assistant. */
 export const deleteAssistant = (id: string) => invoke<void>('delete_assistant', { id });
 

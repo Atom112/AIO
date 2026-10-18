@@ -18,7 +18,11 @@ use tauri::{AppHandle, Manager, State};
 /// covering built-ins and user-registered custom ACP agents.
 #[tauri::command]
 pub async fn harness_detect_tools(app: AppHandle) -> Result<Vec<HarnessToolStatus>, String> {
-    Ok(registry::detect_tools(&app))
+    // M-11 (HOR-4 范式): the per-tool spawn-probe chain is real process I/O —
+    // blocking pool, never the async worker.
+    tokio::task::spawn_blocking(move || registry::detect_tools(&app))
+        .await
+        .map_err(|e| e.to_string())
 }
 
 /// List user-registered custom ACP agents.
@@ -481,18 +485,23 @@ pub async fn harness_instruction_read(
     tool_id: String,
     workspace_path: String,
 ) -> Result<HarnessInstruction, String> {
-    let path = instruction_path(&app, &tool_id, &workspace_path)?;
-    let exists = path.exists();
-    let content = if exists {
-        std::fs::read_to_string(&path).map_err(|e| e.to_string())?
-    } else {
-        String::new()
-    };
-    Ok(HarnessInstruction {
-        path: path.to_string_lossy().into_owned(),
-        exists,
-        content,
+    // M-11 (HOR-4 范式): settings-class fs I/O runs on the blocking pool.
+    tokio::task::spawn_blocking(move || {
+        let path = instruction_path(&app, &tool_id, &workspace_path)?;
+        let exists = path.exists();
+        let content = if exists {
+            std::fs::read_to_string(&path).map_err(|e| e.to_string())?
+        } else {
+            String::new()
+        };
+        Ok(HarnessInstruction {
+            path: path.to_string_lossy().into_owned(),
+            exists,
+            content,
+        })
     })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Write (create or overwrite) the workspace's instruction file for the tool —
@@ -504,8 +513,13 @@ pub async fn harness_instruction_write(
     workspace_path: String,
     content: String,
 ) -> Result<(), String> {
-    let path = instruction_path(&app, &tool_id, &workspace_path)?;
-    crate::core::fs_util::atomic_write(&path, content.as_bytes()).map_err(|e| e.to_string())
+    // M-11 (HOR-4 范式): settings-class fs I/O runs on the blocking pool.
+    tokio::task::spawn_blocking(move || {
+        let path = instruction_path(&app, &tool_id, &workspace_path)?;
+        crate::core::fs_util::atomic_write(&path, content.as_bytes()).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 // ===== Tool config files (settings pages — the CLI's own files are the
@@ -515,7 +529,10 @@ pub async fn harness_instruction_write(
 /// (existence / size / mtime / backup presence).
 #[tauri::command]
 pub async fn harness_tool_config_slots(tool_id: String) -> Result<Vec<ToolConfigSlotInfo>, String> {
-    crate::plugins::harness::toolconf::slots(&tool_id)
+    // M-11 (HOR-4 范式): 设置类命令的全部文件/子进程 I/O 走阻塞池，不再内联占用 async worker。
+    tokio::task::spawn_blocking(move || crate::plugins::harness::toolconf::slots(&tool_id))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 /// Read one config slot's content (+ the mtime staleness token for the
@@ -525,7 +542,10 @@ pub async fn harness_tool_config_read(
     tool_id: String,
     slot_id: String,
 ) -> Result<ToolConfigContent, String> {
-    crate::plugins::harness::toolconf::read(&tool_id, &slot_id)
+    // M-11 (HOR-4 范式): 设置类命令的全部文件/子进程 I/O 走阻塞池，不再内联占用 async worker。
+    tokio::task::spawn_blocking(move || crate::plugins::harness::toolconf::read(&tool_id, &slot_id))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 /// Write one config slot: format validation → one-time pre-AIO backup →
@@ -538,19 +558,32 @@ pub async fn harness_tool_config_write(
     content: String,
     expected_modified: Option<u64>,
 ) -> Result<(), String> {
-    crate::plugins::harness::toolconf::write(&tool_id, &slot_id, &content, expected_modified)
+    // M-11 (HOR-4 范式): 设置类命令的全部文件/子进程 I/O 走阻塞池，不再内联占用 async worker。
+    tokio::task::spawn_blocking(move || {
+        crate::plugins::harness::toolconf::write(&tool_id, &slot_id, &content, expected_modified)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Restore the pre-AIO backup over the current config file (atomic).
 #[tauri::command]
 pub async fn harness_tool_config_restore(tool_id: String, slot_id: String) -> Result<(), String> {
-    crate::plugins::harness::toolconf::restore_backup(&tool_id, &slot_id)
+    // M-11 (HOR-4 范式): 设置类命令的全部文件/子进程 I/O 走阻塞池，不再内联占用 async worker。
+    tokio::task::spawn_blocking(move || {
+        crate::plugins::harness::toolconf::restore_backup(&tool_id, &slot_id)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// DSH profile stack listing (read-only overview of $DSH_HOME/profiles).
 #[tauri::command]
 pub async fn harness_tool_dsh_profiles() -> Result<Vec<DshProfileInfo>, String> {
-    Ok(crate::plugins::harness::toolconf::dsh_profiles())
+    // M-11 (HOR-4 范式): settings-class fs I/O runs on the blocking pool.
+    tokio::task::spawn_blocking(crate::plugins::harness::toolconf::dsh_profiles)
+        .await
+        .map_err(|e| e.to_string())
 }
 /// Structured view of the tool's curated config keys (typed descriptors for
 /// the settings form; empty for tools without declarations).
@@ -558,7 +591,12 @@ pub async fn harness_tool_dsh_profiles() -> Result<Vec<DshProfileInfo>, String> 
 pub async fn harness_tool_structured_get(
     tool_id: String,
 ) -> Result<Vec<StructuredKeyInfo>, String> {
-    crate::plugins::harness::toolconf::structured_keys(&tool_id)
+    // M-11 (HOR-4 范式): 设置类命令的全部文件/子进程 I/O 走阻塞池，不再内联占用 async worker。
+    tokio::task::spawn_blocking(move || {
+        crate::plugins::harness::toolconf::structured_keys(&tool_id)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Set one curated config key (JSON `null` removes the key → tool default).
@@ -569,7 +607,12 @@ pub async fn harness_tool_structured_set(
     key: String,
     value: serde_json::Value,
 ) -> Result<(), String> {
-    crate::plugins::harness::toolconf::structured_set(&tool_id, &key, value)
+    // M-11 (HOR-4 范式): 设置类命令的全部文件/子进程 I/O 走阻塞池，不再内联占用 async worker。
+    tokio::task::spawn_blocking(move || {
+        crate::plugins::harness::toolconf::structured_set(&tool_id, &key, value)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 /// List a tool's markdown collection entries (skills / prompts / commands).
 #[tauri::command]
@@ -577,7 +620,12 @@ pub async fn harness_tool_md_entries(
     tool_id: String,
     kind: String,
 ) -> Result<Vec<MarkdownEntryInfo>, String> {
-    crate::plugins::harness::toolconf::markdown_entries(&tool_id, &kind)
+    // M-11 (HOR-4 范式): 设置类命令的全部文件/子进程 I/O 走阻塞池，不再内联占用 async worker。
+    tokio::task::spawn_blocking(move || {
+        crate::plugins::harness::toolconf::markdown_entries(&tool_id, &kind)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Read one markdown entry's content (empty when absent).
@@ -587,7 +635,12 @@ pub async fn harness_tool_md_read(
     kind: String,
     name: String,
 ) -> Result<String, String> {
-    crate::plugins::harness::toolconf::markdown_read(&tool_id, &kind, &name)
+    // M-11 (HOR-4 范式): 设置类命令的全部文件/子进程 I/O 走阻塞池，不再内联占用 async worker。
+    tokio::task::spawn_blocking(move || {
+        crate::plugins::harness::toolconf::markdown_read(&tool_id, &kind, &name)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Write (create or overwrite) one markdown entry (skill-dir shapes create
@@ -599,7 +652,12 @@ pub async fn harness_tool_md_write(
     name: String,
     content: String,
 ) -> Result<(), String> {
-    crate::plugins::harness::toolconf::markdown_write(&tool_id, &kind, &name, &content)
+    // M-11 (HOR-4 范式): 设置类命令的全部文件/子进程 I/O 走阻塞池，不再内联占用 async worker。
+    tokio::task::spawn_blocking(move || {
+        crate::plugins::harness::toolconf::markdown_write(&tool_id, &kind, &name, &content)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Delete one markdown entry (skill-dir: the whole skill directory).
@@ -609,14 +667,22 @@ pub async fn harness_tool_md_delete(
     kind: String,
     name: String,
 ) -> Result<(), String> {
-    crate::plugins::harness::toolconf::markdown_delete(&tool_id, &kind, &name)
+    // M-11 (HOR-4 范式): 设置类命令的全部文件/子进程 I/O 走阻塞池，不再内联占用 async worker。
+    tokio::task::spawn_blocking(move || {
+        crate::plugins::harness::toolconf::markdown_delete(&tool_id, &kind, &name)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 /// List the tool's MCP servers from its own config file (claude
 /// ~/.claude.json mcpServers, gemini settings, opencode mcp, codex
 /// config.toml [mcp_servers], goose extensions).
 #[tauri::command]
 pub async fn harness_tool_mcp_list(tool_id: String) -> Result<Vec<McpEntryInfo>, String> {
-    crate::plugins::harness::toolconf::mcp_list(&tool_id)
+    // M-11 (HOR-4 范式): 设置类命令的全部文件/子进程 I/O 走阻塞池，不再内联占用 async worker。
+    tokio::task::spawn_blocking(move || crate::plugins::harness::toolconf::mcp_list(&tool_id))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 /// Add/update one MCP server entry in the tool's native config shape.
@@ -626,11 +692,21 @@ pub async fn harness_tool_mcp_set(
     name: String,
     entry: McpEntryInfo,
 ) -> Result<(), String> {
-    crate::plugins::harness::toolconf::mcp_set(&tool_id, &name, &entry)
+    // M-11 (HOR-4 范式): 设置类命令的全部文件/子进程 I/O 走阻塞池，不再内联占用 async worker。
+    tokio::task::spawn_blocking(move || {
+        crate::plugins::harness::toolconf::mcp_set(&tool_id, &name, &entry)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Delete one MCP server entry.
 #[tauri::command]
 pub async fn harness_tool_mcp_delete(tool_id: String, name: String) -> Result<(), String> {
-    crate::plugins::harness::toolconf::mcp_delete(&tool_id, &name)
+    // M-11 (HOR-4 范式): 设置类命令的全部文件/子进程 I/O 走阻塞池，不再内联占用 async worker。
+    tokio::task::spawn_blocking(move || {
+        crate::plugins::harness::toolconf::mcp_delete(&tool_id, &name)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }

@@ -310,7 +310,46 @@ pub async fn test_provider_connection(
         ProviderManager::new().for_url(&api_url)
     };
 
-    let client = plugin.build_client(proxy_url.as_deref(), TEST_TIMEOUT_SECS)?;
+    // SEC-7: resolve + judge the endpoint NOW and pin the request to the validated
+    // address — the test request carries the real API key, so a rebinding flip
+    // (benign A record at check time, metadata/internal at connect time) must not
+    // be able to redirect it. Local/LAN endpoints stay legitimate (engines, custom
+    // gateways); only metadata ranges are refused outright. See utils::ssrf.
+    let pin = match url::Url::parse(&api_url) {
+        Ok(parsed) => {
+            match crate::utils::ssrf::resolve_pinned(
+                &parsed,
+                crate::utils::ssrf::ConnectPolicy::AllowLocalNoMetadata,
+            )
+            .await
+            {
+                crate::utils::ssrf::ResolveOutcome::Pinned { host, addr } => Some((host, addr)),
+                crate::utils::ssrf::ResolveOutcome::LiteralOk => None,
+                crate::utils::ssrf::ResolveOutcome::DnsUnavailable(m) => {
+                    tracing::warn!("[provider-test] 域名解析失败，使用未钉扎连接: {m}");
+                    None
+                }
+                crate::utils::ssrf::ResolveOutcome::Rejected(m) => {
+                    return Ok(TestConnectionResult {
+                        success: false,
+                        model_count: 0,
+                        sample_model_ids: vec![],
+                        error: Some(m),
+                        elapsed_ms: started.elapsed().as_millis(),
+                    })
+                }
+            }
+        }
+        // unreachable: the caller validates the URL shape before storing it; a
+        // parse failure here falls through to the normal request error path
+        Err(_) => None,
+    };
+    let client = crate::plugins::provider::build_http_client_pinned(
+        proxy_url.as_deref(),
+        TEST_TIMEOUT_SECS,
+        plugin.identifier(),
+        pin,
+    )?;
     let url = plugin.models_url(&api_url);
     let req = plugin.apply_auth(client.get(&url), &api_key);
 

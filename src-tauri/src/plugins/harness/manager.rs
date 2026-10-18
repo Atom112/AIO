@@ -251,8 +251,22 @@ impl HarnessManager {
         };
         let _ = runtime.cmd_tx.send(HarnessCommand::CancelTurn);
         // Grace window: a cooperative agent answers the pending prompt with
-        // stopReason=cancelled and emits TurnEnded itself.
-        tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+        // stopReason=cancelled and emits TurnEnded itself — its driver-reported
+        // state (last_states) flips off "running"/"connecting". M-7: poll for that
+        // cooperative completion at 50ms instead of a fixed 3s sleep, so a fast
+        // cooperative stop returns immediately; the 3s deadline remains the
+        // fallback for adapters that never report a state flip.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        loop {
+            let cooperative_done = self
+                .last_states
+                .get(&key)
+                .is_none_or(|s| s.as_str() != "running" && s.as_str() != "connecting");
+            if cooperative_done || std::time::Instant::now() >= deadline {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
         runtime.token.cancel();
         if let Some(child) = &runtime.child {
             kill_child_tree(child).await;

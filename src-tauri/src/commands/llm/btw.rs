@@ -47,7 +47,8 @@ pub async fn ask_btw_question(
         &crate::utils::url_validation::HttpUrlOptions::local_engine(),
     )?;
 
-    let client = super::client::streaming_http_client();
+    // SEC-7: pinned resolution (key-bearing request; local/LAN allowed, metadata refused)
+    let client = super::client::streaming_http_client_pinned(&api_url).await?;
     let body = json!({ "model": model, "messages": messages, "stream": true });
 
     let (res, is_anthropic) = match tokio::time::timeout(

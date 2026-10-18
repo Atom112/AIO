@@ -181,11 +181,6 @@ pub async fn index_code(
                 continue;
             }
         };
-        // MEM-04: 先按旧 chunk_id 清理 vec_code——重建会生成全新 uuid，旧 id 的
-        // 幽灵向量若不清理将永远留在 vec_code 里，持续消耗向量召回的 top-k 候选
-        // 名额（检索腿退化为纯 FTS）。必须先于 code_chunks 的删除执行（子查询
-        // 依赖旧 chunks 行）；表按需建，删除前确认存在。
-        delete_chunks_for_file(&conn, f.to_string_lossy().as_ref())?;
         // Contextual retrieval: the embedded text carries the relative path to improve semantic
         // chunk localization; display and FTS still use the raw code content
         let rel_path = std::path::Path::new(f)
@@ -209,10 +204,22 @@ pub async fn index_code(
             .map(|c| format!("文件：{rel_path}\n{}", c.content))
             .collect();
         let (emb_model, vecs) = embed_batch(app, project_root, &texts).await;
+
+        // M-4: all of the file's DB work in ONE transaction (vec0/chunk/fts deletes,
+        // every chunk INSERT + vec0 upsert + fts INSERT, and the file-state row).
+        // Previously each statement was its own autocommit — a ~10k-chunk repo paid
+        // ~20-30k independent fsyncs; one commit per file pays ~1x files.len().
+        // Opened AFTER the async embed so no lock is held across an await.
+        let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+        // MEM-04: 先按旧 chunk_id 清理 vec_code——重建会生成全新 uuid，旧 id 的
+        // 幽灵向量若不清理将永远留在 vec_code 里，持续消耗向量召回的 top-k 候选
+        // 名额（检索腿退化为纯 FTS）。必须先于 code_chunks 的删除执行（子查询
+        // 依赖旧 chunks 行）；表按需建，删除前确认存在。
+        delete_chunks_for_file(&tx, f.to_string_lossy().as_ref())?;
         for (i, chunk) in chunks.iter().enumerate() {
             let id = uuid::Uuid::new_v4().to_string();
             let vec = vecs.get(i).cloned().flatten();
-            conn.execute(
+            tx.execute(
                 "INSERT INTO code_chunks (id, file_path, start_line, end_line, content, symbol, embedding, embedding_model, embedding_dim, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
                 params![
                     id,
@@ -231,7 +238,7 @@ pub async fn index_code(
             if let Some(v) = vec {
                 // (审查修复 L-3) 向量写失败不静默降级为纯关键词检索——与 facts
                 // 路径"NULL vector must be VISIBLE"原则一致，失败必须可见。
-                if crate::services::memory::vec0::vec0_upsert_code(&conn, &id, &v).is_err() {
+                if crate::services::memory::vec0::vec0_upsert_code(&tx, &id, &v).is_err() {
                     tracing::warn!(
                         "[code-index] chunk 向量写入失败 (vec0)，该块降级为仅关键词检索: {}",
                         f.to_string_lossy()
@@ -239,18 +246,19 @@ pub async fn index_code(
                 }
                 result.embedded += 1;
             }
-            conn.execute(
+            tx.execute(
                 "INSERT OR REPLACE INTO fts_code (rowid, chunk_id, content, file_path) SELECT rowid, id, content, file_path FROM code_chunks WHERE id = ?1",
                 [&id],
             )
             .map_err(|e| e.to_string())?;
             result.chunks += 1;
         }
-        conn.execute(
+        tx.execute(
             "INSERT OR REPLACE INTO code_file_state (file_path, mtime_nanos, size_bytes) VALUES (?1, ?2, ?3)",
             params![f.to_string_lossy(), mtime, size as i64],
         )
         .map_err(|e| e.to_string())?;
+        tx.commit().map_err(|e| e.to_string())?;
         done += 1;
         on_progress(done, files.len().max(1));
     }

@@ -21,6 +21,7 @@ mod imp {
     type Dword = u32;
 
     const FALSE: Bool = 0;
+    const TRUE: Bool = 1;
     const JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE: Dword = 0x00002000;
     const JOB_OBJECT_LIMIT_ACTIVE_PROCESS: Dword = 0x00000008;
     const JOB_OBJECT_UILIMIT_DESKTOP: Dword = 0x00000040;
@@ -46,10 +47,39 @@ mod imp {
         fn CloseHandle(hObject: Handle) -> Bool;
 
         fn OpenProcess(dwDesiredAccess: Dword, bInheritHandle: Bool, dwProcessId: Dword) -> Handle;
+
+        // SEC-8: thread snapshot + resume — used to resume a child that was started
+        // with CREATE_SUSPENDED after it has joined its Job Object (assign-then-resume
+        // closes the CreateProcess→Assign TOCTOU window in which a fast-spawning child
+        // could put grandchildren outside the job).
+        fn CreateToolhelp32Snapshot(dwFlags: Dword, th32ProcessID: Dword) -> Handle;
+
+        fn Thread32First(hSnapshot: Handle, lpte: *mut ThreadEntry32) -> Bool;
+
+        fn Thread32Next(hSnapshot: Handle, lpte: *mut ThreadEntry32) -> Bool;
+
+        fn OpenThread(dwDesiredAccess: Dword, bInheritHandle: Bool, dwThreadId: Dword) -> Handle;
+
+        fn ResumeThread(hThread: Handle) -> Dword;
     }
 
     const PROCESS_SET_QUOTA: Dword = 0x0100;
     const PROCESS_TERMINATE: Dword = 0x0001;
+    /// Toolhelp thread-snapshot flag + thread access for ResumeThread.
+    const TH32CS_SNAPTHREAD: Dword = 0x0000_0004;
+    const THREAD_SUSPEND_RESUME: Dword = 0x0002;
+    const INVALID_HANDLE_VALUE: Handle = -1;
+
+    #[repr(C)]
+    struct ThreadEntry32 {
+        dw_size: Dword,
+        cnt_usage: Dword,
+        th32_thread_id: Dword,
+        th32_owner_process_id: Dword,
+        tp_base_pri: i32,
+        tp_delta_pri: i32,
+        dw_flags: Dword,
+    }
 
     #[repr(C)]
     struct IoCounters {
@@ -222,6 +252,67 @@ mod imp {
 
         Ok(JobGuard { handle: job })
     }
+
+    /// SEC-8: resumes the primary thread of a child spawned with CREATE_SUSPENDED.
+    ///
+    /// Called by the native command path after the child has joined its Job Object
+    /// (assign-then-resume): without the suspension there is a TOCTOU window in
+    /// which a fast-spawning child can put grandchildren outside the job before
+    /// `AssignProcessToJobObject` lands. A suspended process has exactly one
+    /// (never-run) thread — the snapshot below targets precisely it; if the thread
+    /// cannot be found or resumed the child is left frozen, so the caller must
+    /// treat an error as fatal for that execution (kill + error, never run-on).
+    pub(crate) fn resume_suspended_child_impl(pid: u32) -> Result<(), String> {
+        unsafe {
+            let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+            if snapshot == INVALID_HANDLE_VALUE || snapshot == 0 {
+                return Err(ierr!(
+                    "CreateToolhelp32Snapshot 失败 (pid {pid})",
+                    "CreateToolhelp32Snapshot failed (pid {pid})"
+                ));
+            }
+            let mut entry = ThreadEntry32 {
+                dw_size: std::mem::size_of::<ThreadEntry32>() as Dword,
+                cnt_usage: 0,
+                th32_thread_id: 0,
+                th32_owner_process_id: 0,
+                tp_base_pri: 0,
+                tp_delta_pri: 0,
+                dw_flags: 0,
+            };
+            let mut thread_handle: Handle = 0;
+            if Thread32First(snapshot, &mut entry) == TRUE {
+                loop {
+                    if entry.th32_owner_process_id == pid {
+                        thread_handle = OpenThread(THREAD_SUSPEND_RESUME, 0, entry.th32_thread_id);
+                        if thread_handle != 0 {
+                            break;
+                        }
+                    }
+                    if Thread32Next(snapshot, &mut entry) == FALSE {
+                        break;
+                    }
+                }
+            }
+            CloseHandle(snapshot);
+            if thread_handle == 0 {
+                return Err(ierr!(
+                    "未找到可恢复的子进程线程 (pid {pid})",
+                    "no resumable thread found for the child (pid {pid})"
+                ));
+            }
+            let prev = ResumeThread(thread_handle);
+            CloseHandle(thread_handle);
+            // 0xFFFFFFFF = the thread could not be resumed (invalid handle etc.)
+            if prev == Dword::MAX {
+                return Err(ierr!(
+                    "ResumeThread 失败 (pid {pid})",
+                    "ResumeThread failed (pid {pid})"
+                ));
+            }
+        }
+        Ok(())
+    }
 }
 
 /// Windows Job Object sandbox guard (created per execution; see the module header).
@@ -254,6 +345,15 @@ pub fn assign_to_job(child: &std::process::Child) -> Result<JobGuard, String> {
 #[cfg(windows)]
 pub fn create_job_for_pid(pid: u32) -> Result<JobGuard, String> {
     imp::create_job_for_pid_impl(pid)
+}
+
+/// SEC-8: resumes the primary thread of a child spawned with CREATE_SUSPENDED, after
+/// it has joined its per-execution Job Object (assign-then-resume — see
+/// [`resume_suspended_child_impl`]). The caller must kill the child and fail the
+/// execution when this returns Err: an unreached resume leaves the child frozen.
+#[cfg(windows)]
+pub fn resume_suspended_child(pid: u32) -> Result<(), String> {
+    imp::resume_suspended_child_impl(pid)
 }
 
 // ====== Windows AppContainer sandbox ======

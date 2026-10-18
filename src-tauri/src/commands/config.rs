@@ -309,12 +309,7 @@ fn persist_assistant_inner(
 
     // 3. Incrementally sync each topic
     for topic in &assistant.topics {
-        conn.execute(
-            "INSERT INTO topics (id, assistant_id, name, summary, renamed, branched_from_message_id, parent_topic_id, context_trim_count) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
-             ON CONFLICT(id) DO UPDATE SET name=?3, summary=?4, renamed=?5, branched_from_message_id=?6, parent_topic_id=?7, context_trim_count=?8",
-            params![topic.id, assistant.id, topic.name, topic.summary, topic.renamed as i64, topic.branched_from_message_id, topic.parent_topic_id, topic.context_trim_count],
-        )
-        .map_err(|e| e.to_string())?;
+        upsert_topic_row(conn, &assistant.id, topic)?;
 
         // 4. Incremental message sync
         // Messages sync by ID via the ON CONFLICT clause (insert new, update existing) instead of DELETE ALL + reinsert
@@ -342,44 +337,93 @@ fn persist_assistant_inner(
         }
 
         for msg in &topic.history {
-            let msg_id = msg
-                .id
-                .clone()
-                .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-            let files_json = serde_json::to_string(&msg.display_files).ok();
-            let content_json = serde_json::to_string(&msg.content).unwrap_or_default();
-            let tool_calls_json = serde_json::to_string(&msg.tool_calls).ok();
-
-            // Persist tool_call_id / name / tool_calls_json / input_tokens / output_tokens / cached_input_tokens / context_tokens / ttft_ms so tool-call sessions resume across restarts and token stats are kept.
-            // ON CONFLICT(id) DO UPDATE overwrites rows on re-save; DO NOTHING would leave stale content.
-            conn.execute(
-                "INSERT INTO messages (id, topic_id, role, content, model_id, display_files, display_text, reasoning, tool_call_id, name, tool_calls_json, input_tokens, output_tokens, agent_steps_json, interim_content, agent_start_time, parent_message_id, branch_index, images_json, cached_input_tokens, context_tokens, ttft_ms)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)
-                 ON CONFLICT(id) DO UPDATE SET
-                   content = excluded.content,
-                   reasoning = excluded.reasoning,
-                   tool_call_id = excluded.tool_call_id,
-                   name = excluded.name,
-                   tool_calls_json = excluded.tool_calls_json,
-                   display_files = excluded.display_files,
-                   display_text = excluded.display_text,
-                   input_tokens = excluded.input_tokens,
-                   output_tokens = excluded.output_tokens,
-                   cached_input_tokens = excluded.cached_input_tokens,
-                   context_tokens = excluded.context_tokens,
-                   ttft_ms = excluded.ttft_ms,
-                   agent_steps_json = excluded.agent_steps_json,
-                   interim_content = excluded.interim_content,
-                   agent_start_time = excluded.agent_start_time,
-                   parent_message_id = excluded.parent_message_id,
-                   branch_index = excluded.branch_index,
-                   images_json = excluded.images_json",
-                params![msg_id, topic.id, msg.role, content_json, msg.model_id, files_json, msg.display_text, msg.reasoning, msg.tool_call_id, msg.name, tool_calls_json, msg.input_tokens, msg.output_tokens, serde_json::to_string(&msg.agent_steps).ok(), msg.interim_content, msg.agent_start_time, msg.parent_message_id, msg.branch_index, serde_json::to_string(&msg.images).ok(), msg.cached_input_tokens, msg.context_tokens, msg.ttft_ms],
-            ).map_err(|e| e.to_string())?;
-            sync_message_attachments(conn, &msg_id, msg.display_files.as_ref())?;
+            upsert_message_row(conn, &topic.id, msg)?;
         }
     }
 
+    Ok(())
+}
+
+/// Upsert one topic row (shared by the full save and the incremental
+/// upsert_topic_messages path — review H-2).
+fn upsert_topic_row(
+    conn: &rusqlite::Connection,
+    assistant_id: &str,
+    topic: &Topic,
+) -> Result<(), String> {
+    conn.execute(
+        "INSERT INTO topics (id, assistant_id, name, summary, renamed, branched_from_message_id, parent_topic_id, context_trim_count) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+         ON CONFLICT(id) DO UPDATE SET name=?3, summary=?4, renamed=?5, branched_from_message_id=?6, parent_topic_id=?7, context_trim_count=?8",
+        params![topic.id, assistant_id, topic.name, topic.summary, topic.renamed as i64, topic.branched_from_message_id, topic.parent_topic_id, topic.context_trim_count],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Slim topic descriptor for the incremental persistence path (review H-2): the
+/// frontend sends only the topic's core fields — never the history (whose clone
+/// would reintroduce the O(session) cost the incremental path exists to remove).
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TopicCore {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub summary: Option<String>,
+    #[serde(default)]
+    pub renamed: bool,
+    #[serde(default)]
+    pub branched_from_message_id: Option<String>,
+    #[serde(default)]
+    pub parent_topic_id: Option<String>,
+    #[serde(default)]
+    pub context_trim_count: i64,
+}
+
+/// Upsert one message row by id (shared by the full save and the incremental
+/// upsert_topic_messages path — review H-2). Preserves the ON CONFLICT DO UPDATE
+/// semantics: re-saving overwrites so in-flight streaming edits land.
+fn upsert_message_row(
+    conn: &rusqlite::Connection,
+    topic_id: &str,
+    msg: &Message,
+) -> Result<(), String> {
+    let msg_id = msg
+        .id
+        .clone()
+        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+    let files_json = serde_json::to_string(&msg.display_files).ok();
+    let content_json = serde_json::to_string(&msg.content).unwrap_or_default();
+    let tool_calls_json = serde_json::to_string(&msg.tool_calls).ok();
+
+    // Persist tool_call_id / name / tool_calls_json / input_tokens / output_tokens / cached_input_tokens / context_tokens / ttft_ms so tool-call sessions resume across restarts and token stats are kept.
+    // ON CONFLICT(id) DO UPDATE overwrites rows on re-save; DO NOTHING would leave stale content.
+    conn.execute(
+        "INSERT INTO messages (id, topic_id, role, content, model_id, display_files, display_text, reasoning, tool_call_id, name, tool_calls_json, input_tokens, output_tokens, agent_steps_json, interim_content, agent_start_time, parent_message_id, branch_index, images_json, cached_input_tokens, context_tokens, ttft_ms)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)
+         ON CONFLICT(id) DO UPDATE SET
+           content = excluded.content,
+           reasoning = excluded.reasoning,
+           tool_call_id = excluded.tool_call_id,
+           name = excluded.name,
+           tool_calls_json = excluded.tool_calls_json,
+           display_files = excluded.display_files,
+           display_text = excluded.display_text,
+           input_tokens = excluded.input_tokens,
+           output_tokens = excluded.output_tokens,
+           cached_input_tokens = excluded.cached_input_tokens,
+           context_tokens = excluded.context_tokens,
+           ttft_ms = excluded.ttft_ms,
+           agent_steps_json = excluded.agent_steps_json,
+           interim_content = excluded.interim_content,
+           agent_start_time = excluded.agent_start_time,
+           parent_message_id = excluded.parent_message_id,
+           branch_index = excluded.branch_index,
+           images_json = excluded.images_json",
+        params![msg_id, topic_id, msg.role, content_json, msg.model_id, files_json, msg.display_text, msg.reasoning, msg.tool_call_id, msg.name, tool_calls_json, msg.input_tokens, msg.output_tokens, serde_json::to_string(&msg.agent_steps).ok(), msg.interim_content, msg.agent_start_time, msg.parent_message_id, msg.branch_index, serde_json::to_string(&msg.images).ok(), msg.cached_input_tokens, msg.context_tokens, msg.ttft_ms],
+    )
+    .map_err(|e| e.to_string())?;
+    sync_message_attachments(conn, &msg_id, msg.display_files.as_ref())?;
     Ok(())
 }
 
@@ -437,6 +481,58 @@ pub async fn save_assistant(app: tauri::AppHandle, assistant: Assistant) -> Resu
             e
         )
     })?
+}
+
+/// Incrementally upsert one topic's core row plus a caller-named set of its
+/// messages (review H-2). The stream/tool-result hot path used to persist
+/// through save_assistant — a full-assistant deep-clone on the UI thread plus a
+/// full IPC payload per round boundary, O(session-so-far) each time (quadratic
+/// over a long agent session, with multi-MB agent_steps payloads). This command
+/// costs O(sent messages): the caller clones just the mutated messages and the
+/// topic's core fields (TopicCore — never the history).
+///
+/// # Arguments
+/// - `assistant_id` — owning assistant (the topic row must reference it)
+/// - `topic` — the topic's current core fields (keeps the FK alive and lands
+///   mid-turn topic mutations like context_trim_count)
+/// - `messages` — the messages to upsert by id (insert new, update existing)
+///
+/// # Behavior
+/// One transaction on the blocking pool. Message deletion and every other
+/// mutation kind remain the full save's job — this path never deletes.
+#[tauri::command]
+pub async fn upsert_topic_messages(
+    app: tauri::AppHandle,
+    assistant_id: String,
+    topic: TopicCore,
+    messages: Vec<Message>,
+) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || {
+        let db_state = app.state::<DbState>();
+        let conn = db_state.0.lock();
+        conn.execute_batch("BEGIN IMMEDIATE")
+            .map_err(|e| e.to_string())?;
+        let result = (|| -> Result<(), String> {
+            conn.execute(
+                "INSERT INTO topics (id, assistant_id, name, summary, renamed, branched_from_message_id, parent_topic_id, context_trim_count) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+                 ON CONFLICT(id) DO UPDATE SET name=?3, summary=?4, renamed=?5, branched_from_message_id=?6, parent_topic_id=?7, context_trim_count=?8",
+                params![topic.id, assistant_id, topic.name, topic.summary, topic.renamed as i64, topic.branched_from_message_id, topic.parent_topic_id, topic.context_trim_count],
+            )
+            .map_err(|e| e.to_string())?;
+            for msg in &messages {
+                upsert_message_row(&conn, &topic.id, msg)?;
+            }
+            Ok(())
+        })();
+        if result.is_ok() {
+            conn.execute_batch("COMMIT").map_err(|e| e.to_string())?;
+        } else {
+            let _ = conn.execute_batch("ROLLBACK");
+        }
+        result
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Delete an assistant and its associated data.

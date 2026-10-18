@@ -5,6 +5,7 @@ import { createEffect, createSignal } from 'solid-js';
 import {
   deleteAssistant as deleteAssistantApi,
   saveAssistant as saveAssistantApi,
+  upsertTopicMessages,
 } from '../api/chat';
 import { listen } from '@tauri-apps/api/event';
 import { listSkills } from '../api/skills';
@@ -327,6 +328,33 @@ export const saveSingleAssistantToBackend = async (id: string) => {
   } catch (err) {
     console.error('Failed to save assistant:', err);
   }
+};
+
+/**
+ * Message-scoped incremental persistence (review H-2): upserts the topic's core
+ * row plus ONLY the named messages. Replaces the stream/tool-result hot path's
+ * full saveSingleAssistantToBackend, whose O(session-so-far) reactive-proxy deep
+ * clone blocked the UI thread at every round boundary (quadratic over a long
+ * agent session). Never deletes — removals and every other mutation kind stay
+ * on the full save.
+ */
+export const persistMessagesIncrementally = (
+  asstId: string,
+  topicId: string,
+  messageIds: string[],
+) => {
+  const asst = datas.assistants.find((a) => a.id === asstId);
+  const topic = asst?.topics.find((t) => t.id === topicId);
+  if (!asst || !topic) return;
+  const idSet = new Set(messageIds);
+  const messages = topic.history.filter((m) => m.id && idSet.has(m.id));
+  if (messages.length === 0) return;
+  // Clone ONLY the mutated messages (strip reactive proxies); the slim topic
+  // core is projected inside the API wrapper. O(mutated), not O(session).
+  const plain = JSON.parse(JSON.stringify(messages)) as Parameters<typeof upsertTopicMessages>[2];
+  void upsertTopicMessages(asstId, topic, plain).catch((err) =>
+    console.error('[persistMessagesIncrementally] failed:', err),
+  );
 };
 
 // ====== Topic title auto-rename ======

@@ -131,6 +131,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::config::load_assistants,
             commands::config::save_assistant,
+            commands::config::upsert_topic_messages,
             commands::config::delete_assistant,
             commands::config::set_locale,
             commands::config::save_app_config,

@@ -47,6 +47,134 @@ pub(crate) fn non_streaming_http_client() -> reqwest::Client {
     NON_STREAMING_CLIENT.clone()
 }
 
+// ===== SEC-7: per-origin pinned clients for the chat hot path =====
+//
+// The chat path carries the user's real API key on every request. `url_validation`
+// is static (its module doc records the DNS-rebinding gap), so a provider domain
+// could resolve benign at one moment and to a metadata/internal IP the next.
+// `utils::ssrf` resolves + judges NOW and hands back a pin pair; the client below
+// pins the connection to that validated address via `ClientBuilder::resolve`.
+//
+// Cache shape: the Client-per-origin reuse from the perf round is preserved — the
+// pinned client is cached by (flavor, origin) and re-resolved only after the TTL,
+// so a provider's legitimate DNS changes still propagate (within the TTL) while a
+// mid-stream rebinding flip is impossible. Policy is AllowLocalNoMetadata: local
+// engines on localhost are legitimate, metadata ranges never are.
+
+/// Re-resolve (and rebuild) a pinned client at most this often.
+const PIN_TTL: std::time::Duration = std::time::Duration::from_secs(600);
+
+struct PinnedClientEntry {
+    client: reqwest::Client,
+    resolved_at: std::time::Instant,
+}
+
+static PINNED_CLIENTS: LazyLock<
+    parking_lot::Mutex<std::collections::HashMap<String, PinnedClientEntry>>,
+> = LazyLock::new(|| parking_lot::Mutex::new(std::collections::HashMap::new()));
+
+/// Resolve the URL, judge it under the user-configured-endpoint policy, and return
+/// the client to use. `Ok(client)` on every path the request may proceed on;
+/// `Err` ONLY for policy violations, which the caller must surface as the request
+/// failure (the request must not go out).
+async fn pinned_client_for(api_url: &str, streaming: bool) -> Result<reqwest::Client, String> {
+    use crate::utils::ssrf::{resolve_pinned, ConnectPolicy, ResolveOutcome};
+
+    let parsed = match url::Url::parse(api_url) {
+        Ok(p) => p,
+        // Unparseable: let the request fail with reqwest's own error (unchanged behavior)
+        Err(_) => {
+            return Ok(if streaming {
+                streaming_http_client()
+            } else {
+                non_streaming_http_client()
+            })
+        }
+    };
+    let host = parsed.host_str().unwrap_or_default().to_string();
+    if host.is_empty() {
+        return Ok(if streaming {
+            streaming_http_client()
+        } else {
+            non_streaming_http_client()
+        });
+    }
+    let origin = match parsed.port() {
+        Some(p) => format!("{host}:{p}"),
+        None => host,
+    };
+    let cache_key = format!("{}|{}", if streaming { "s" } else { "n" }, origin);
+
+    // Fresh entry → reuse without touching DNS (hot path: zero cost beyond one map lookup)
+    if let Some(entry) = PINNED_CLIENTS.lock().get(&cache_key) {
+        if entry.resolved_at.elapsed() < PIN_TTL {
+            return Ok(entry.client.clone());
+        }
+    }
+
+    match resolve_pinned(&parsed, ConnectPolicy::AllowLocalNoMetadata).await {
+        ResolveOutcome::LiteralOk => Ok(base_client(streaming)),
+        ResolveOutcome::DnsUnavailable(m) => {
+            // Offline / resolver failure: keep connectivity semantics identical
+            // (the connect fails the same way). A stale pinned entry still wins —
+            // its address was validated when pinned.
+            tracing::warn!("[llm] 域名解析失败，使用未钉扎连接: {m}");
+            if let Some(entry) = PINNED_CLIENTS.lock().get(&cache_key) {
+                Ok(entry.client.clone())
+            } else {
+                Ok(base_client(streaming))
+            }
+        }
+        ResolveOutcome::Rejected(m) => Err(m),
+        ResolveOutcome::Pinned {
+            host: pin_host,
+            addr,
+        } => {
+            let mut builder = if streaming {
+                reqwest::Client::builder()
+                    .connect_timeout(std::time::Duration::from_secs(5))
+                    .timeout(std::time::Duration::from_secs(600))
+                    .tcp_keepalive(std::time::Duration::from_secs(30))
+                    .http2_keep_alive_interval(std::time::Duration::from_secs(30))
+            } else {
+                reqwest::Client::builder()
+                    .connect_timeout(std::time::Duration::from_secs(5))
+                    .timeout(std::time::Duration::from_secs(60))
+            };
+            builder = builder.resolve(&pin_host, addr);
+            let client = builder.build().unwrap_or_else(|_| reqwest::Client::new());
+            PINNED_CLIENTS.lock().insert(
+                cache_key,
+                PinnedClientEntry {
+                    client: client.clone(),
+                    resolved_at: std::time::Instant::now(),
+                },
+            );
+            Ok(client)
+        }
+    }
+}
+
+fn base_client(streaming: bool) -> reqwest::Client {
+    if streaming {
+        streaming_http_client()
+    } else {
+        non_streaming_http_client()
+    }
+}
+
+/// Streaming flavor of the pinned accessor (see the SEC-7 block above).
+pub(crate) async fn streaming_http_client_pinned(api_url: &str) -> Result<reqwest::Client, String> {
+    pinned_client_for(api_url, true).await
+}
+
+/// Non-streaming flavor of the pinned accessor (see the SEC-7 block above).
+pub(crate) async fn non_streaming_http_client_pinned(
+    api_url: &str,
+) -> Result<reqwest::Client, String> {
+    pinned_client_for(api_url, false).await
+}
+
 /// Sends a chat completion request — 阶段4 第5项（聊天路径统一出口）: the provider
 /// plugin system owns the whole request shape. `chat_completions_url` builds the
 /// endpoint, `apply_chat_auth` attaches auth (Bearer by default; Anthropic its

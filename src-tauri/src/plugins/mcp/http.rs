@@ -137,6 +137,24 @@ fn http_client() -> reqwest::Client {
         .unwrap_or_else(|_| reqwest::Client::new())
 }
 
+/// SEC-7: `http_client()` with the DNS resolution pinned to the pre-validated
+/// address (`ClientBuilder::resolve`). The transport carries real API-key headers
+/// (`${KEYRING:}` placeholders), so a rebinding flip — the domain resolving benign
+/// at check time and to a metadata/internal IP at connect time — must not be able
+/// to redirect those headers. See `utils::ssrf`.
+fn http_client_pinned(pin: Option<(String, std::net::SocketAddr)>) -> reqwest::Client {
+    match pin {
+        None => http_client(),
+        Some((host, addr)) => reqwest::Client::builder()
+            .connect_timeout(Duration::from_secs(5))
+            .timeout(Duration::from_secs(60))
+            .redirect(reqwest::redirect::Policy::none())
+            .resolve(&host, addr)
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new()),
+    }
+}
+
 /// HTTP transport internal state: url + headers + id counter + session id (Streamable)
 #[derive(Clone)]
 pub struct HttpTransportState {
@@ -249,10 +267,41 @@ impl super::McpServerPlugin for HttpPlugin {
         // but a dummy connection is still returned to satisfy the trait.
         // Real calls go through the HttpTransportState path.
         let headers = super::resolve_env_placeholders(&app, &config.id, &headers)?;
+        // SEC-7: resolve + judge now, pin the connection. MCP endpoints are
+        // user-configured (localhost/LAN allowed — local bridges are legitimate),
+        // but metadata ranges are refused outright and the pinned resolution closes
+        // the DNS-rebinding gap url_validation documents (its checks are static).
+        let pin = match url::Url::parse(&url) {
+            Ok(parsed) => {
+                match crate::utils::ssrf::resolve_pinned(
+                    &parsed,
+                    crate::utils::ssrf::ConnectPolicy::AllowLocalNoMetadata,
+                )
+                .await
+                {
+                    crate::utils::ssrf::ResolveOutcome::Pinned { host, addr } => Some((host, addr)),
+                    crate::utils::ssrf::ResolveOutcome::LiteralOk => None,
+                    crate::utils::ssrf::ResolveOutcome::DnsUnavailable(m) => {
+                        // Fall back to the unpinned client: an unreachable resolver
+                        // fails the connect exactly like today, and refusing here
+                        // would break legitimately-offline-at-start local servers.
+                        tracing::warn!("[mcp:http] 启动时域名解析失败，使用未钉扎连接: {m}");
+                        None
+                    }
+                    crate::utils::ssrf::ResolveOutcome::Rejected(m) => {
+                        return Err(McpError::TransportStartup(format!(
+                            "MCP HTTP server 端点被 SSRF 防线拒绝: {m}"
+                        )))
+                    }
+                }
+            }
+            // unreachable: validate_http_url just parsed this string successfully
+            Err(_) => None,
+        };
         let state = HttpTransportState {
             base_url: url,
             headers: Arc::new(headers),
-            client: http_client(),
+            client: http_client_pinned(pin),
             next_id: Arc::new(AtomicU64::new(1)),
             closed: Arc::new(AtomicBool::new(false)),
             session_id: Arc::new(parking_lot::Mutex::new(None)),

@@ -300,16 +300,71 @@ pub fn save_app_config(app: &AppHandle, config: &AppConfig) -> Result<(), String
     let json = serde_json::to_string_pretty(&disk).map_err(|e| e.to_string())?;
     // Atomic write (fsync before rename; a crash can never leave a truncated half-written config.json)
     crate::core::fs_util::atomic_write(&path, json.as_bytes()).map_err(|e| e.to_string())?;
+    // H-3: explicit invalidation — the keychain half of a save (api_key) does not
+    // touch the disk file, so the mtime fingerprint alone would miss it.
+    *config_cache().lock() = None;
     Ok(())
 }
 
+// ===== H-3: process-level config cache =====
+//
+// load_app_config is a tool hot path (the agent loop, memory pipeline and command
+// layer each read it — several loads per execute_command round, previously = several
+// disk reads + JSON parses + keychain IPC round-trips). The cache holds the loaded
+// AppConfig keyed by the config.json fingerprint (mtime, len); a save invalidates
+// it explicitly (the keychain half of a save does not change the file). Worst case
+// on a fingerprint alias (same mtime+len, different content — sub-mtime-granularity
+// external edits) is one stale read cycle, same class as any stat-based cache.
+
+struct ConfigCacheEntry {
+    config: AppConfig,
+    /// (modified, len) fingerprint of config.json at load time; None = no file.
+    fingerprint: Option<(std::time::SystemTime, u64)>,
+}
+
+static CONFIG_CACHE: std::sync::OnceLock<parking_lot::Mutex<Option<ConfigCacheEntry>>> =
+    std::sync::OnceLock::new();
+
+fn config_cache() -> &'static parking_lot::Mutex<Option<ConfigCacheEntry>> {
+    CONFIG_CACHE.get_or_init(|| parking_lot::Mutex::new(None))
+}
+
 /// Load the general app config (lazily migrates the legacy-schema plaintext api_key; returns defaults when no file exists).
+///
+/// H-3: served from the process-level cache while config.json's fingerprint holds;
+/// see the cache block above for the invalidation contract.
 pub fn load_app_config(app: &AppHandle) -> Result<AppConfig, String> {
     let path = crate::core::paths::app_config_dir()?.join("config.json");
+    let fingerprint = fs::metadata(&path).ok().map(|m| {
+        (
+            m.modified().unwrap_or(std::time::SystemTime::UNIX_EPOCH),
+            m.len(),
+        )
+    });
 
+    {
+        let cache = config_cache().lock();
+        if let Some(entry) = cache.as_ref() {
+            if entry.fingerprint == fingerprint {
+                return Ok(entry.config.clone());
+            }
+        }
+    }
+
+    let config = load_app_config_uncached(app, &path)?;
+    *config_cache().lock() = Some(ConfigCacheEntry {
+        config: config.clone(),
+        fingerprint,
+    });
+    Ok(config)
+}
+
+/// The uncached loader — the historic load_app_config body (file read + schema
+/// migration + keychain api_key resolution).
+fn load_app_config_uncached(app: &AppHandle, path: &std::path::Path) -> Result<AppConfig, String> {
     // Try the v2 schema first (no api_key field)
     if path.exists() {
-        if let Ok(content) = fs::read_to_string(&path) {
+        if let Ok(content) = fs::read_to_string(path) {
             if let Ok(disk) = serde_json::from_str::<AppConfigDisk>(&content) {
                 let api_key = secure_store::get(app, secure_store::accounts::APP_API_KEY)
                     .map_err(|e| e.to_string())?
@@ -338,7 +393,7 @@ pub fn load_app_config(app: &AppHandle) -> Result<AppConfig, String> {
                 };
                 if key_migrated {
                     if let Err(e) = crate::core::fs_util::atomic_write(
-                        &path,
+                        path,
                         serde_json::to_string_pretty(&disk)
                             .unwrap_or_default()
                             .as_bytes(),

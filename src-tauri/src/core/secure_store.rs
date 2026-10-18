@@ -7,8 +7,10 @@
 //!
 //! Calls may fail in environments without a GUI (no desktop session / no dbus).
 //! On failure, falls back to an AES-256-GCM encrypted file in AppData (the key is stored
-//! in keyring first, otherwise a 0600 local random key file — not machine-bound, only
-//! static obfuscation: any process able to read both files can decrypt).
+//! in keyring first, otherwise a local key file — on Windows the file is DPAPI-wrapped
+//! for the current user + machine (SEC-9), so a copied/exfiltrated key file is
+//! undecryptable elsewhere; other platforms keep the 0600 hex file, which remains
+//! static obfuscation only).
 //!
 //! Service identifier: `com.loch.aio`
 //! Account namespaces:
@@ -82,6 +84,190 @@ fn fallback_key_path(app: &AppHandle) -> Option<PathBuf> {
         .map(|d| d.join(".fallback-key"))
 }
 
+// ====== SEC-9: DPAPI wrapping of the fallback key file (Windows) ======
+//
+// The module doc historically admitted the file key is "not machine-bound, only
+// static obfuscation: any process able to read both files can decrypt". On
+// Windows, DPAPI (CryptProtectData with the default CURRENTUSER scope) binds the
+// blob to the current user + machine: a copied or exfiltrated `.fallback-key`
+// (and the AES-encrypted `secure-store.json` alongside it) becomes undecryptable
+// on any other session. The keyring path needs no change — Windows Credential
+// Manager is already DPAPI-backed. Non-Windows keeps the legacy hex format (the
+// report's suggestion is Windows-specific; macOS/Linux equivalents are
+// Keychain/libsecret, which are the primary paths there anyway).
+
+/// Marker prefix of the DPAPI-wrapped key-file format. Legacy installs hold a
+/// bare hex string; on first read they are migrated in place.
+#[cfg(windows)]
+const DPAPI_V1_PREFIX: &str = "dpapi-v1:";
+
+#[cfg(windows)]
+mod dpapi {
+    use std::ffi::c_void;
+
+    type Bool = i32;
+
+    #[repr(C)]
+    struct Blob {
+        cb_data: u32,
+        pb_data: *mut u8,
+    }
+
+    extern "system" {
+        fn CryptProtectData(
+            data_in: *const Blob,
+            sz_data_descr: *const u16,
+            optional_entropy: *const Blob,
+            reserved: *const c_void,
+            prompt_struct: *const c_void,
+            dw_flags: u32,
+            data_out: *mut Blob,
+        ) -> Bool;
+        fn CryptUnprotectData(
+            data_in: *const Blob,
+            ppsz_data_descr: *mut *mut u16,
+            optional_entropy: *const Blob,
+            reserved: *const c_void,
+            prompt_struct: *const c_void,
+            dw_flags: u32,
+            data_out: *mut Blob,
+        ) -> Bool;
+        fn LocalFree(h_mem: *mut c_void) -> *mut c_void;
+    }
+
+    /// Wraps `plaintext` for the current user + machine. `None` on failure (the
+    /// caller falls back to the legacy hex format with a warning — the store must
+    /// stay usable, and DPAPI failing on a live desktop session is essentially
+    /// unheard of).
+    pub fn protect(plaintext: &[u8]) -> Option<Vec<u8>> {
+        unsafe {
+            let in_blob = Blob {
+                cb_data: plaintext.len() as u32,
+                pb_data: plaintext.as_ptr() as *mut u8,
+            };
+            let mut out_blob = Blob {
+                cb_data: 0,
+                pb_data: std::ptr::null_mut(),
+            };
+            if CryptProtectData(
+                &in_blob,
+                std::ptr::null(),
+                std::ptr::null(),
+                std::ptr::null(),
+                std::ptr::null(),
+                0, // no CRYPTEXPORTABLE etc. — decrypt-only, same process/user
+                &mut out_blob,
+            ) == 0
+            {
+                return None;
+            }
+            let out = if out_blob.pb_data.is_null() || out_blob.cb_data == 0 {
+                None
+            } else {
+                Some(
+                    std::slice::from_raw_parts(out_blob.pb_data, out_blob.cb_data as usize)
+                        .to_vec(),
+                )
+            };
+            if !out_blob.pb_data.is_null() {
+                LocalFree(out_blob.pb_data as *mut c_void);
+            }
+            out
+        }
+    }
+
+    /// Unwraps a [`protect`]ed blob. `None` on failure (wrong user/machine, or
+    /// corruption — the caller surfaces an error: the data is undecryptable).
+    pub fn unprotect(ciphertext: &[u8]) -> Option<Vec<u8>> {
+        unsafe {
+            let in_blob = Blob {
+                cb_data: ciphertext.len() as u32,
+                pb_data: ciphertext.as_ptr() as *mut u8,
+            };
+            let mut out_blob = Blob {
+                cb_data: 0,
+                pb_data: std::ptr::null_mut(),
+            };
+            if CryptUnprotectData(
+                &in_blob,
+                std::ptr::null_mut(),
+                std::ptr::null(),
+                std::ptr::null(),
+                std::ptr::null(),
+                0,
+                &mut out_blob,
+            ) == 0
+            {
+                return None;
+            }
+            let out = if out_blob.pb_data.is_null() || out_blob.cb_data == 0 {
+                None
+            } else {
+                Some(
+                    std::slice::from_raw_parts(out_blob.pb_data, out_blob.cb_data as usize)
+                        .to_vec(),
+                )
+            };
+            if !out_blob.pb_data.is_null() {
+                LocalFree(out_blob.pb_data as *mut c_void);
+            }
+            out
+        }
+    }
+}
+
+/// Encodes the AES key into the key-file content format:
+/// - Windows: `dpapi-v1:<base64(DPAPI(key))>` (falls back to bare hex if DPAPI
+///   fails — the store must stay usable);
+/// - other platforms: bare hex (unchanged legacy format).
+fn encode_key_file_content(key: &[u8]) -> String {
+    #[cfg(windows)]
+    {
+        match dpapi::protect(key) {
+            Some(ct) => {
+                return format!("{DPAPI_V1_PREFIX}{}", general_purpose::STANDARD.encode(&ct))
+            }
+            None => {
+                tracing::warn!("[secure_store] DPAPI 包裹失败，密钥文件回退为明文 hex 格式");
+            }
+        }
+    }
+    #[cfg(not(windows))]
+    let _ = key;
+    hex::encode(key)
+}
+
+/// Decodes key-file content in either format (dpapi-v1 or legacy hex).
+/// Returns `None` when the content is undecodable/undecryptable.
+fn decode_key_file_content(content: &str) -> Option<[u8; AES_KEY_LEN]> {
+    let trimmed = content.trim();
+    #[cfg(windows)]
+    if let Some(b64) = trimmed.strip_prefix(DPAPI_V1_PREFIX) {
+        let ct = general_purpose::STANDARD.decode(b64).ok()?;
+        let plain = dpapi::unprotect(&ct)?;
+        if plain.len() == AES_KEY_LEN {
+            let mut key = [0u8; AES_KEY_LEN];
+            key.copy_from_slice(&plain);
+            return Some(key);
+        }
+        return None;
+    }
+    let bytes = hex::decode(trimmed).ok()?;
+    if bytes.len() == AES_KEY_LEN {
+        let mut key = [0u8; AES_KEY_LEN];
+        key.copy_from_slice(&bytes);
+        return Some(key);
+    }
+    None
+}
+
+/// Whether the key-file content is the DPAPI-wrapped format (drives the legacy
+/// migration: a bare-hex file read on Windows is re-wrapped in place).
+#[cfg(windows)]
+fn is_dpapi_wrapped(content: &str) -> bool {
+    content.trim().starts_with(DPAPI_V1_PREFIX)
+}
+
 // ====== AES-256-GCM key management ======
 
 /// Get or create the AES-256 encryption key for the fallback file.
@@ -112,13 +298,26 @@ fn get_fallback_key(app: &AppHandle) -> Result<[u8; AES_KEY_LEN]> {
     // 2. keyring unavailable: try reading the key from the file
     if let Some(path) = fallback_key_path(app) {
         if path.exists() {
-            if let Ok(hex_str) = fs::read_to_string(&path) {
-                if let Ok(bytes) = hex::decode(hex_str.trim()) {
-                    if bytes.len() == AES_KEY_LEN {
-                        let mut key = [0u8; AES_KEY_LEN];
-                        key.copy_from_slice(&bytes);
-                        return Ok(key);
+            if let Ok(content) = fs::read_to_string(&path) {
+                if let Some(key) = decode_key_file_content(&content) {
+                    // SEC-9 migration: a legacy bare-hex key file read on Windows is
+                    // re-wrapped with DPAPI in place (keyring already preferred; if
+                    // keyring recovered meanwhile, this branch is unreachable). A
+                    // failed migration write is non-fatal — retried next launch.
+                    #[cfg(windows)]
+                    if !is_dpapi_wrapped(&content) {
+                        let wrapped = encode_key_file_content(&key);
+                        if write_key_file_atomic(&path, &wrapped).is_ok() {
+                            tracing::info!(
+                                "[secure_store] 旧版 fallback-key 已就地迁移为 DPAPI 包裹"
+                            );
+                        } else {
+                            tracing::warn!(
+                                "[secure_store] DPAPI 迁移写入失败，保留旧格式待下次迁移"
+                            );
+                        }
                     }
+                    return Ok(key);
                 }
             }
         }
@@ -138,10 +337,11 @@ fn get_fallback_key(app: &AppHandle) -> Result<[u8; AES_KEY_LEN]> {
         }
 
         // keyring unavailable: write to file (atomic + 0600; the temp file also gets
-        // 0600 BEFORE content is written so the plaintext key is never briefly
-        // world-readable during the write window)
+        // 0600 BEFORE content is written so the key material is never briefly
+        // world-readable during the write window). SEC-9: on Windows the content
+        // is DPAPI-wrapped for the current user + machine (encode_key_file_content).
         let _ = fs::create_dir_all(path.parent().unwrap());
-        if write_key_file_atomic(&path, &hex_key).is_err() {
+        if write_key_file_atomic(&path, &encode_key_file_content(&key)).is_err() {
             return Err(SecureStoreError::FallbackIo(
                 "无法写入 fallback 密钥文件".into(),
             ));
@@ -388,6 +588,37 @@ pub fn set_reported(app: &AppHandle, account: &str, value: &str) -> bool {
             tracing::error!("安全存储写入失败 (account={account}): {e}");
             false
         }
+    }
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+    use super::*;
+
+    /// SEC-9: DPAPI protect → unprotect round-trips for the fallback key material,
+    /// and the key-file content codec survives the same round-trip. DPAPI is
+    /// user+machine-bound, so the test runs only where it was protected.
+    #[test]
+    fn dpapi_key_file_roundtrip() {
+        let key: [u8; AES_KEY_LEN] = std::array::from_fn(|i| i as u8 ^ 0x5A);
+        let content = encode_key_file_content(&key);
+        assert!(
+            is_dpapi_wrapped(&content),
+            "Windows 上的密钥文件内容应为 DPAPI 包裹格式: {content:?}"
+        );
+        let decoded = decode_key_file_content(&content)
+            .expect("DPAPI 包裹的密钥文件应能在同一用户/机器上解回");
+        assert_eq!(decoded, key);
+    }
+
+    /// Legacy bare-hex content stays decodable (existing installs) — the in-place
+    /// DPAPI migration reads through this path exactly once per install.
+    #[test]
+    fn legacy_hex_key_file_decodes() {
+        let key: [u8; AES_KEY_LEN] = std::array::from_fn(|i| i as u8 ^ 0xA5);
+        let legacy = hex::encode(key);
+        assert!(!is_dpapi_wrapped(&legacy));
+        assert_eq!(decode_key_file_content(&legacy), Some(key));
     }
 }
 

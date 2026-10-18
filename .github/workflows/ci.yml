@@ -100,6 +100,17 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
+      - name: Use official crates registry on CI runners
+        shell: bash
+        run: |
+          # The repo ships a crates.io → rsproxy CN-mirror replacement for dev
+          # machines with flaky IPv6/Schannel TLS (see the development guide,
+          # which documents removing it when the official source is reachable).
+          # GitHub runners sit close to the official registry and far from the
+          # CN mirror — fetches through rsproxy stall (transfer too slow) or
+          # take minutes. Drop the replacement so cargo talks to crates.io.
+          rm -f .cargo/config.toml
+
       - name: Cache cargo build
         uses: Swatinem/rust-cache@v2
         with:

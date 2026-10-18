@@ -84,16 +84,19 @@ fn truncate_tool_result_inner(s: &str) -> String {
     let tail = TOOL_RESULT_MAX_BYTES - head;
     let head_end = s.floor_char_boundary(head.min(s.len()));
     let tail_start = s.floor_char_boundary(s.len().saturating_sub(tail));
+    // (审查修复 L-4) 长度提示用字符数：`s.len()` 是 UTF-8 字节数，中文场景下
+    // 虚高约 3 倍，对模型是误导性元信息。
+    let total_chars = s.chars().count();
     if tail_start > head_end {
         format!(
             "{}\n\n... [已截断: 共{}字符，保留首尾] ...\n\n{}",
             &s[..head_end],
-            s.len(),
+            total_chars,
             &s[tail_start..]
         )
     } else {
         let safe_end = s.floor_char_boundary(TOOL_RESULT_MAX_BYTES.min(s.len()));
-        format!("{}\n\n... [已截断: 共{}字符]", &s[..safe_end], s.len())
+        format!("{}\n\n... [已截断: 共{}字符]", &s[..safe_end], total_chars)
     }
 }
 

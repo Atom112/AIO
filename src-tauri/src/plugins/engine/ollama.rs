@@ -13,6 +13,7 @@ use std::future::Future;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
+use std::sync::LazyLock;
 use std::time::Duration;
 use tauri::AppHandle;
 use tracing::{debug, warn};
@@ -141,11 +142,20 @@ fn ollama_http_reachable_at(host: &str, port: u16) -> bool {
     .unwrap_or(false)
 }
 
+/// (PERF 审查修复) 就绪探测单例：start() 的就绪轮询每 500ms 一次，此前每次迭代
+/// `Client::new()` 新建一个连接池——一次启动凭空新建数十个 Client。
+static REACHABLE_PROBE_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
+    reqwest::Client::builder()
+        .timeout(Duration::from_secs(2))
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new())
+});
+
 /// Async variant: check whether the Ollama HTTP endpoint is reachable (for polling inside start())
 /// ENG-12: same 2xx requirement as the blocking variant.
 async fn ollama_http_reachable_async(host: &str, port: u16) -> bool {
     let url = format!("http://{}:{}/api/version", host, port);
-    reqwest::Client::new()
+    REACHABLE_PROBE_CLIENT
         .get(&url)
         .timeout(Duration::from_secs(2))
         .send()
@@ -416,6 +426,27 @@ impl LocalEnginePlugin for OllamaPlugin {
                 let deadline = std::time::Instant::now() + Duration::from_secs(30);
                 loop {
                     if std::time::Instant::now() > deadline {
+                        // (审查修复 M-5) 超时路径必须回收子进程并撤销注册——此前
+                        // 直接 return Err，残留一个后台 `ollama serve` 孤儿进程，
+                        // 且状态表仍登记为"运行中"（与 llama.cpp 超时路径的 kill+wait
+                        // 行为对齐，ENG-06：kill 后 wait 防僵尸）。
+                        let child = {
+                            let mut engines = state.lock();
+                            let child = engines
+                                .get_mut(self.identifier())
+                                .and_then(|inner| inner.child_process.take());
+                            // 子进程已被取走：撤销整个注册条目（LocalEngineInner
+                            // 只有 child_process 一个字段，空条目无保留价值）
+                            if child.is_none() {
+                                engines.remove(self.identifier());
+                            }
+                            child
+                        };
+                        if let Some(mut child) = child {
+                            debug!("[ollama] 启动超时，终止残留的 ollama serve 子进程");
+                            let _ = child.kill();
+                            let _ = child.wait();
+                        }
                         return Err(ierr!(
                             "Ollama 服务启动超时",
                             "Ollama service startup timed out"

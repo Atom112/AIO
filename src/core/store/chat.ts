@@ -35,6 +35,7 @@ import {
 import { currentProjectId, projects } from './project';
 import { isDarkMode, themeColor } from './ui-prefs';
 import { selectAutoStartIds } from '../utils/mcp';
+import { t } from '../i18n';
 export interface DatasState {
   /** All assistants, including their topics and message trees */
   assistants: Assistant[];
@@ -549,7 +550,16 @@ export const ensureProjectAssistant = async (projectId: string): Promise<string>
       projectId,
       mcpServerIds: ['__aio-filesystem__'],
       skillIds: [],
-      topics: [{ id: Date.now().toString(), name: '默认话题', history: [], summary: '' }],
+      topics: [
+        {
+          id: Date.now().toString(),
+          // M1 (i18n): 历史硬编码中文会随英文界面落库显示；与 ChatPage 的默认话题
+          // 创建路径对齐，走 t()（键 chat.defaultTopic 双语均有）。
+          name: t('chat.defaultTopic'),
+          history: [],
+          summary: '',
+        },
+      ],
     };
     setDatas('assistants', (prev) => [...prev, asst!]);
     await saveSingleAssistantToBackend(asst.id);

@@ -194,6 +194,27 @@ export function registerChatStreamListeners(): Promise<UnlistenFn>[] {
   };
 
   // ===== Subagent live streaming (harness round 11) =====
+  // H-1 (perf): subagent deltas arrive per SSE token — same granularity as the main
+  // llm-chunk stream, which batches at 80ms via pushToBatch. Applying each delta
+  // straight to the store meant one setDatas(produce(...)) + a full subagentSteps
+  // array copy per token (and ×N under maxConcurrentSubagents). The deltas funnel
+  // through the same keyed batching here; the flush re-runs the append once per
+  // window with the accumulated text.
+  interface SubagentBatch {
+    kind: 'content' | 'thinking';
+    round: number;
+    text: string;
+    timer: number;
+  }
+  const subagentBatches = new Map<string, SubagentBatch>();
+  const SUBAGENT_FLUSH_MS = 80;
+  const subagentBatchKey = (
+    assistantId: string,
+    topicId: string,
+    subagentId: string,
+    kind: string,
+  ) => `${assistantId}::${topicId}::${subagentId}::${kind}`;
+
   // Shared mutator: applies fn to the subagentSteps array of the given subagent
   // inside the last assistant message of the (assistant, topic). All subagent-*
   // listeners below funnel through it.
@@ -229,9 +250,72 @@ export function registerChatStreamListeners(): Promise<UnlistenFn>[] {
     );
   };
 
-  // Live streaming delta (text / reasoning): append to the round's RUNNING stream
-  // step — one step per (round, kind) accumulates the full text, giving the
-  // standalone subagent view the same live fidelity as the main conversation.
+  // Append accumulated text to the round's RUNNING stream step — one step per
+  // (round, kind) accumulates the full text, giving the standalone subagent view
+  // the same live fidelity as the main conversation.
+  const applySubagentDelta = (
+    parentAssistantId: string,
+    parentTopicId: string,
+    subagentId: string,
+    kind: 'content' | 'thinking',
+    round: number,
+    content: string,
+  ) => {
+    if (!content) return;
+    mutateSubagentSteps(parentAssistantId, parentTopicId, subagentId, (steps) => {
+      for (let i = steps.length - 1; i >= 0; i--) {
+        const s = steps[i];
+        if (s.round !== round) break; // steps are appended in round order
+        if (s.type === kind && s.status === 'running') {
+          const next = steps.slice();
+          next[i] = { ...next[i], summary: (next[i].summary || '') + content };
+          return next;
+        }
+      }
+      return [
+        ...steps,
+        {
+          id: `sub${kind}-${round}-${Date.now()}`,
+          type: kind,
+          timestamp: Date.now(),
+          status: 'running' as const,
+          summary: content,
+          round,
+        },
+      ];
+    });
+  };
+
+  /** Flush one subagent batch (drops the batch even if the target vanished). */
+  const flushSubagentBatch = (key: string) => {
+    const batch = subagentBatches.get(key);
+    if (!batch) return;
+    subagentBatches.delete(key);
+    window.clearTimeout(batch.timer);
+    // key = assistant::topic::subagent::kind
+    const [assistantId, topicId, subagentId, kind] = key.split('::');
+    applySubagentDelta(
+      assistantId,
+      topicId,
+      subagentId,
+      kind as 'content' | 'thinking',
+      batch.round,
+      batch.text,
+    );
+  };
+
+  /** Flush every batch of one subagent (done/error/status-change ordering). */
+  const flushSubagentBatchesFor = (assistantId: string, topicId: string, subagentId: string) => {
+    for (const key of [...subagentBatches.keys()]) {
+      if (key.startsWith(`${assistantId}::${topicId}::${subagentId}::`)) {
+        flushSubagentBatch(key);
+      }
+    }
+  };
+
+  // Live streaming delta (text / reasoning): batched per (assistant, topic,
+  // subagent, kind); a round change flushes the previous round's batch first so
+  // text lands in round order.
   const handleSubagentDelta =
     (kind: 'content' | 'thinking') =>
     (payload: {
@@ -242,28 +326,21 @@ export function registerChatStreamListeners(): Promise<UnlistenFn>[] {
       content: string;
     }) => {
       const { parent_assistant_id, parent_topic_id, subagent_id, round, content } = payload;
-      mutateSubagentSteps(parent_assistant_id, parent_topic_id, subagent_id, (steps) => {
-        for (let i = steps.length - 1; i >= 0; i--) {
-          const s = steps[i];
-          if (s.round !== round) break; // steps are appended in round order
-          if (s.type === kind && s.status === 'running') {
-            const next = steps.slice();
-            next[i] = { ...next[i], summary: (next[i].summary || '') + content };
-            return next;
-          }
-        }
-        return [
-          ...steps,
-          {
-            id: `sub${kind}-${round}-${Date.now()}`,
-            type: kind,
-            timestamp: Date.now(),
-            status: 'running' as const,
-            summary: content,
-            round,
-          },
-        ];
-      });
+      if (!content) return;
+      const key = subagentBatchKey(parent_assistant_id, parent_topic_id, subagent_id, kind);
+      const batch = subagentBatches.get(key);
+      if (batch && batch.round !== round) {
+        flushSubagentBatch(key);
+      } else if (batch) {
+        batch.text += content;
+        return;
+      }
+      const fresh: SubagentBatch = { kind, round, text: content, timer: 0 };
+      fresh.timer = window.setTimeout(
+        () => flushSubagentBatch(key),
+        SUBAGENT_FLUSH_MS,
+      ) as unknown as number;
+      subagentBatches.set(key, fresh);
     };
 
   return [
@@ -923,6 +1000,9 @@ export function registerChatStreamListeners(): Promise<UnlistenFn>[] {
     // and the status-bar spinner never stops.
     listen<SubagentDonePayload>(EVENTS.subagentDone, (e) => {
       const { parent_assistant_id, parent_topic_id, subagent_id, result } = e.payload;
+      // H-1: flush pending delta batches first so the final partial text lands
+      // synchronously with the completion flip (not 80ms later).
+      flushSubagentBatchesFor(parent_assistant_id, parent_topic_id, subagent_id);
       const finishTime = Date.now();
       setDatas(
         'assistants',
@@ -956,6 +1036,8 @@ export function registerChatStreamListeners(): Promise<UnlistenFn>[] {
     // or it stays 'running' forever and the status-bar spinner never stops.
     listen<SubagentErrorPayload>(EVENTS.subagentError, (e) => {
       const { parent_assistant_id, parent_topic_id, subagent_id, error } = e.payload;
+      // H-1: flush pending delta batches first (same rationale as subagent-done).
+      flushSubagentBatchesFor(parent_assistant_id, parent_topic_id, subagent_id);
       setDatas(
         'assistants',
         (a) => a.id === parent_assistant_id,

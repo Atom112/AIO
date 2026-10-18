@@ -58,6 +58,25 @@ pub fn run() {
             .decorations(false)
             .transparent(transparent)
             .shadow(false)
+            // F1 纵深防御（SEC 审查）：主窗口默认对一切导航放行——模型输出里的
+            // 链接（Markdown.tsx 已做点击拦截）之外的任何未来渲染点一旦漏拦，
+            // 无边框无地址栏的可信窗口即可被整体导航到任意远程页面（应用内钓鱼）。
+            // 此处只放行应用自身来源：release 的 tauri:// 与 http://tauri.localhost、
+            // dev 的 localhost:1420、asset 协议（convertFileSrc 图像）、以及分享预览
+            // 的 about:srcdoc iframe。
+            .on_navigation(|url| {
+                let s = url.as_str();
+                let allowed = s.starts_with("tauri://localhost")
+                    || s.starts_with("http://tauri.localhost")
+                    || s.starts_with("http://localhost:1420")
+                    || s.starts_with("asset://localhost")
+                    || s.starts_with("http://asset.localhost")
+                    || s.starts_with("about:");
+                if !allowed {
+                    tracing::warn!("[navigation] 拒绝外部导航: {s}");
+                }
+                allowed
+            })
             .build()?;
             // Webview base color: transparent on non-Linux (desktop shows through outside the rounded corners); opaque on Linux to avoid compositing overhead
             #[cfg(not(target_os = "linux"))]

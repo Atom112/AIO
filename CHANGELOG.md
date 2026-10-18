@@ -92,6 +92,19 @@ cargo 424 Rust 测试（6 ignored 真机项）、78 前端测试、gates 全过�
 
 ## [Unreleased]
 
+### 🛡 全量代码审查轮：安全加固 + 性能修复 + 依赖漏洞清偿（详见 docs/reviews/code-review-2026-10.md）
+
+- **依赖漏洞**：本地 lockfile 实测 13 条 RustSec 清零——`zip` 4.6.1→9.0.5（0369 为 CVSS 9.1 critical，附件解析只读 docx/pptx 故收敛为最小特性集 deflate，依赖树 -13 个解压器）、`tauri-plugin-updater` 2.10.1→2.14.0（其内部 zip ^4 经 audit.toml 带条件忽略：minisign 签名校验先于 extract，触发面已核实并注明复查条件）、`h2`/`quinn-proto`/`rustls`/`event-listener` 传递依赖升级；`cargo audit` 0 漏洞
+- **安全修复（2 HIGH / 2 MEDIUM / 1 LOW 批量）**：
+  - **[SEC-1] web_fetch SSRF 绕过根修**：`is_public_addr` 的 V6 分支未查 IPv4-mapped 形态——攻击者发布一条 `::ffff:169.254.169.254` 的 AAAA 记录即可穿过全部防线经双栈套接字连进内网/元数据端点。修复：`to_ipv4()` 前置（mapped+compatible 双形态）+ 6to4 `2002::/16` 与 NAT64 `64:ff9b::/96` 内嵌 v4 判定，+14 条正负回归断言（测试当场抓出初版 NAT64 位索引错误）
+  - **[SEC-2] `sandboxUnsandboxedFallback` 默认值四源对齐 false**：字段文档承诺 "Default false" 但 `AppConfig::default()` 与 serde 缺字段均为 true——全新安装等于默认打开完全权限档下唯一的沙箱逃逸通道。修复 + 默认一致性回归测试（已装用户磁盘显式值不受影响）
+  - **[SEC-3] 链接整体导航拦截**：模型输出链接可整体导航无边框可信窗口（应用内钓鱼）。双层：Markdown 渲染面事件委托拦截 → `openSafeUrl`（http/https 白名单 + 系统浏览器）；`lib.rs` 补 `on_navigation` 白名单（tauri/asset/dev 端口/about:）作纵深
+  - **[SEC-4] DOMPurify 收敛 + aio-image 闸**：FORBID 封表单类标签（防气泡内仿冒 UI）、`target` 属性移除、`aio-image://` 解码后强制绝对路径+attachments 段双校验、`src/alt/title` 全转义
+  - **[SEC-5/6] 并发与加固**：`atomic_write` 唯一 tmp 后缀（并发写同一目标不再可能 rename 出双方半写拼接——「绝不半写」承诺修复 + 双线程×20 次交替写回归测试）；mcp 信任存储与 mcp-servers.json 读-改-写全程持进程锁（后写不再覆盖先写）；taskkill 走 PATH 解析（SEC-06 自约定）；mcp_fs_server stderr 不再广播文件内容 + 16MB stdin 上限 + 字符边界截断（中文 JSON 不再 panic）；secure_store 降级分支首访互斥（不再可能生成两把密钥致条目永久失解）
+- **性能修复（3 HIGH + 主要 MEDIUM）**：`reqwest::Client` 双 LazyLock 单例（连接池复用，ollama 就绪轮询不再每 500ms 新建 Client）；`scan_installed_engines` 整链 spawn_blocking（启动扫描不再占用 async worker 数秒~数十秒，vLLM 探测 3 次/候选 → 1 次）；主聊天库 WAL + busy_timeout（每轮多次 fsync → append-only）；多 MB 检查点快照 spawn_blocking 落盘（顺序语义不变）；非 Anthropic 路径去整消息数组深拷贝；ollama 启动超时杀子进程撤销注册（不再留孤儿 + 假「运行中」）；5 个同步 Tauri 命令改 async；**子代理流补 80ms 键控批处理管线**（此前逐 token 写 store 绕过批处理，并发子代理放大）；右栏拖拽改「预览信号 + 释放提交」（不再逐像素写 localStorage 60-240 次/秒）；截断提示改字符数（中文不再虚高 3 倍）
+- **可维护性**：2 处 i18n 违规（硬编码「默认话题」/ 命令中文 label）修正；AgentProcessBlock 两个模块级无界缓存加上界（动画 ID 4096 / 泄漏轮 16 + 逐出清 timer）；4 处吞错可见化（检查点写/终态标记/用量记录/代码索引向量写——失败不再静默丢数据）
+- 验证：cargo **431** 测试全绿（+2 回归）/ 78 FE / gates / i18n 1200 / `cargo audit` 0 / `npm audit` 0
+
 ### ⚡ 长会话切换加载提速（消息列表分段渲染补全）
 
 - **根因实测**：切换到消息记录很长的会话时等待较久——两层全量挂载：① Harness 工作台话题消息**完全没有分页**（`For each` 全量渲染，chat 页 0.8.1 起就有 40 条尾窗 + 哨兵机制）；② chat 页虽然消息级有尾窗，但**历史回合的步骤时间线走「一次性全渲染」路径**（Inactive 分支 `setVisibleIds(全部)`），而外层折叠（max-height:0）**不阻止挂载**——本机实测最大话题 12 条消息但单回合 4.9MB `agent_steps_json`（数百步骤卡，每张带信号与入场动画），切话题时全部一次性建 DOM，这就是卡顿主体

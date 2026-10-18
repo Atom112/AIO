@@ -1043,16 +1043,27 @@ impl AgentTurnRunner {
             // The turn's context is settled here: tool backfill + compression done.
             // LOOP-7: serialize BEFORE taking the global SQLite lock — serializing
             // a multi-MB context under `DbState` blocked every other database user.
+            // (审查修复 M-2) 写入本身也移出 async worker：多 MB 快照的同步
+            // INSERT/DELETE 内联执行会阻塞 tokio worker 数十 ms（WAL busy_timeout
+            // 最坏 5s）。spawn_blocking + await：worker 在阻塞写期间被释放，
+            // 顺序语义不变（下一轮开始前本轮快照必须落盘）。
             {
                 let messages_json = serde_json::to_string(&messages_for_api).unwrap_or_default();
-                let conn = app_c.state::<crate::core::state::DbState>();
-                crate::commands::llm::checkpoints::save_checkpoint_json(
-                    &conn.0.lock(),
-                    &topic_id_c,
-                    &turn_id,
-                    round,
-                    &messages_json,
-                );
+                let app_for_ckpt = app_c.clone();
+                let topic = topic_id_c.clone();
+                let turn = turn_id.clone();
+                let round_c = round;
+                let _ = tauri::async_runtime::spawn_blocking(move || {
+                    let conn = app_for_ckpt.state::<crate::core::state::DbState>();
+                    crate::commands::llm::checkpoints::save_checkpoint_json(
+                        &conn.0.lock(),
+                        &topic,
+                        &turn,
+                        round_c,
+                        &messages_json,
+                    );
+                })
+                .await;
             }
         }
 

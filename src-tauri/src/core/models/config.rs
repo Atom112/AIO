@@ -246,7 +246,13 @@ impl Default for AppConfig {
             sandbox_windows: default_sandbox_windows(),
             sandbox_windows_toolchain_dirs: Vec::new(),
             sandbox_protect_git: default_true(),
-            sandbox_unsandboxed_fallback: default_true(),
+            // 安全默认（SEC 审查修复）：无沙箱回退升级路径默认关闭。此前的 true
+            // 与本字段文档承诺（"Default **false** — the runtime never breaks the
+            // sandbox boundary unless explicitly opted in"）以及其余三处默认来源
+            // （serde 缺字段、AppConfigDisk::default、legacy 迁移）全部矛盾，且是
+            // 全新安装（无 config.json）下唯一生效的默认——等价于默认打开了唯一
+            // 的沙箱逃逸通道。四源对齐为 false。
+            sandbox_unsandboxed_fallback: false,
             shell_windows: default_shell_windows(),
             tool_breaker_threshold: 0,
             memory_enabled: false,

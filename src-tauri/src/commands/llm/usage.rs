@@ -27,7 +27,8 @@ pub(crate) fn insert_usage_log(
     let db = app.state::<DbState>();
     let conn = db.0.lock();
     let id = uuid::Uuid::new_v4().to_string();
-    let _ = conn.execute(
+    // (审查修复 L-3) 用量记录丢失不再静默——统计页会凭空缺数且无迹可查。
+    if let Err(e) = conn.execute(
         "INSERT INTO usage_log (id, assistant_id, topic_id, model_id, round, input_tokens, output_tokens, cached_input_tokens) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
         rusqlite::params![
             id,
@@ -39,12 +40,15 @@ pub(crate) fn insert_usage_log(
             output_tokens,
             cached_input_tokens
         ],
-    );
+    ) {
+        tracing::warn!("[usage] 写入用量记录失败 (model={model_id} round={round}): {e}");
+    }
 }
 
 /// Return daily input/output tokens and request counts ordered by date descending.
 /// Used by the frontend usage panel (e.g. "last 7 / 30 days usage").
-#[tauri::command]
+/// (审查修复 M-9) async 属性：GROUP BY 聚合 + 全局 DbState 锁竞争不得占用主线程。
+#[tauri::command(async)]
 pub fn get_usage_summary(
     db_state: tauri::State<'_, DbState>,
     days: u32,
@@ -85,7 +89,8 @@ pub fn get_usage_summary(
 /// Query token usage for the last N days aggregated by model.
 ///
 /// Returns per-model usage ordered by total tokens descending, for the frontend model-distribution panel.
-#[tauri::command]
+/// (审查修复 M-9) async 属性：同 get_usage_summary，聚合查询不占主线程。
+#[tauri::command(async)]
 pub fn get_usage_summary_by_model(
     db_state: tauri::State<'_, DbState>,
     days: u32,
@@ -158,7 +163,9 @@ pub fn get_usage_summary_by_model(
 
 /// Estimate the token count of a text (for live preview in the frontend input box).
 /// Thin wrapper over the pure `utils::token_counter::count_tokens_cmd`.
-#[tauri::command]
+/// (审查修复 M-9) async 属性：BPE 编码可达数十 ms，粘贴长文时在主线程执行
+/// 会卡 UI 事件循环——此命令正是输入框的 live preview 高频触发点。
+#[tauri::command(async)]
 pub fn count_tokens_cmd(model: String, text: String) -> Result<usize, String> {
     crate::utils::token_counter::count_tokens_cmd(model, text)
 }

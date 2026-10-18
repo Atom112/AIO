@@ -229,7 +229,14 @@ pub async fn index_code(
             )
             .map_err(|e| e.to_string())?;
             if let Some(v) = vec {
-                let _ = crate::services::memory::vec0::vec0_upsert_code(&conn, &id, &v);
+                // (审查修复 L-3) 向量写失败不静默降级为纯关键词检索——与 facts
+                // 路径"NULL vector must be VISIBLE"原则一致，失败必须可见。
+                if crate::services::memory::vec0::vec0_upsert_code(&conn, &id, &v).is_err() {
+                    tracing::warn!(
+                        "[code-index] chunk 向量写入失败 (vec0)，该块降级为仅关键词检索: {}",
+                        f.to_string_lossy()
+                    );
+                }
                 result.embedded += 1;
             }
             conn.execute(

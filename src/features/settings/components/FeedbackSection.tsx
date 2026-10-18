@@ -101,9 +101,8 @@ const FeedbackSection: Component = () => {
         <span class="text-sm font-medium text-white/80">{t('feedback.title')}</span>
       </div>
 
-      {/* Environment snapshot */}
+      {/* Environment snapshot (click-to-copy affordance lives in the title tooltip) */}
       <div class="mb-4">
-        <div class="text-[11px] text-white/40 mb-1">{t('feedback.envHint')}</div>
         <div
           class="flex items-center gap-2 rounded-lg px-3 py-2 font-mono text-[11px] text-white/55 cursor-pointer transition-colors hover:text-white/75"
           style={{

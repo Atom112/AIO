@@ -933,9 +933,6 @@ const ProviderDetail: Component = () => {
         <Show when={isLocalEngine() && localEngineDef()!.allowModelFileSelection}>
           <div class="glass-card mt-4 animate-row-in" style={{ 'animation-delay': '75ms' }}>
             <div class="section-label mb-3">{t('provider.localModels')}</div>
-            <div class="text-xs text-[rgba(var(--text-base-rgb),0.55)] mb-3">
-              {t('provider.localModelsHint')}
-            </div>
             <Show
               when={
                 (userCfg()?.localModelPaths &&

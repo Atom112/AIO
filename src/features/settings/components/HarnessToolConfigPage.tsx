@@ -191,7 +191,6 @@ const HarnessToolConfigPage: Component = () => {
 
         {/* ===== 常用配置（结构化表单） ===== */}
         <Section title={t('harness.conf.common')}>
-          <div class="text-[11px] text-white/35 mb-2">{t('harness.conf.commonNote')}</div>
           <HarnessToolStructuredForm toolId={toolId()} />
         </Section>
 
@@ -210,7 +209,6 @@ const HarnessToolConfigPage: Component = () => {
 
         {/* ===== 高级配置（原始编辑器） ===== */}
         <Section title={t('harness.conf.advanced')}>
-          <div class="text-[11px] text-white/35 mb-2">{t('harness.conf.advancedNote')}</div>
           <div class="flex flex-col gap-3">
             <For each={slots()}>
               {(slot) => <HarnessConfigFileEditor toolId={toolId()} slot={slot} />}
@@ -221,7 +219,6 @@ const HarnessToolConfigPage: Component = () => {
         {/* ===== 指令与技能（markdown 集合） ===== */}
         <Show when={markdownCollections().length > 0}>
           <Section title={t('harness.conf.instructions')}>
-            <div class="text-[11px] text-white/35 mb-2">{t('harness.conf.instructionsNote')}</div>
             <div class="flex flex-col gap-3">
               <For each={markdownCollections()}>
                 {([kind, label]) => (
@@ -229,14 +226,12 @@ const HarnessToolConfigPage: Component = () => {
                 )}
               </For>
             </div>
-            <div class="text-[11px] text-white/30 mt-2">{t('harness.conf.workspaceHint')}</div>
           </Section>
         </Show>
 
         {/* ===== MCP 服务器 ===== */}
         <Show when={MCP_TOOLS.has(toolId())}>
           <Section title={t('harness.mcp.section')}>
-            <div class="text-[11px] text-white/35 mb-2">{t('harness.mcp.note')}</div>
             <HarnessMcpSection toolId={toolId()} />
           </Section>
         </Show>

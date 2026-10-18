@@ -30,7 +30,7 @@ import Markdown from '../../../shared/components/Markdown';
 import { subagentProfileLabel } from './SubagentConversationView';
 import { getSubagentProfileStyle } from '../../../core/utils/subagentProfileStyle';
 import { stopSubagent } from '../../../core/api/chat';
-import { t } from '../../../core/i18n';
+import { formatNumber, t } from '../../../core/i18n';
 
 interface AgentProcessBlockProps {
   /** Native chain-of-thought text from the model (old mode) */
@@ -604,6 +604,24 @@ const AgentProcessBlock: Component<AgentProcessBlockProps> = (props) => {
 
   const [visibleIds, setVisibleIds] = createSignal<string[]>([...queue.renderedIds]);
 
+  // ---- Historical-round step window (the chat page's paged-rendering pattern,
+  // one level deeper): an inactive giant round can carry hundreds of steps (a
+  // single 5MB round is a real case on the dev machine). The outer collapse
+  // does NOT prevent mounting — max-height:0 still builds every card's DOM —
+  // so switching to a long session mounted all of them at once (the reported
+  // switch wait). Inactive blocks mount only the most recent STEP_WINDOW
+  // steps; the "show earlier" control reveals the rest. Active blocks stream
+  // through the render queue and are unaffected by the window.
+  const STEP_WINDOW = 100;
+  const [showAllSteps, setShowAllSteps] = createSignal(false);
+  const windowedIds = createMemo(() => {
+    const ids = visibleIds();
+    if (props.isActive || showAllSteps() || ids.length <= STEP_WINDOW) return ids;
+    return ids.slice(ids.length - STEP_WINDOW);
+  });
+  const hiddenStepCount = () =>
+    props.isActive || showAllSteps() ? 0 : Math.max(0, visibleIds().length - STEP_WINDOW);
+
   const stepById = (id: string): AgentStep | undefined => timelineSteps().find((s) => s.id === id);
 
   // Dequeue-render subscriber: after a remount only the newest instance receives dequeue notifications; the old DOM was already destroyed by <For>.
@@ -705,7 +723,16 @@ const AgentProcessBlock: Component<AgentProcessBlockProps> = (props) => {
               {/* === New mode: timeline cards === */}
               <Show when={hasSteps()}>
                 <div class="flex flex-col gap-2 px-3">
-                  <For each={visibleIds()}>
+                  <Show when={hiddenStepCount() > 0}>
+                    <button
+                      type="button"
+                      class="flex justify-center w-full cursor-pointer select-none bg-transparent border-none text-xs text-white/40 transition-colors duration-200 hover:text-white/70 py-1"
+                      onClick={() => setShowAllSteps(true)}
+                    >
+                      {t('agent.step.showEarlier', { count: formatNumber(hiddenStepCount()) })}
+                    </button>
+                  </Show>
+                  <For each={windowedIds()}>
                     {(id) => {
                       // Use a memo to fetch the latest step object: status updates (running→complete)
                       // show live, while <For>'s each is a stable id list so the DOM is not rebuilt

@@ -88,6 +88,7 @@
   "agent.step.toolCall": "工具调用",
   "agent.step.working": "正在工作...",
   "agent.step.interim": "工作过程",
+  "agent.step.showEarlier": "展开更早的 {{count}} 条步骤",
   "agent.sub.error": "子智能体执行出错",
   "agent.sub.working": "子智能体正在工作中...",
   "agent.tasks.title": "任务清单",

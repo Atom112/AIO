@@ -57,11 +57,10 @@ struct AppConfigDisk {
         rename = "sandboxProtectGit"
     )]
     sandbox_protect_git: bool,
-    /// Full-permission sandbox self-heal may fall back to one unsandboxed retry (default true)
-    #[serde(
-        default = "crate::core::models::default_true",
-        rename = "sandboxUnsandboxedFallback"
-    )]
+    /// Full-permission sandbox self-heal may fall back to one unsandboxed retry
+    /// (SEC 审查修复：默认 false——安全默认，与 AppConfig::default、serde 缺字段、
+    /// 字段文档承诺四源一致；磁盘文件缺该字段时同样落 false，不再 default_true)
+    #[serde(default, rename = "sandboxUnsandboxedFallback")]
     sandbox_unsandboxed_fallback: bool,
     /// Consecutive env-class failures before a tool is disabled for the turn (0 = default 6)
     /// Windows shell selection (powershell default / cmd)
@@ -411,5 +410,32 @@ mod tests {
             crate::core::models::default_auto_retry_count()
         );
         assert_eq!(back.api_url, "http://x");
+    }
+
+    /// 安全默认一致性（SEC 审查修复的回归防线）：`sandbox_unsandboxed_fallback`
+    /// （完全权限档下"会话授权无法落地时回退一次无沙箱重试"的唯一沙箱逃逸通道）
+    /// 在全部默认来源必须为 false——任何一处为 true 都等于默认开启沙箱逃逸：
+    /// 1. `AppConfig::default()`（全新安装 / unwrap_or_default 兜底）
+    /// 2. `AppConfigDisk::default()`（磁盘结构默认）
+    /// 3. serde 缺字段反序列化（磁盘文件没有该字段时）
+    ///
+    /// 与字段文档承诺的 "Default **false**" 对齐。
+    #[test]
+    fn sandbox_unsandboxed_fallback_defaults_to_false_in_all_sources() {
+        assert!(
+            !AppConfig::default().sandbox_unsandboxed_fallback,
+            "AppConfig::default() 必须默认关闭无沙箱回退"
+        );
+        assert!(
+            !AppConfigDisk::default().sandbox_unsandboxed_fallback,
+            "AppConfigDisk::default() 必须默认关闭无沙箱回退"
+        );
+        let disk: AppConfigDisk =
+            serde_json::from_str(r#"{"api_url":"","default_model":"","local_model_path":""}"#)
+                .unwrap();
+        assert!(
+            !disk.sandbox_unsandboxed_fallback,
+            "serde 缺字段默认必须关闭无沙箱回退"
+        );
     }
 }

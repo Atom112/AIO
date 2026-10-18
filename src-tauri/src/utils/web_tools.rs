@@ -118,26 +118,60 @@ fn is_safe_url(url_str: &str) -> Result<(), String> {
 
 /// SEC-03R: whether a resolved address is safe to connect to (public unicast only).
 fn is_public_addr(ip: std::net::IpAddr) -> bool {
+    /// Shared IPv4 range check (also reused for IPv4 addresses embedded in IPv6 forms).
+    fn is_public_v4(v4: std::net::Ipv4Addr) -> bool {
+        let o = v4.octets();
+        !(v4.is_private()
+            || v4.is_loopback()
+            || v4.is_link_local()
+            || v4.is_broadcast()
+            || v4.is_multicast()
+            || v4.is_unspecified()
+            || v4.is_documentation()
+            // 0.0.0.0/8 ("this network") and carrier-grade NAT 100.64.0.0/10
+            || o[0] == 0
+            || (o[0] == 100 && (o[1] & 0xC0) == 64))
+    }
+
     match ip {
-        std::net::IpAddr::V4(v4) => {
-            let o = v4.octets();
-            !(v4.is_private()
-                || v4.is_loopback()
-                || v4.is_link_local()
-                || v4.is_broadcast()
-                || v4.is_multicast()
-                || v4.is_unspecified()
-                || v4.is_documentation()
-                // 0.0.0.0/8 ("this network") and carrier-grade NAT 100.64.0.0/10
-                || o[0] == 0
-                || (o[0] == 100 && (o[1] & 0xC0) == 64))
-        }
+        std::net::IpAddr::V4(v4) => is_public_v4(v4),
         std::net::IpAddr::V6(v6) => {
+            // IPv4-mapped (::ffff:0:0/96) and IPv4-compatible (::a.b.c.d) forms embed a
+            // v4 target: dual-stack sockets route connects on those addresses to the
+            // embedded IPv4, so they MUST be judged by the embedded v4 (the historic
+            // segment checks below see 0000:ffff... prefixes as "global" and let
+            // ::ffff:127.0.0.1 / ::ffff:169.254.169.254 through — a full SSRF bypass
+            // via a single AAAA record). `to_ipv4()` covers both mapped forms.
+            if let Some(v4) = v6.to_ipv4() {
+                return is_public_v4(v4);
+            }
+            let s = v6.segments();
+            // 6to4 (2002::/16) embeds a v4 in bits 48..80: judge by the embedded v4.
+            if s[0] == 0x2002 {
+                let v4 = std::net::Ipv4Addr::new(
+                    (s[1] >> 8) as u8,
+                    s[1] as u8,
+                    (s[2] >> 8) as u8,
+                    s[2] as u8,
+                );
+                return is_public_v4(v4);
+            }
+            // NAT64 well-known prefix (64:ff9b::/96): 96 prefix bits = segments 0..5,
+            // the embedded v4 occupies the LAST 32 bits = segments 6..7.
+            if s[0] == 0x0064 && s[1] == 0xff9b && s[2] == 0 && s[3] == 0 && s[4] == 0 && s[5] == 0
+            {
+                let v4 = std::net::Ipv4Addr::new(
+                    (s[6] >> 8) as u8,
+                    s[6] as u8,
+                    (s[7] >> 8) as u8,
+                    s[7] as u8,
+                );
+                return is_public_v4(v4);
+            }
             // Manual scope checks (Ipv6Addr::is_unicast_global is still unstable):
             // reject loopback ::1, unspecified ::, link-local fe80::/10,
             // unique-local fc00::/7, multicast ff00::/8; everything else counts as
-            // global unicast (IPv4-mapped forms are handled by their mapped range).
-            let s = v6.segments();
+            // global unicast.
             !(v6.is_loopback()
                 || v6.is_unspecified()
                 || (s[0] & 0xffc0) == 0xfe80
@@ -916,6 +950,39 @@ mod tests {
         assert!(!is_public_addr(IpAddr::V6(v6("fe80::1"))));
         assert!(!is_public_addr(IpAddr::V6(v6("fd00::1"))));
         assert!(is_public_addr(IpAddr::V6(v6("2606:4700::1111"))));
+        // SEC-03R regression: IPv4-embedded forms must be judged by their embedded v4.
+        // A rebinding attacker publishes ::ffff:127.0.0.1 (or the metadata IP) as an
+        // AAAA record; dual-stack sockets route the connect to the embedded IPv4, so
+        // these previously slipped through the segment checks as "global unicast".
+        for mapped in [
+            "::ffff:127.0.0.1",       // IPv4-mapped loopback
+            "::ffff:169.254.169.254", // IPv4-mapped link-local / metadata
+            "::ffff:10.0.0.1",        // IPv4-mapped private
+            "::ffff:192.168.1.1",     // IPv4-mapped private
+            "::127.0.0.1",            // IPv4-compatible loopback
+            "::0.0.0.0",              // IPv4-compatible unspecified
+            "2002:7f00:1::",          // 6to4 embedding 127.0.0.1
+            "2002:a9fe:a9fe::",       // 6to4 embedding 169.254.169.254
+            "64:ff9b::7f00:1",        // NAT64 embedding 127.0.0.1
+            "64:ff9b::a9fe:a9fe",     // NAT64 embedding 169.254.169.254
+        ] {
+            assert!(
+                !is_public_addr(IpAddr::V6(v6(mapped))),
+                "{mapped} 应被拒绝（内嵌 IPv4 为私网/保留地址）"
+            );
+        }
+        // Mapped/6to4/NAT64 forms embedding a PUBLIC v4 stay allowed.
+        for allowed in [
+            "::ffff:1.1.1.1",
+            "::ffff:8.8.8.8",
+            "2002:101:101::",   // 6to4 embedding 1.1.1.1
+            "64:ff9b::101:101", // NAT64 embedding 1.1.1.1
+        ] {
+            assert!(
+                is_public_addr(IpAddr::V6(v6(allowed))),
+                "{allowed} 应被放行（内嵌 IPv4 为公网地址）"
+            );
+        }
     }
 
     /// web_search fix regression: the Bing results page must parse into (title,

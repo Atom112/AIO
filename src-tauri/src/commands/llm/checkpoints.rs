@@ -55,13 +55,20 @@ pub(crate) fn save_checkpoint_json(
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0);
-    let _ = conn.execute(
+    // (审查修复 L-3) 崩溃恢复快照是本功能的核心语义，写失败必须可见——
+    // 静默吞错会让用户以为"崩溃可无损续跑"而实际快照早已没在写。
+    if let Err(e) = conn.execute(
         "INSERT OR REPLACE INTO agent_turn_checkpoints
             (topic_id, turn_id, round, messages_json, status, created_at)
          VALUES (?1, ?2, ?3, ?4, 'active', ?5)",
         rusqlite::params![topic_id, turn_id, round, messages_json, now],
-    );
+    ) {
+        tracing::warn!(
+            "[checkpoint] 写入回合快照失败 (topic={topic_id} turn={turn_id} round={round}): {e}"
+        );
+    }
     // Retention policy: per turn keep only the latest 1 + one per 10 rounds
+    // (retention failure is non-fatal: worst case is extra snapshot rows)
     let _ = conn.execute(
         "DELETE FROM agent_turn_checkpoints
          WHERE topic_id = ?1 AND turn_id = ?2 AND status = 'active'
@@ -92,11 +99,17 @@ pub(crate) fn load_checkpoint_messages(
 /// Mark all snapshots of a turn as terminal (completed / cancelled). Called from the epilogue.
 /// Terminal state keeps only the last round (earlier rounds deleted), uniformly for both completed and cancelled.
 pub(crate) fn finalize_checkpoints(conn: &Connection, topic_id: &str, turn_id: &str, status: &str) {
-    let _ = conn.execute(
+    // (审查修复 L-3) 同上：终态标记失败会让快照永远停留为 active，下次启动被
+    // 误判为"可恢复的崩溃残留"。
+    if let Err(e) = conn.execute(
         "UPDATE agent_turn_checkpoints SET status = ?3
          WHERE topic_id = ?1 AND turn_id = ?2",
         rusqlite::params![topic_id, turn_id, status],
-    );
+    ) {
+        tracing::warn!(
+            "[checkpoint] 终态标记失败 (topic={topic_id} turn={turn_id} status={status}): {e}"
+        );
+    }
     // Terminal state keeps only the last round (the latest snapshot stays queryable for audit/debugging)
     let _ = conn.execute(
         "DELETE FROM agent_turn_checkpoints
@@ -142,7 +155,7 @@ pub fn delete_topic_checkpoints(conn: &Connection, topic_id: &str) {
 ///
 /// # Returns
 /// Option<ActiveCheckpoint>: { turnId, topicId, round, createdAt }; None = no recoverable turn.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_active_checkpoint(
     db_state: tauri::State<'_, crate::core::state::DbState>,
     topic_id: String,

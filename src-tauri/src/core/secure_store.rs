@@ -340,6 +340,10 @@ pub fn get(app: &AppHandle, account: &str) -> Result<Option<String>> {
     match keyring_get_str(account) {
         Ok(v) => Ok(Some(v)),
         Err(SecureStoreError::Keyring(_)) => {
+            // INFRA-4 同款互斥：无锁时两个并发首访 get() 可同时进入密钥"生成
+            // 新钥"分支，两把密钥先后落盘——先落盘密钥加密的条目从此永久失解
+            // （可用性损失）。与 set/delete 共用一把锁，读写全程串行。
+            let _guard = FALLBACK_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
             let key = get_fallback_key(app)?;
             let store = load_fallback(app, &key);
             Ok(store.entries.get(account).cloned())

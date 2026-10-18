@@ -89,31 +89,39 @@ const HarnessPage: Component = () => {
   } | null>(null);
   let pageRef: HTMLDivElement | undefined;
 
-  const { isResizing, leftDragWidth, leftRevealMinPx, startLeftResize, startResizeRight } =
-    usePanelResize({
-      chatPageRef: () => pageRef,
-      isLeftCollapsed,
-      setLeftCollapsed: (collapsed: boolean) => {
-        setIsLeftCollapsed(collapsed);
-        savePanelCollapsed('left', collapsed);
-        if (!collapsed && leftPanelWidth() < 5) setLeftPanelWidth(18);
-      },
-      leftPanelWidth,
-      setLeftPanelWidth: (v: number) => {
-        setLeftPanelWidth(v);
-        savePanelWidth('left', v);
-      },
-      rightPanelWidth,
-      setRightPanelWidth: (v: number) => {
-        setRightPanelWidth(v);
-        savePanelWidth('right', v);
-      },
-      isRightCollapsed,
-    });
+  const {
+    isResizing,
+    leftDragWidth,
+    leftRevealMinPx,
+    rightDragWidth,
+    startLeftResize,
+    startResizeRight,
+  } = usePanelResize({
+    chatPageRef: () => pageRef,
+    isLeftCollapsed,
+    setLeftCollapsed: (collapsed: boolean) => {
+      setIsLeftCollapsed(collapsed);
+      savePanelCollapsed('left', collapsed);
+      if (!collapsed && leftPanelWidth() < 5) setLeftPanelWidth(18);
+    },
+    leftPanelWidth,
+    setLeftPanelWidth: (v: number) => {
+      setLeftPanelWidth(v);
+      savePanelWidth('left', v);
+    },
+    rightPanelWidth,
+    setRightPanelWidth: (v: number) => {
+      setRightPanelWidth(v);
+      savePanelWidth('right', v);
+    },
+    isRightCollapsed,
+  });
 
   const displayLeftWidth = () => leftDragWidth() ?? leftPanelWidth();
   const leftPanelCollapsed = () => isLeftCollapsed() && leftDragWidth() === null;
-  const displayRightWidth = () => (isRightCollapsed() ? 0 : rightPanelWidth());
+  // H-3: right panel shows the drag preview while dragging (persisted width commits on release)
+  const displayRightWidth = () =>
+    isRightCollapsed() ? 0 : (rightDragWidth() ?? rightPanelWidth());
 
   // ===== Initial load + selection restore + running reconciliation =====
   const loadMessages = async (topicId: string) => {

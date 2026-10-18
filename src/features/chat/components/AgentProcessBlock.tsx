@@ -68,8 +68,16 @@ function stepTypeLabel(type: AgentStep['type']): string {
   }
 }
 
-// Step IDs that have already played their entrance animation; prevents replaying when the agentSteps array is rebuilt
+// Step IDs that have already played their entrance animation; prevents replaying when the agentSteps array is rebuilt.
+// M3 (leak): bounded — ids accumulate for the whole session (every step ever rendered);
+// past the cap the set clears once (rare one-time animation replay, self-healing), the
+// same degenerate-LRU policy as Markdown.tsx's render cache.
+const MAX_ANIMATED_STEP_IDS = 4096;
 const animatedStepIds = new Set<string>();
+function markStepAnimated(stepId: string): void {
+  if (animatedStepIds.size >= MAX_ANIMATED_STEP_IDS) animatedStepIds.clear();
+  animatedStepIds.add(stepId);
+}
 
 // Render-buffer state (indexed by round startTime).
 // Streaming updates to agentSteps create new message object references; the parent <For> compares by
@@ -84,6 +92,14 @@ interface RoundRenderQueue {
   /** Dequeue timer; non-null means the queue is dequeuing one by one */
   dequeueTimer: number | null;
 }
+// M3 (leak): the queue must survive component remounts (see above), so it cannot be
+// cleared in onCleanup — but an abandoned active round (page switch mid-stream that
+// never re-renders, topic deletion) leaks its entry, timer and subscriber closure
+// forever. Bounded instead: past MAX_QUEUED_ROUNDS the oldest entries are evicted
+// (timers cleared so no dangling setTimeout keeps the closure alive). Real sessions
+// have 1-2 live rounds at a time, so the cap only ever hits leaked rounds.
+const MAX_QUEUED_ROUNDS = 16;
+
 const perRoundQueue = new Map<string, RoundRenderQueue>();
 
 // Dequeue-notification subscribers (indexed by round): the component may remount while the dequeue
@@ -93,6 +109,15 @@ const queueSubscribers = new Map<string, (id: string) => void>();
 function getRoundQueue(roundKey: string): RoundRenderQueue {
   let q = perRoundQueue.get(roundKey);
   if (!q) {
+    // Evict the oldest leaked rounds first (insertion order = first-touch order).
+    while (perRoundQueue.size >= MAX_QUEUED_ROUNDS) {
+      const oldest = perRoundQueue.keys().next().value as string | undefined;
+      if (oldest === undefined || oldest === roundKey) break;
+      const stale = perRoundQueue.get(oldest);
+      if (stale?.dequeueTimer) clearTimeout(stale.dequeueTimer);
+      perRoundQueue.delete(oldest);
+      queueSubscribers.delete(oldest);
+    }
     q = { renderedIds: new Set(), pendingIds: [], dequeueTimer: null };
     perRoundQueue.set(roundKey, q);
   }
@@ -149,7 +174,7 @@ const StepCard: Component<{
   const stepId = untrack(() => props.step.id);
   const isNew = !animatedStepIds.has(stepId);
   if (isNew) {
-    animatedStepIds.add(stepId);
+    markStepAnimated(stepId);
   }
 
   // The entrance-animation class is present from the first frame (animation "backwards" starts at

@@ -165,7 +165,8 @@ pub async fn stop_local_server(
 
 /// Checks whether the local server is running
 /// @param engine_type optional engine type. When omitted, returns whether any engine is running.
-#[tauri::command]
+/// (审查修复 M-9) async 属性：内部 try_wait 逐个收割子进程状态，不占主线程。
+#[tauri::command(async)]
 pub fn is_local_server_running(
     state: State<'_, LocalEngineState>,
     engine_type: Option<String>,
@@ -214,31 +215,40 @@ pub struct EngineScanResult {
 /// them into `EngineScanResult`s; one plugin's detection failure only records empty
 /// info and never affects other engines.
 #[tauri::command(async)]
-pub fn scan_installed_engines(
+pub async fn scan_installed_engines(
     app: AppHandle,
     engine_mgr: State<'_, EngineManager>,
 ) -> Result<Vec<EngineScanResult>, String> {
+    // (审查修复 H-2) detect_installation 是阻塞子进程探测链（llama-server
+    // --version / sc query ollama / 逐候选 python -c "import vllm"——import vllm
+    // 会加载 torch，单次数秒，且 vllm 探测还会把同一 import 跑两遍）。此前整个
+    // 同步扫描直接跑在 async runtime 的 worker 线程上（#[tauri::command(async)]
+    // 的语义），启动扫描可占用一个 worker 数秒至数十秒，挤压并发 agent 回合与
+    // 流式任务。整链移入 blocking pool（项目已有同款范式：skill.rs 的 npx 探测）。
     let plugins = engine_mgr.all_plugins();
-    let mut results = Vec::with_capacity(plugins.len());
+    let results = tauri::async_runtime::spawn_blocking(move || {
+        let mut results = Vec::with_capacity(plugins.len());
+        for plugin in plugins {
+            let info: EngineInstallInfo = plugin.detect_installation(&app);
+            let port = plugin.default_port();
 
-    for plugin in plugins {
-        let info: EngineInstallInfo = plugin.detect_installation(&app);
-        let port = plugin.default_port();
+            // URL shape is declared by the plugin (Ollama root URL; OpenAI-compatible engines append /v1)
+            let default_api_url = plugin.default_api_url(port);
 
-        // URL shape is declared by the plugin (Ollama root URL; OpenAI-compatible engines append /v1)
-        let default_api_url = plugin.default_api_url(port);
-
-        results.push(EngineScanResult {
-            id: plugin.identifier().to_string(),
-            name: plugin.name().to_string(),
-            supported: plugin.is_platform_supported(),
-            installed: info.installed,
-            version: info.version,
-            default_port: port,
-            default_api_url,
-        });
-    }
-
+            results.push(EngineScanResult {
+                id: plugin.identifier().to_string(),
+                name: plugin.name().to_string(),
+                supported: plugin.is_platform_supported(),
+                installed: info.installed,
+                version: info.version,
+                default_port: port,
+                default_api_url,
+            });
+        }
+        results
+    })
+    .await
+    .map_err(|e| e.to_string())?;
     Ok(results)
 }
 

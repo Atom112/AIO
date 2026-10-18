@@ -238,7 +238,9 @@ pub fn read_office_file(path: &str, file_type: &str) -> Result<String, String> {
 
     for i in 0..archive.len() {
         let file = archive.by_index(i).map_err(|e| e.to_string())?;
-        let name = file.name().to_string();
+        // zip 9: name() validates the entry name is valid UTF-8 (returns Cow on
+        // success); non-UTF-8 names are treated as unreadable and skipped here.
+        let name = file.name().map_err(|e| e.to_string())?.to_string();
 
         let is_target = if file_type == "docx" {
             name == "word/document.xml"

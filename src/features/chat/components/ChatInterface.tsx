@@ -215,8 +215,11 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
   // ---- Register shortcut commands ----
   const cmdFocusInput = registerCommand({
     id: 'focus-input',
-    label: '聚焦输入框',
-    description: '将光标聚焦到消息输入框',
+    // M2 (i18n): display copy goes through COMMAND_TRANSLATIONS (command.focusInput.*),
+    // same P3 convention as the sibling shortcuts in core/shortcuts.ts — the baked
+    // value is a placeholder only, never user-visible copy.
+    label: 'focus-input',
+    description: '',
     category: 'chat',
     defaultKeys: 'Ctrl+I',
     handler: () => {
@@ -229,8 +232,8 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
 
   const cmdUploadFile = registerCommand({
     id: 'upload-file',
-    label: '上传文件',
-    description: '打开文件选择对话框上传文件',
+    label: 'upload-file',
+    description: '',
     category: 'chat',
     defaultKeys: 'Ctrl+U',
     handler: async () => {

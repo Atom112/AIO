@@ -2,7 +2,16 @@ import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { dirname, extname, join, resolve } from 'node:path';
 
 const root = process.cwd();
-const files = [join(root, 'README.md'), join(root, 'README.zh-CN.md')];
+// Root governance files (READMEs, CONTRIBUTING, SECURITY, AGENTS) plus every
+// markdown file under docs/ — all internal links and anchors are verified.
+const files = [
+  join(root, 'README.md'),
+  join(root, 'README.zh-CN.md'),
+  join(root, 'CONTRIBUTING.md'),
+  join(root, 'CONTRIBUTING.en-US.md'),
+  join(root, 'SECURITY.md'),
+  join(root, 'AGENTS.md'),
+];
 const walk = (dir) => {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     const path = join(dir, entry.name);

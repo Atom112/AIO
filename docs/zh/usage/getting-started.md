@@ -10,6 +10,8 @@
 
 应用支持自动检查和安装更新。若系统阻止启动，请先确认安装包来自项目 Releases 页面。
 
+预发布版本（例如 `v1.0.0-alpha`）同样发布在 Releases 页面，需要手动下载；应用内自动更新只跟踪稳定版本。
+
 ## 配置远程模型
 
 ![Provider 设置](../../assets/screenshots/provider-settings.webp)

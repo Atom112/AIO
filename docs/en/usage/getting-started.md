@@ -10,6 +10,8 @@ Download the installation package for your platform from [GitHub Releases](https
 
 The app supports automatic update checking and installation. If the system blocks startup, verify that the installation package came from the project's Releases page.
 
+Prereleases (for example `v1.0.0-alpha`) are also published on the Releases page and must be downloaded manually; the in-app updater only tracks stable releases.
+
 ## Configuring a Remote Model
 
 ![Provider settings](../../assets/screenshots/provider-settings.webp)

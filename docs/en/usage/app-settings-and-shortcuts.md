@@ -39,6 +39,19 @@ A legacy `.aio/knowledge.json` is automatically migrated into facts the first ti
 
 When an update is found, the app displays the version, release notes, and a download entry in the lower left corner. Official update packages must match the app's embedded public key; locally built installation packages are not equivalent to official releases.
 
+Prereleases (for example `v1.0.0-alpha`) are never offered through the updater; download them manually from the Releases page.
+
+## Feedback and Support
+
+The bottom of "Settings -> App Settings" hosts the feedback area:
+
+- **Environment snapshot**: a single line with version, OS, architecture, locale, RAM, detected CLI tools, and engine versions. Click to copy — it never contains API keys or conversation content.
+- **GitHub channels**: "Report a Bug" opens the bug form with the snapshot pre-copied to the clipboard; "Alpha Feedback" and "Feature Request" open their forms; "Join Discussions" opens Discussions.
+- **Export diagnostics**: writes a zip (snapshot JSON, provider slot status, privacy note) to your Downloads folder. Nothing is uploaded automatically — you upload it yourself if an issue needs it.
+- After an update installs, the completion dialog links "Alpha Feedback" so you can share impressions right away.
+
+Chinese-speaking users can also join the QQ community group **1130943633**.
+
 ## Visual Theme
 
 The accent color can be adjusted via color wheel, saturation, and lightness sliders, or you can select from built-in presets. Colors apply immediately and are saved in the WebView `localStorage`; they are not written to the project's `.aio/`.

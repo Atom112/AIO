@@ -21,6 +21,7 @@ This directory documents the features implemented on the `dev` branch. The docum
 
 - [Configuration Reference](reference/configuration.md): Configuration files, database, attachment formats, and security boundaries.
 - [Troubleshooting](troubleshooting.md): Connection, engine, MCP, permissions, and build issues.
+- [Feedback and community](../../README.md): Issue Forms, Discussions, in-app feedback, and the Chinese QQ group (1130943633).
 - [Changelog](../../CHANGELOG.md)
 
 > [!IMPORTANT]

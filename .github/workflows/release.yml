@@ -51,6 +51,20 @@ jobs:
           node-version: 20
           cache: npm
 
+      # The prerelease flag is derived from the app version (hyphen in the
+      # version = prerelease) instead of the ref name: a workflow_dispatch run
+      # from a branch would otherwise be misclassified by the branch name.
+      - name: Compute prerelease flag
+        id: relmeta
+        shell: bash
+        run: |
+          VERSION="$(node -p "require('./src-tauri/tauri.conf.json').version")"
+          if [[ "$VERSION" == *-* ]]; then
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@1.97.1
 
@@ -86,15 +100,24 @@ jobs:
           tagName: v__VERSION__
           releaseName: AIO v__VERSION__
           releaseDraft: false
-          # Prerelease is derived from the tag name: any hyphen in the tag
-          # (e.g. v1.0.0-alpha) marks the GitHub Release as a prerelease, so
-          # "releases/latest" keeps pointing at the newest stable release and
-          # the updater never offers prereleases to stable users.
-          prerelease: ${{ contains(github.ref_name, '-') }}
+          # Prerelease is derived from the app version: any hyphen in the
+          # version (e.g. 1.0.0-alpha) marks the GitHub Release as a
+          # prerelease, so "releases/latest" keeps pointing at the newest
+          # stable release and the updater never offers prereleases to
+          # stable users.
+          prerelease: ${{ steps.relmeta.outputs.prerelease }}
           includeUpdaterJson: true
+          # Windows prereleases bundle NSIS only: the WiX MSI target rejects
+          # semver pre-release identifiers that are not plain numbers (the
+          # "alpha" in 1.0.0-alpha fails with "optional pre-release
+          # identifier in app version must be numeric-only and cannot be
+          # greater than 65535 for msi target"). NSIS handles them fine, so
+          # stable releases keep both installers while prereleases ship only
+          # the NSIS setup.exe.
           args: >-
             ${{
               matrix.platform == 'ubuntu-22.04'
               && '--bundles deb,rpm --verbose'
+              || (matrix.platform == 'windows-latest' && steps.relmeta.outputs.prerelease == 'true' && '--bundles nsis --verbose')
               || (matrix.target != '' && format('--target {0} --verbose', matrix.target) || '--verbose')
             }}

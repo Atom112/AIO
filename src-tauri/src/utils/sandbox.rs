@@ -588,10 +588,7 @@ pub fn sandbox_command_prefix(
     #[cfg(target_os = "macos")]
     {
         // SEC-06: same PATH-only resolution for the macOS wrapper.
-        let Some(sandbox_exec) = crate::utils::exec_resolve::resolve_executable("sandbox-exec")
-        else {
-            return None;
-        };
+        let sandbox_exec = crate::utils::exec_resolve::resolve_executable("sandbox-exec")?;
         let mut argv = build_sandbox_exec_argv(
             project_root,
             shell,

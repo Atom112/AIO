@@ -1955,7 +1955,10 @@ mod tests {
     /// Harness round 3 (the actual tester form): `cmd /c <interp> …` unwraps
     /// the cmd header and its flags, then forwards the operation token. The
     /// `python.exe` suffix form forwards too.
+    // Windows-resolution semantics (PATHEXT suffix probing of `python.exe`);
+    // the Linux resolver matches literal names only, so this runs on Windows.
     #[test]
+    #[cfg(windows)]
     fn forward_interpreter_rewrites_cmd_wrapped() {
         if crate::utils::exec_resolve::resolve_executable("python").is_none() {
             return;
@@ -2034,7 +2037,10 @@ mod tests {
     }
 
     /// Case-insensitive on the interpreter name (Windows shells are).
+    // Windows-resolution semantics: PATHEXT probing is case-insensitive; the
+    // Linux resolver is case-sensitive, so an uppercase PYTHON stays unresolved.
     #[test]
+    #[cfg(windows)]
     fn forward_interpreter_matches_case_insensitive() {
         if crate::utils::exec_resolve::resolve_executable("python").is_none() {
             return;
@@ -2054,14 +2060,29 @@ mod tests {
         assert_eq!(decode_console_output("中文 utf-8".as_bytes()), "中文 utf-8");
         // GBK bytes of "拒绝访问。" (BE DC BE F8 B7 C3 CE CA A1 A3)
         let gbk_denied = [0xBEu8, 0xDC, 0xBE, 0xF8, 0xB7, 0xC3, 0xCE, 0xCA, 0xA1, 0xA3];
-        if cfg!(windows) {
-            let decoded = decode_console_output(&gbk_denied);
-            assert!(
-                decoded.contains("拒绝访问"),
-                "GBK 拒绝访问应正确解码（ACP=936 系统），got: {decoded:?}"
-            );
-            // The signature matcher must now see the real text
-            assert!(is_sandbox_access_denied(&decoded), "解码后签名应可识别");
+        // CP_ACP fallback is ACP-based BY DESIGN: the GBK decode (and the
+        // signature matching built on it) targets zh-CN systems (ACP=936).
+        // On other locales (en-US CI runner, ACP=1252) these bytes legitimately
+        // take the lossy path — assert the full decode only when ACP is 936;
+        // otherwise assert the no-panic contract (先运行后判定 same spirit as
+        // the AppContainer tests: run it, decide by environment).
+        #[cfg(windows)]
+        {
+            extern "system" {
+                fn GetACP() -> u32;
+            }
+            let acp = unsafe { GetACP() };
+            if acp == 936 {
+                let decoded = decode_console_output(&gbk_denied);
+                assert!(
+                    decoded.contains("拒绝访问"),
+                    "GBK 拒绝访问应正确解码（ACP=936 系统），got: {decoded:?}"
+                );
+                // The signature matcher must now see the real text
+                assert!(is_sandbox_access_denied(&decoded), "解码后签名应可识别");
+            } else {
+                let _ = decode_console_output(&gbk_denied);
+            }
         }
         // On non-Windows there is no ANSI fallback: lossy UTF-8, no panic
         let _ = decode_console_output(&gbk_denied);

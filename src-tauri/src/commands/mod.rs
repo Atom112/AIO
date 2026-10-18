@@ -7,6 +7,7 @@ pub mod config;
 pub mod embedding;
 pub mod engine;
 pub mod export;
+pub mod feedback;
 pub mod git;
 pub mod harness;
 pub mod image_gen;

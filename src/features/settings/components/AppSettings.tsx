@@ -10,6 +10,7 @@ import {
   untrack,
 } from 'solid-js';
 import { openSafeUrl } from '../../../core/utils/safeUrl';
+import FeedbackSection from './FeedbackSection';
 import {
   loadAppConfig,
   patchAppConfig,
@@ -1020,6 +1021,9 @@ const AppSettings: Component = () => {
           </div>
         </Show>
       </div>
+
+      {/* Alpha feedback section (environment snapshot + GitHub channels + diagnostics) */}
+      <FeedbackSection />
     </div>
   );
 };

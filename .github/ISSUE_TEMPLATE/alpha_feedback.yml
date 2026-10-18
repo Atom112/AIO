@@ -1,0 +1,51 @@
+name: 🧪 Alpha 体验反馈
+description: 一句话说说这一轮 alpha 的整体体验（好的坏的都说）
+title: '[alpha] '
+labels: ['alpha-feedback']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        这是 alpha 阶段的轻量反馈通道：不用写详细 bug 报告，一句话 + 打分即可。
+        具体可复现的缺陷请用「🐛 Bug 报告」模板；功能讨论去 Discussions。
+  - type: textarea
+    id: env
+    attributes:
+      label: 环境快照（可选）
+      description: 设置 → 关于与反馈 → 复制环境信息
+    validations:
+      required: false
+  - type: input
+    id: overall
+    attributes:
+      label: 一句话总评
+      description: 这轮 alpha 用下来，最强烈的一个感受
+      placeholder: 例如：harness 工作台终于能日常用了 / 设置页找不到 xx / 启动还是太慢
+    validations:
+      required: true
+  - type: dropdown
+    id: score
+    attributes:
+      label: 整体满意度
+      options:
+        - '5 - 已经在替代我原来的工作流'
+        - '4 - 不错，会继续用'
+        - '3 - 有潜力，但有关键阻碍'
+        - '2 - 阻碍太大，暂时弃用'
+        - '1 - 无法使用（崩溃 / 阻断）'
+    validations:
+      required: true
+  - type: textarea
+    id: blockers
+    attributes:
+      label: 最大的 1-3 个阻碍（可选）
+      description: 是什么让你（或可能让别人）弃用？按严重程度排列
+    validations:
+      required: false
+  - type: textarea
+    id: highlights
+    attributes:
+      label: 最惊喜的 1-3 个点（可选）
+      description: 哪些功能已经替代了你的原有工作流？
+    validations:
+      required: false

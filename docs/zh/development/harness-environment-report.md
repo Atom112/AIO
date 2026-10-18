@@ -166,11 +166,15 @@ cargo +1.97.1 test --quiet   # 除第 2 项外应全绿
 
 由修复代理对全部五项逐条复核、实测并修复。**先修正一项关键结论**：
 
-## 第 1 项根因修正：不是「本机 junction 遍历整体失效」，而是「受限进程的 reparse 穿越被 Windows 按设计拒绝」
+## 第 1 项根因（终局，经用户实测二次修正）：安全软件过滤驱动对 AIO 进程树的差异化拦截
 
-原报告的探针全部在 AIO 自身的 agent shell（默认 `sandboxWindows=appcontainer`）内执行。**AppContainer / 受限令牌进程穿越 junction/mount point 时，除非目标 ACL 显式授予该容器 SID，否则 Windows 按安全设计拒绝**（`cmd` 的「不受信任的装入点」错误正是这一层的标准文案）。`whoami /groups` 显示 Medium 完整性、无 AppContainer SID 并不能排除——观察到的失败签名与 AppContainer reparse 策略完全一致。
+初判「AppContainer reparse 穿越被按设计拒绝」**被用户实测证伪**：该自迭代会话是在**「本机全权」（danger，无沙箱原生执行）档**运行的——代码路径 `AgentMode::Danger → ac_dirs=None`（`commands/llm/mod.rs:775`），命令走宿主原生 spawn；报告自身的 `whoami /groups` 证据与此吻合：**Medium 完整性、无任何 `S-1-15-2-*` AppContainer SID**——真 AppContainer 令牌默认 Low 完整性并携带包 SID，中完整性即普通令牌。即：**探针运行在普通无沙箱令牌下，junction 穿越仍然失败**。
 
-**决定性反证**：同一时刻、同一机器、同一用户，从普通 Medium-IL 进程（另一个 harness 的 pwsh 会话）对同一个 junction 执行 `lstat / readdir / readFileSync` 全部成功。自建 junction 在 `%TEMP%` 与 `D:\base` 的失败同理——不是文件系统损坏，是发起方身份。
+**交叉对照**：同一时刻、同一机器、同一用户，另一个进程树（本修复轮所在的 harness pwsh 会话）对**同一个 junction** 的 `lstat / readdir / readFileSync` 全部成功——本修复轮的全部 `npm run verify`（tsc 经 junction 解析 `@aio/models-data`）在此前 junction 形态下始终全绿。两个普通中完整性令牌、一成一败，唯一判别维度是**进程树**：本机第三方安全软件的过滤驱动（`ACE-CORE202706/102706`，fltmc 实录见下）对 AIO 进程树应用了差异化拦截——reparse/装入点穿越拒绝（「不受信任的装入点」），与沙箱内 exec 静默否决同源。**danger 档解除的是 AIO 自己的沙箱，解除不了机器上的安全软件过滤层**——这就是「全权模式下依然如此」的机制。
+
+**修复为何依然成立且与机制无关**：`install-links=true` 装成**真实目录副本**——reparse 穿越不复存在，被过滤的对象消失；无论过滤按 AppContainer 还是按进程树匹配，都无从拦截一个普通目录。这也是该修复对两边环境同时有效的原因。
+
+（注：master 已发布的 0.8.3 CHANGELOG 沿用了初判表述「AppContainer 按设计拒绝」，据此修正，随下次发版滚入。）
 
 ### 修复（已落地）
 

@@ -227,6 +227,8 @@ More extension paths (MCP transports, new Tauri commands, agent tools, permissio
 - **功能完成**：功能分支 PR 到 `dev`，merge 后删除功能分支（本地 + 远端）。
 - **发布版本**：决定发版时 `dev` PR 到 `master` 并 merge；`dev` 分支保留不动。随后 bump 版本（CHANGELOG + 三处版本号）、打 `vX.Y.Z` tag 推送触发 `release.yml`。
 - **master** 仅包含已发布版本内容；长期存在的分支只有 `dev` 与 `master`。
+- **预发布版本**：tag 形如 `v1.0.0-alpha`（带连字符即预发布）——release.yml 按 tag 名自动将 GitHub Release 标记为 prerelease（`releases/latest` 保持指向稳定版，稳定用户不会被推 alpha），alpha 测试者从该 Release 页面手动下载。
+- **本地 exe 重建（快速验收用，不走安装包）**：`cargo +1.97.1 build --release --manifest-path src-tauri/Cargo.toml --features tauri/custom-protocol` —— **`--features tauri/custom-protocol` 不可省略**：Tauri 2 的 `generate_context!` 靠它区分 dev/prod（无此特性时上下文按 dev 烘焙：不嵌入 dist、webview 加载 devUrl，裸 cargo 构建出的 exe 打开即"localhost 拒绝连接"——`tauri dev` 与 CI 的 `tauri build` 各自隐式处理，唯独裸 cargo 不会）。窗口是否可用必须以 webview 内容为准（CDP 截图或 PrintWindow），不能只看进程 responding。
 
 ## Build & Dev Commands
 

@@ -86,7 +86,11 @@ jobs:
           tagName: v__VERSION__
           releaseName: AIO v__VERSION__
           releaseDraft: false
-          prerelease: false
+          # Prerelease is derived from the tag name: any hyphen in the tag
+          # (e.g. v1.0.0-alpha) marks the GitHub Release as a prerelease, so
+          # "releases/latest" keeps pointing at the newest stable release and
+          # the updater never offers prereleases to stable users.
+          prerelease: ${{ contains(github.ref_name, '-') }}
           includeUpdaterJson: true
           args: >-
             ${{

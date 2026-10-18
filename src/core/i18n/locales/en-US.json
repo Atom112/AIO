@@ -88,6 +88,7 @@
   "agent.step.toolCall": "Tool call",
   "agent.step.working": "Working...",
   "agent.step.interim": "Work log",
+  "agent.step.showEarlier": "Show {{count}} earlier steps",
   "agent.sub.error": "Subagent encountered an error",
   "agent.sub.working": "Subagent is working...",
   "agent.tasks.title": "Task list",

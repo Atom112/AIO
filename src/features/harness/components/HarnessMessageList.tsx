@@ -2,18 +2,33 @@
  * Harness message list — renders the loaded history plus the live assistant
  * draft with the chat pipeline's own leaf components (Markdown / ThinkBlock /
  * AgentProcessBlock), so harness turns look exactly like native agent turns.
+ *
+ * Paged rendering (the chat page's proven pattern): only the most recent
+ * window mounts; an IntersectionObserver sentinel at the top loads earlier
+ * pages with scroll anchoring. Switching to a long agent session no longer
+ * mounts every Markdown bubble at once (the reported switch wait).
  */
-import { Component, createEffect, For, onMount, Show } from 'solid-js';
+import {
+  Component,
+  createEffect,
+  createMemo,
+  createSignal,
+  For,
+  onCleanup,
+  onMount,
+  Show,
+} from 'solid-js';
 import Markdown from '../../../shared/components/Markdown';
 import ThinkBlock from '../../../shared/components/ThinkBlock';
 import AgentProcessBlock from '../../chat/components/AgentProcessBlock';
+import { btnGhost } from '../../../shared/components/buttonStyles';
 import {
   currentHarnessDraft,
   currentHarnessRun,
   currentHarnessTopicId,
   harnessMessages,
 } from '../../../core/store/harness';
-import { t } from '../../../core/i18n';
+import { formatNumber, t } from '../../../core/i18n';
 import type { Message } from '../../../core/store/types';
 
 /** Plain-text content for the Markdown renderer (multimodal parts are not rendered here). */
@@ -38,10 +53,44 @@ const HarnessMessageList: Component = () => {
     el.scrollTop = el.scrollHeight;
   };
 
+  // ---- Paged message rendering (chat page's ChatInterface pattern) ----
+  const PAGE_SIZE = 60;
+  const [visibleCount, setVisibleCount] = createSignal(PAGE_SIZE);
+  // Reset the window on every topic switch
+  createEffect(() => {
+    void currentHarnessTopicId();
+    setVisibleCount(PAGE_SIZE);
+  });
+  /** Absolute index of the first rendered message (the tail window start). */
+  const windowStart = createMemo(() => Math.max(0, harnessMessages().length - visibleCount()));
+  let topSentinelRef: HTMLDivElement | undefined;
+  let loadingEarlier = false;
+  const loadEarlier = () => {
+    if (loadingEarlier || windowStart() === 0) return;
+    loadingEarlier = true;
+    const el = scrollRef;
+    const prevHeight = el?.scrollHeight ?? 0;
+    const prevTop = el?.scrollTop ?? 0;
+    setVisibleCount((c) => c + PAGE_SIZE);
+    // Scroll anchoring: keep the viewport on the same content after prepending
+    requestAnimationFrame(() => {
+      if (el) el.scrollTop = prevTop + (el.scrollHeight - prevHeight);
+      loadingEarlier = false;
+    });
+  };
   onMount(() => {
     const el = scrollRef;
     if (el) el.scrollTop = el.scrollHeight;
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((en) => en.isIntersecting)) loadEarlier();
+      },
+      { root: scrollRef, rootMargin: '160px' },
+    );
+    if (topSentinelRef) io.observe(topSentinelRef);
+    onCleanup(() => io.disconnect());
   });
+
   // Follow while a draft streams or messages append; also re-follow on topic switch.
   createEffect(() => {
     void harnessMessages().length;
@@ -124,7 +173,21 @@ const HarnessMessageList: Component = () => {
       onWheel={handleWheel}
       onScroll={handleScroll}
     >
-      <For each={harnessMessages()}>{(msg) => <Bubble msg={msg} />}</For>
+      {/* Load-earlier sentinel: always mounted so the IntersectionObserver keeps a
+          stable target; the button is only shown when older pages exist */}
+      <div ref={topSentinelRef} />
+      <Show when={windowStart() > 0}>
+        <div class="flex justify-center py-2">
+          <button
+            class={btnGhost + ' text-xs'}
+            onClick={loadEarlier}
+            title={t('chat.loadEarlierTitle')}
+          >
+            {t('chat.loadEarlier', { count: formatNumber(windowStart()) })}
+          </button>
+        </div>
+      </Show>
+      <For each={harnessMessages().slice(windowStart())}>{(msg) => <Bubble msg={msg} />}</For>
       <Show when={draft()}>
         <Bubble
           msg={{

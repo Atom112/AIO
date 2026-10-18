@@ -170,14 +170,11 @@ const HarnessMarkdownCollection: Component<HarnessMarkdownCollectionProps> = (pr
             }}
             onClick={(e) => e.stopPropagation()}
           >
-            <div class="text-sm font-medium text-white/85 mb-1">
+            <div class="text-sm font-medium text-white/85 mb-3">
               {props.label} — {edit()!.name}
               <Show when={edit()!.isNew}>
                 <span class="text-[11px] text-white/35"> · {t('harness.md.willCreate')}</span>
               </Show>
-            </div>
-            <div class="text-[11px] text-white/40 mb-3 truncate" title={edit()!.name}>
-              {t('harness.md.editorNote')}
             </div>
             <textarea
               class="w-full rounded-lg bg-black/20 border border-[var(--border-dim)] px-3 py-2 text-xs text-white placeholder:text-white/25 outline-none focus:border-pri-50 transition-colors resize-y min-h-[260px] font-mono leading-relaxed"

@@ -251,9 +251,6 @@ const McpServerDetail: Component<Props> = (props) => {
             onChange={(v) => updateField('autoStart', v)}
             label={t('mcp.detail.autoStart')}
           />
-          <span class="text-xs" style={{ color: 'rgba(var(--text-base-rgb),0.4)' }}>
-            {t('mcp.detail.autoStartHint')}
-          </span>
         </div>
         <div class="flex items-center gap-3">
           <Checkbox
@@ -262,9 +259,6 @@ const McpServerDetail: Component<Props> = (props) => {
             onChange={(v) => updateField('trusted', v)}
             label={t('mcp.detail.trusted')}
           />
-          <span class="text-xs" style={{ color: 'rgba(var(--text-base-rgb),0.4)' }}>
-            {t('mcp.detail.trustedHint')}
-          </span>
         </div>
 
         {/* Transport type */}

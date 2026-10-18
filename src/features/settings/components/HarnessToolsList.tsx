@@ -103,7 +103,6 @@ const HarnessToolsList: Component = () => {
       </Show>
 
       {/* Custom ACP agents also get pages (no config slots; credentials only). */}
-      <div class="text-[11px] text-white/30 mt-4 mb-2">{t('harness.conf.customHint')}</div>
       <button
         class="text-xs text-pri hover:underline cursor-pointer border-none bg-transparent"
         onClick={() => navigate('/harness')}

@@ -229,7 +229,7 @@ const AppSettings: Component = () => {
    */
   const checkResultMessage = (): string => {
     const r = checkResult();
-    if (!r) return t('app.update.description');
+    if (!r) return '';
     switch (r.kind) {
       case 'up_to_date':
         return t('app.update.latest');
@@ -509,9 +509,6 @@ const AppSettings: Component = () => {
             <span class="block text-[rgba(var(--text-base-rgb),0.93)] text-[14px]">
               {t('app.language.title')}
             </span>
-            <p class="text-xs text-white/35 mt-1">
-              {t('app.language.description')} {t('app.language.system')}
-            </p>
           </div>
           <Dropdown
             variant="ghost"
@@ -527,7 +524,6 @@ const AppSettings: Component = () => {
             <span class="block text-[rgba(var(--text-base-rgb),0.93)] text-[14px]">
               {t('app.darkMode.title')}
             </span>
-            <p class="text-xs text-white/35 mt-1">{t('app.darkMode.description')}</p>
           </div>
           <div class="flex rounded-md border border-white/10 overflow-hidden">
             <button
@@ -554,7 +550,6 @@ const AppSettings: Component = () => {
             <span class="block text-[rgba(var(--text-base-rgb),0.93)] text-[14px]">
               {t('app.autoStart.title')}
             </span>
-            <p class="text-xs text-white/35 mt-1">{t('app.autoStart.description')}</p>
           </div>
 
           {/* FE-10: shared Switch (last hand-copied toggle in the settings pages) */}
@@ -639,7 +634,6 @@ const AppSettings: Component = () => {
             <span class="block text-[rgba(var(--text-base-rgb),0.93)] text-[14px]">
               {t('app.openSource.title')}
             </span>
-            <p class="text-xs text-white/35 mt-1">{t('app.openSource.description')}</p>
           </div>
 
           <button
@@ -658,21 +652,26 @@ const AppSettings: Component = () => {
             <span class="block text-[rgba(var(--text-base-rgb),0.93)] text-[14px]">
               {t('app.update.title')}
             </span>
-            <p
-              class="text-xs mt-1"
-              style={{
-                color: (() => {
-                  const r = checkResult();
-                  if (!r) return 'rgba(var(--text-base-rgb),0.35)';
-                  if (r.kind === 'update_available') return 'var(--primary-color)';
-                  if (r.kind === 'service_not_ready' || r.kind === 'failed' || r.kind === 'network')
-                    return '#d99'; // gate-allow: color return #d99
-                  return 'var(--color-pri)';
-                })(),
-              }}
-            >
-              {checkResultMessage()}
-            </p>
+            <Show when={checkResult()}>
+              <p
+                class="text-xs mt-1"
+                style={{
+                  color: (() => {
+                    const r = checkResult()!;
+                    if (r.kind === 'update_available') return 'var(--primary-color)';
+                    if (
+                      r.kind === 'service_not_ready' ||
+                      r.kind === 'failed' ||
+                      r.kind === 'network'
+                    )
+                      return '#d99'; // gate-allow: color return #d99
+                    return 'var(--color-pri)';
+                  })(),
+                }}
+              >
+                {checkResultMessage()}
+              </p>
+            </Show>
           </div>
 
           <button
@@ -838,7 +837,6 @@ const AppSettings: Component = () => {
         <div class="flex justify-between items-center mb-5">
           <div>
             <h3 class="m-0 text-base text-white">{t('app.shortcuts.title')}</h3>
-            <p class="text-xs text-white/35 mt-1">{t('app.shortcuts.description')}</p>
           </div>
           <button
             class={btnSecondarySm}

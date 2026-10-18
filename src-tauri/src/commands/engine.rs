@@ -80,22 +80,23 @@ pub async fn start_local_server(
     // a concurrent starter waits here and then observes (and replaces) our engine.
     let _start_guard = engine_start_mutex().lock().await;
     // Pre-start cleanup: stop engines of all other types (only one local engine may run at a time)
-    {
+    // M-6: the guard lives in its own block — an await inside the loop below must
+    // not keep the (non-Send) parking_lot guard captured in the async state machine.
+    let other_ids: Vec<String> = {
         let engines = state.lock();
-        let other_ids: Vec<String> = engines
+        engines
             .keys()
             .filter(|k| *k != &engine_id)
             .cloned()
-            .collect();
-        drop(engines);
-        for id in other_ids {
-            tracing::info!("[engine] 停止旧引擎 {} 以启动 {}", id, engine_id);
-            stop_engine_internal(&state, &id);
-        }
+            .collect()
+    };
+    for id in other_ids {
+        tracing::info!("[engine] 停止旧引擎 {} 以启动 {}", id, engine_id);
+        stop_engine_internal(&state, &id).await;
     }
     // If an engine of the same type is already running, stop it first as well (clears the old process)
     if is_engine_running_internal(&state, &engine_id) {
-        stop_engine_internal(&state, &engine_id);
+        stop_engine_internal(&state, &engine_id).await;
         sleep(Duration::from_millis(500)).await;
     }
     // ENG-03: port preflight — AFTER our own engines are stopped (a same-port
@@ -146,17 +147,26 @@ pub async fn stop_local_server(
 ) -> Result<(), String> {
     match engine_type {
         Some(id) => {
-            stop_engine_internal(&state, &id);
+            stop_engine_internal(&state, &id).await;
         }
         None => {
-            let mut engines = state.lock();
-            for (_, mut inner) in engines.drain() {
-                if let Some(mut child) = inner.child_process.take() {
-                    tracing::debug!("[engine] 正在停止引擎...");
-                    // ENG-06: kill 后 wait，避免 Unix 每次启停泄漏僵尸进程
+            // M-6: drain under the lock, kill+wait each child on the blocking pool
+            // (outside the lock, off the async worker).
+            let children = {
+                let mut engines = state.lock();
+                engines
+                    .drain()
+                    .filter_map(|(_, mut inner)| inner.child_process.take())
+                    .collect::<Vec<_>>()
+            };
+            for mut child in children {
+                tracing::debug!("[engine] 正在停止引擎...");
+                // ENG-06: kill 后 wait，避免 Unix 每次启停泄漏僵尸进程
+                let _ = tokio::task::spawn_blocking(move || {
                     let _ = child.kill();
                     let _ = child.wait();
-                }
+                })
+                .await;
             }
         }
     }
@@ -324,14 +334,24 @@ fn is_engine_running_internal(state: &LocalEngineState, engine_type: &str) -> bo
     false
 }
 
-fn stop_engine_internal(state: &LocalEngineState, engine_type: &str) {
-    let mut engines = state.lock();
-    if let Some(mut inner) = engines.remove(engine_type) {
-        if let Some(mut child) = inner.child_process.take() {
-            tracing::debug!("[engine] 正在停止引擎 {}...", engine_type);
-            // ENG-06: kill 后 wait，避免 Unix 每次启停泄漏僵尸进程
+/// M-6: stop one engine. The map removal happens under the state lock; the
+/// kill+wait (a big engine's teardown can block for hundreds of ms) runs on the
+/// blocking pool OUTSIDE the lock and the async worker, so a stop neither
+/// serializes engine-state users nor stalls the runtime.
+async fn stop_engine_internal(state: &LocalEngineState, engine_type: &str) {
+    let child = {
+        let mut engines = state.lock();
+        engines
+            .remove(engine_type)
+            .and_then(|mut inner| inner.child_process.take())
+    };
+    if let Some(mut child) = child {
+        tracing::debug!("[engine] 正在停止引擎 {}...", engine_type);
+        // ENG-06: kill 后 wait，避免 Unix 每次启停泄漏僵尸进程
+        let _ = tokio::task::spawn_blocking(move || {
             let _ = child.kill();
             let _ = child.wait();
-        }
+        })
+        .await;
     }
 }

@@ -284,7 +284,8 @@ for await (const p of walk(path.join(root, 'src'), ['.tsx'])) {
 // reproduces from an installed release build.
 // Two rules: (a) the raw flag literal lives in exactly one place per path — the shared
 // helper in utils::exec_resolve and the hand-rolled CreateProcessW in win_appcontainer;
-// (b) every production `Command::new` either chains `.hidden_console()` or is covered by
+// (b) every production `Command::new` either chains `.hidden_console()` (or the SEC-8
+// suspended variant — it composes the same CREATE_NO_WINDOW flag) or is covered by
 // one within the same statement block. Tests are exempt (they spawn local fixtures).
 {
   const CONSOLE_FLAG_ALLOWLIST = new Set([
@@ -316,7 +317,9 @@ for await (const p of walk(path.join(root, 'src'), ['.tsx'])) {
       if (/^\s*(\/\/|\/\*|\*)/.test(line)) return;
       if (testAt >= 0 && i > testAt) return; // test fixture spawns: no user-visible console
       const window = lines.slice(i, Math.min(lines.length, i + SPAWN_WINDOW)).join('\n');
-      if (!/hidden_console\(/.test(window)) {
+      // SEC-8: hidden_console_suspended (spawn frozen for Job-Object assignment)
+      // composes CREATE_NO_WINDOW | CREATE_SUSPENDED — equally console-free.
+      if (!/hidden_console(?:_suspended)?\(/.test(window)) {
         push(
           'console-window',
           r,

@@ -28,6 +28,19 @@ pub fn build_http_client(
     timeout_secs: u64,
     provider_tag: &str,
 ) -> Result<reqwest::Client, String> {
+    build_http_client_pinned(proxy_url, timeout_secs, provider_tag, None)
+}
+
+/// SEC-7: `build_http_client` with the DNS resolution pinned to a pre-validated
+/// address. The connection-test request carries the user's real API key, so a
+/// rebinding flip (benign A record at check time, metadata/internal at connect
+/// time) must not be able to redirect it; `utils::ssrf` produces the pin pair.
+pub fn build_http_client_pinned(
+    proxy_url: Option<&str>,
+    timeout_secs: u64,
+    provider_tag: &str,
+    pin: Option<(String, std::net::SocketAddr)>,
+) -> Result<reqwest::Client, String> {
     let mut b = reqwest::Client::builder()
         .user_agent(format!(
             "AIO-Desktop/{} ({}-provider)",
@@ -42,6 +55,9 @@ pub fn build_http_client(
                 .map_err(|e| ierr!("代理 URL 非法: {}", "Invalid proxy URL: {}", e))?;
             b = b.proxy(proxy);
         }
+    }
+    if let Some((host, addr)) = pin {
+        b = b.resolve(&host, addr);
     }
     b.build().map_err(|e| {
         ierr!(

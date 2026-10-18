@@ -1266,7 +1266,12 @@ pub fn execute_command(
         .stderr(std::process::Stdio::piped())
         // GUI-subsystem release build owns no console: without this the shell child
         // allocates one and the user sees a terminal flash on every command.
-        .hidden_console();
+        // SEC-8: the suspended variant — the child spawns frozen, joins its Job
+        // Object below, and only then executes (assign-then-resume). Without the
+        // suspension a fast-spawning child can put grandchildren outside the job
+        // in the CreateProcess→AssignProcessToJobObject window, and those would
+        // survive the timeout's whole-tree teardown.
+        .hidden_console_suspended();
     // Non-Windows: run the command in its own process group so timeout/cleanup kills the whole subtree
     #[cfg(unix)]
     {
@@ -1296,6 +1301,18 @@ pub fn execute_command(
             ));
         }
     };
+
+    // SEC-8: the child spawned frozen (hidden_console_suspended) and has now joined
+    // the Job Object — let it execute. A failed resume would leave it frozen forever,
+    // so that failure is fatal for this execution (kill + error, fail-closed).
+    #[cfg(windows)]
+    if let Err(e) = crate::utils::sandbox::resume_suspended_child(child.id()) {
+        let _ = child.kill();
+        let _ = child.wait();
+        return tool_err(&format!(
+            "恢复挂起子进程失败（fail-closed，命令未执行）: {e}"
+        ));
+    }
 
     // Reader threads must start before wait(): reading only after wait() deadlocks
     // once output exceeds the OS pipe buffer (~64KB) - the child blocks writing to

@@ -51,7 +51,7 @@ pub(crate) mod vision;
 use crate::core::tool_names;
 use budget::is_retryable_error;
 use checkpoints::load_checkpoint_messages;
-use client::{non_streaming_http_client, streaming_http_client};
+use client::{non_streaming_http_client_pinned, streaming_http_client_pinned};
 use delegate_ctx::DelegateContext;
 use locked_tools::execute_locked_file_tool;
 use messages::{finish_message_for_api, message_metadata_for_api, MessageApiJob};
@@ -245,8 +245,13 @@ pub async fn call_llm_stream(
     let stream_turn_id_inner = stream_turn_id.clone();
 
     // 4. Spawn the async task that performs the request
+    // SEC-7: resolve + judge + pin the provider endpoint BEFORE the round — the
+    // chat path carries the real API key, so a rebinding flip (benign A record at
+    // check time, metadata/internal at connect time) must not be able to redirect
+    // it. A policy violation fails the command outright; the frontend's invoke
+    // catch resets isThinking and surfaces the error.
+    let client = streaming_http_client_pinned(&api_url).await?;
     let handle = tokio::spawn(async move {
-        let client = streaming_http_client();
         let tools_ref: Option<&[ToolSpec]> = tools_slice.as_deref();
         let result = streaming::stream_one_round(
             &window,
@@ -359,7 +364,10 @@ pub async fn fetch_models(api_url: String, api_key: String) -> Result<Vec<ModelI
     }
     let final_url = format!("{}/models", base_url);
 
-    let client = non_streaming_http_client();
+    // SEC-7: pin the models-list request to a pre-validated resolution (the request
+    // carries the Bearer API key). Same policy as the chat path: local/LAN allowed,
+    // metadata ranges refused.
+    let client = non_streaming_http_client_pinned(&api_url).await?;
     let response = tokio::time::timeout(
         std::time::Duration::from_secs(45),
         client

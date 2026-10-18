@@ -40,7 +40,8 @@ pub(crate) async fn chat_json(
         &cfg.api_url,
         &crate::utils::url_validation::HttpUrlOptions::local_engine(),
     )?;
-    let client = crate::plugins::llm::non_streaming_http_client();
+    // SEC-7: pinned resolution (key-bearing request; local/LAN allowed, metadata refused)
+    let client = crate::plugins::llm::non_streaming_http_client_pinned(&cfg.api_url).await?;
     let body = serde_json::json!({
         "model": cfg.model,
         "messages": [

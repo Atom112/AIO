@@ -328,6 +328,52 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
   const windowStart = createMemo(() =>
     Math.max(0, (props.activeTopic?.history?.length ?? 0) - visibleCount()),
   );
+
+  // ---- M-12: append-direction window pinning. While the user is scrolled away
+  // from the bottom (autoScroll false — reading history mid-agent-turn), an
+  // append (round-start placeholder / chat-mode message) would slide the tail
+  // window's start forward and swap the content under their viewport. Grow the
+  // window by the append delta so its top stays anchored to the same message;
+  // returning to the bottom (or the scroll-to-bottom button) snaps the window
+  // back to the tail. Deliberately separate from loadEarlier's growth, whose
+  // user-driven expansion is never trimmed here. ----
+  {
+    let lastTopicId: string | undefined;
+    let lastHistLen = 0;
+    let pinnedGrowth = 0;
+    createEffect(() => {
+      const tid = props.activeTopic?.id;
+      const histLen = props.activeTopic?.history?.length ?? 0;
+      const following = autoScroll();
+      if (tid !== lastTopicId) {
+        lastTopicId = tid;
+        lastHistLen = histLen;
+        pinnedGrowth = 0;
+        return;
+      }
+      const delta = histLen - lastHistLen;
+      lastHistLen = histLen;
+      if (delta > 0 && !following && windowStart() > 0) {
+        // Reading history while new messages land: pin the window's top anchor.
+        pinnedGrowth += delta;
+        setVisibleCount((c) => c + delta);
+      } else if (pinnedGrowth > 0 && (following || delta > 0)) {
+        // Back at the bottom (or a later append while following): re-trim to the
+        // tail window — the user sees the last PAGE_SIZE messages either way. The
+        // unmount happens ABOVE the viewport; the explicit snap compensates the
+        // lost scrollHeight so the view stays glued to the bottom.
+        pinnedGrowth = 0;
+        setVisibleCount(PAGE_SIZE);
+        if (following) {
+          requestAnimationFrame(() => {
+            const el = scrollContainerRef;
+            if (el) el.scrollTop = el.scrollHeight - el.clientHeight;
+          });
+        }
+      }
+    });
+  }
+
   let topSentinelRef: HTMLDivElement | undefined;
   let loadingEarlier = false;
   const loadEarlier = () => {

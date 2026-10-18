@@ -32,6 +32,7 @@ import type { Setter } from 'solid-js';
 import { reasoningLevel } from '../../../core/store/store';
 import {
   datas,
+  persistMessagesIncrementally,
   saveSingleAssistantToBackend,
   selectedModel,
   setAgentTaskBoard,
@@ -385,9 +386,10 @@ export function registerChatStreamListeners(): Promise<UnlistenFn>[] {
               }),
             );
             // Typewriter index stays unchanged (still pointing at the same message)
-            // Incremental persistence: each round boundary lands the message so a
-            // crash mid-turn keeps the finished rounds in the visible history.
-            saveSingleAssistantToBackend(assistant_id);
+            // Incremental persistence (H-2): each round boundary lands ONLY the
+            // mutated message (message-scoped upsert) so a crash mid-turn keeps
+            // the finished rounds in the visible history.
+            if (lastMsg.id) persistMessagesIncrementally(assistant_id, topic_id, [lastMsg.id]);
             return;
           }
         }
@@ -395,6 +397,7 @@ export function registerChatStreamListeners(): Promise<UnlistenFn>[] {
 
       // First round: create a new assistant placeholder message
       const currentMdl = selectedModel();
+      const placeholderId = crypto.randomUUID();
       setDatas(
         'assistants',
         (a) => a.id === assistant_id,
@@ -404,7 +407,7 @@ export function registerChatStreamListeners(): Promise<UnlistenFn>[] {
         (h) => [
           ...h,
           {
-            id: crypto.randomUUID(),
+            id: placeholderId,
             role: 'assistant' as const,
             content: '',
             modelId: currentMdl?.model_id,
@@ -418,9 +421,10 @@ export function registerChatStreamListeners(): Promise<UnlistenFn>[] {
       const asst = datas.assistants.find((a) => a.id === assistant_id);
       const topic = asst?.topics.find((t: Topic) => t.id === topic_id);
       if (topic) setTypingIndex(topic.history.length - 1);
-      // Persist the placeholder immediately: a crash right at turn start otherwise
-      // leaves the user message without any visible trace of the turn.
-      saveSingleAssistantToBackend(assistant_id);
+      // Persist the placeholder immediately (H-2, message-scoped): a crash right at
+      // turn start otherwise leaves the user message without any visible trace of
+      // the turn. The user message itself was already appended at send time.
+      persistMessagesIncrementally(assistant_id, topic_id, [placeholderId]);
     }),
     listen<LlmChunkPayload>(EVENTS.llmChunk, async (e) => {
       const {
@@ -545,7 +549,19 @@ export function registerChatStreamListeners(): Promise<UnlistenFn>[] {
           },
         );
         setIsThinking(false);
-        saveSingleAssistantToBackend(assistant_id);
+        // H-2: message-scoped persistence — the done handler only mutates the last
+        // assistant message (final content/token stats/step closure; the rare
+        // no-placeholder fallback appends a fresh one, which this read-back also
+        // covers). Topic-level follow-ups (auto-rename / compaction at +500ms)
+        // keep their own full saves.
+        {
+          const asstDone = datas.assistants.find((a) => a.id === assistant_id);
+          const topicDone = asstDone?.topics.find((t: Topic) => t.id === topic_id);
+          const lastDone = topicDone?.history[topicDone.history.length - 1];
+          if (lastDone?.role === 'assistant' && lastDone.id) {
+            persistMessagesIncrementally(assistant_id, topic_id, [lastDone.id]);
+          }
+        }
         setTypingIndex(null);
         // Sequential: first try auto-rename (first exchange in a non-default topic), then trigger history compaction
         setTimeout(async () => {
@@ -665,6 +681,9 @@ export function registerChatStreamListeners(): Promise<UnlistenFn>[] {
         file_changes,
         full_content,
       } = e.payload;
+      // H-2: the id of the single message this event mutates (captured inside the
+      // produce below) — drives the message-scoped persistence after it.
+      let hitMessageId: string | undefined;
       setDatas(
         'assistants',
         (a) => a.id === assistant_id,
@@ -683,6 +702,7 @@ export function registerChatStreamListeners(): Promise<UnlistenFn>[] {
               (s) => s.type === 'tool_call' && s.toolCall?.id === tool_call_id,
             );
             if (!hitToolCall && !hitStep) continue;
+            if (m.id) hitMessageId = m.id;
             m.toolCalls = m.toolCalls.map((tc): ToolCallDisplay =>
               tc.id === tool_call_id
                 ? {
@@ -722,9 +742,10 @@ export function registerChatStreamListeners(): Promise<UnlistenFn>[] {
           }
         }),
       );
-      // Incremental persistence: each landed tool result is the natural "work landed"
-      // point — a crash mid-turn keeps every finished step in the visible history.
-      saveSingleAssistantToBackend(assistant_id);
+      // Incremental persistence (H-2, message-scoped): each landed tool result is
+      // the natural "work landed" point — a crash mid-turn keeps every finished
+      // step in the visible history. Only the one mutated message is upserted.
+      if (hitMessageId) persistMessagesIncrementally(assistant_id, topic_id, [hitMessageId]);
     }),
     // In-run context compaction event: only main-agent compaction updates conversation memory —
     // topic.summary is overwritten and the context boundary moves so later turns stop

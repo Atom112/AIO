@@ -42,11 +42,25 @@ GitHub Dependabot 面板 71 条告警均已 fixed/dismissed（无 open），但*
 
 **[SEC-6 · LOW] 三处加固** — `taskkill` 裸名 spawn 违反项目自身 SEC-06 约定（改走 `resolve_executable`）；`mcp_fs_server` 把含文件内容的全量参数打进 stderr（经 `mcp-server-stderr` 事件广播进 UI，改为只记工具名+path）且 `&line[..200]` 字节切片在中文 JSON 上必 panic（改字符边界截断）+ stdin 行长无上限（加 16MB 上限 + 截断行拒绝）；`secure_store::get()` 无锁并发首访可生成两把密钥致条目永久失解（fallback 分支补 `FALLBACK_MUTEX`）。
 
-### 遗留（建议下轮处理）
+### 遗留 → 已全部清偿（遗留清偿轮，PR #212）
 
-- **[SEC-7 · MEDIUM]** `url_validation` 仅静态校验：MCP HTTP 传输（自带 `${KEYRING:}` 注入的真实 API key header）与供应商连接测试对"域名解析到内网/元数据 IP"零防护。建议把 web_fetch 的 `resolve_validated_addr` + pinned client 提取为公共 helper 复用。
-- **[SEC-8 · LOW]** 原生 Windows 命令路径（非 AppContainer 档）`CreateProcess` 与 `AssignProcessToJobObject` 之间的进程树逃逸 TOCTOU 窗口（AC 路径已用挂起+先入 Job 消除）。建议复用 `win_appcontainer` 的挂起顺序。
-- **[SEC-9 · INFO]** secure_store 降级密钥文件为静态混淆（文档已自认）；建议 Windows 侧改用 DPAPI 包裹密钥文件。
+- **[SEC-7 · MEDIUM] 已修复**：SSRF 防线提取为公共模块 `utils/ssrf.rs`（策略分级：`PublicOnly` = web_fetch 全公网语义原样搬移；`AllowLocalNoMetadata` = 用户配置端点允许本地/局域网、云元数据段恒拒 + 解析钉扎防 rebinding），三面接线——**MCP HTTP transport** 启动时解析+钉扎（元数据段拒绝启动；DNS 故障降级未钉扎保持连接语义）；**供应商连接测试**经 `build_http_client_pinned` 钉扎（保留代理支持）；**聊天热路径**（post_chat_completion 全部调用点：主流/子代理/标题/压缩/视觉/btw/记忆管线/fetch_models）经带 TTL 的 per-origin 钉扎客户端缓存（10 分钟重解析，合法 DNS 变更仍能传播），策略违规硬失败并经原错误通道透出。新增 `is_metadata_addr`（169.254/16 + CGNAT 100.64/10 + fe80::/10 + AWS fd00:ec2::254）与回归测试。
+- **[SEC-8 · LOW] 已修复**：原生命令路径改挂起启动（`hidden_console_suspended` = `CREATE_NO_WINDOW|CREATE_SUSPENDED`）→ 入 Job → 恢复（Toolhelp32 快照定位主线程 `ResumeThread`；恢复失败 fail-closed 杀进程报错）。console-window 门禁同步接受 suspended 变体。
+- **[SEC-9 · INFO] 已修复**：Windows 降级密钥文件改 DPAPI 包裹（`dpapi-v1:<base64(CryptProtectData)>`，绑定当前用户+机器——拷贝/外传的密钥文件在他处不可解）。旧 hex 格式首读时就地迁移（迁移失败非致命，下次启动重试）；DPAPI 故障降级写旧格式并告警（存储必须可用）。+2 回归测试。
+
+### 性能与架构遗留 → 已全部清偿（同轮）
+
+1. **[H-3]** `load_app_config` 进程级缓存（config.json 指纹 `(mtime, len)` 失效 + `save_app_config` 显式失效——keychain 半边不落盘，指纹看不到）。
+2. **[M-4]** 代码索引整文件单事务（异步 embed 之后开，无锁跨 await；~1 万 chunk 从 ~2 万次 fsync 到 ~文件数次）。
+3. **[M-6]** `stop_engine_internal` 改异步：锁内只做摘除，kill+wait 上阻塞池；`stop_local_server` 批量路径同步改造；「其它引擎停止」收集块独立作用域化（parking_lot 守卫不进 async 状态机）。
+4. **[M-7]** harness stop 固定 3s 睡眠改 50ms 轮询 `last_states` 协作翻转（running/connecting → 已停止），3s 仍为兜底；空闲会话停止即刻返回。
+5. **[M-8]** `rolling_bump_many`：检索质量探针单事务批量写（`rolling_bump` 委托之）。
+6. **[M-10]** npm 探针超时杀子进程：stdout 先行摘取，读线程锁外阻塞；超时路径经共享 cell `kill`——挂死的 npm 与读线程不再双双泄漏。
+7. **[M-11]** harness 全部设置类命令（detect/instruction/config×4/structured×2/md×4/mcp×3/dsh）走 `spawn_blocking`（HOR-4 范式）。
+8. **[前端 H-2]** 消息粒度增量持久化：新命令 `upsert_topic_messages`（TopicCore 瘦载荷——绝不序列化 history + 逐消息 upsert，单事务）+ `persistMessagesIncrementally` store 助手；4 个热路径换装（回合边界/占位符/done/工具结果——只克隆被改消息，O(session) 的 UI 线程深克隆与全量 IPC 从此不进热路径；rename/压缩等低频路径保留全量保存）。全量保存路径抽公共行级 helper 零行为差。
+9. **[前端 M-4]** TokenStatsBar 模型目录查找抽独立 memo（原来每个工具事件重扫整个 models 数组，现仅模型/目录变更时重算）。复核结论：反向早退扫描+单次前向求和已是最优结构，增量化方案（脏信号）引入陈旧风险不值当。
+10. **[前端 M-5]** harness `tool_call_update` 合并批处理（80ms 键控同文本批——更新带全量快照语义，保留最新即可）；`tool_call_end`/回合终结同步冲刷保序。
+11. **[前端 M-12]** 尾窗 append 方向锚定（chat + harness 两处）：用户上翻时 append 增量扩窗钉住顶部锚点（不再顶替视口），回底或按「回到底部」时裁回尾窗 + rAF 补偿滚动。loadEarlier 的用户扩展不受影响。
 
 ## 三、性能审查（3 HIGH / 主要 MEDIUM 已修，部分 MEDIUM 遗留）
 
@@ -65,17 +79,9 @@ GitHub Dependabot 面板 71 条告警均已 fixed/dismissed（无 open），但*
 | HIGH(前端) | 右栏拖拽每 mousemove 同步写 localStorage（60-240 次/秒）                                                                                                                                                                                                 | `ChatPage.tsx` + `usePanelResize.ts`   | 照左栏"预览信号 + 释放提交"模式重构；ChatPage 与 HarnessPage 两处消费点同步更新                                                                                     |
 | LOW        | 截断提示把 UTF-8 字节数当字符数（中文虚高 3 倍，误导模型）                                                                                                                                                                                               | `utils/truncate.rs`                    | 改 `chars().count()`                                                                                                                                                |
 
-### 遗留（按优先级）
+### 遗留（按优先级）→ 已全部清偿，详见本文末「遗留清偿轮」一节
 
-1. **[H-3] `load_app_config` 工具热路径重复加载**（磁盘读+JSON 解析+keychain IPC，一次 execute_command 2-3 次、零缓存）。建议：turn_runner 已加载的 config 经参数下传，或加 mtime 失效的进程内缓存。改动面较大，适合独立 PR。
-2. **[M-4] 代码索引 per-chunk autocommit**（~1 万 chunk ≈ 2 万次独立 fsync）：每文件包一个事务即可。
-3. **[M-6] `stop_engine_internal` 同步 `child.wait()` 阻塞 worker**：改 tokio Child 或 spawn_blocking。
-4. **[M-7] harness stop 固定 3s sleep**：改 50ms 轮询协作取消状态，3s 仅作兜底。
-5. **[M-8] recall/search_memory stats 探针逐条写**（每次检索 5-7 个小事务）：合并单事务。
-6. **[M-10] `try_read_package_meta` 超时泄漏 npm 子进程与读线程**：超时分支 kill。
-7. **[M-11] harness 设置类 async 命令内联同步 fs I/O**：照 skill.rs 的 HOR-4 spawn_blocking 范式补齐。
-8. **[前端 H-2] `saveSingleAssistantToBackend` 每个 tool result 全量克隆整个 Assistant + 全量 IPC**：需后端 append 粒度配合，属架构级改造。
-9. **[前端 M-4/M-5/M-12]** TokenStatsBar 每工具事件 O(n) 重扫；harness 工具事件未批处理；尾窗分页 append 方向缺锚定（上翻时 round-start 追加顶替视口）。
+原清单（H-3 / M-4 / M-6 / M-7 / M-8 / M-10 / M-11 / 前端 H-2 / 前端 M-4·M-5·M-12 共 9 项）在遗留清偿轮（PR #212）中逐项落地，含根因复核与每项的实现要点——见文末。
 
 ## 四、可维护性 / 架构 / 复用性
 

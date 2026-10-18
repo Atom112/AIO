@@ -45,7 +45,12 @@ const HarnessMessageList: Component = () => {
   const handleScroll = () => {
     const el = scrollRef;
     if (!el) return;
-    if (el.scrollHeight - el.scrollTop - el.clientHeight < 50) followPaused = false;
+    if (el.scrollHeight - el.scrollTop - el.clientHeight < 50) {
+      // M-12: back at the bottom — an append-pinned window (grown to keep the
+      // viewport anchored while the user read history) trims to the tail again.
+      if (followPaused) followPaused = false;
+      trimPinnedWindow();
+    }
   };
   const scrollToBottom = () => {
     const el = scrollRef;
@@ -56,13 +61,42 @@ const HarnessMessageList: Component = () => {
   // ---- Paged message rendering (chat page's ChatInterface pattern) ----
   const PAGE_SIZE = 60;
   const [visibleCount, setVisibleCount] = createSignal(PAGE_SIZE);
+  // ---- M-12: append-direction window pinning (see ChatInterface's counterpart).
+  // While the user is scrolled up reading history, an append would slide the tail
+  // window's start forward and swap the content under their viewport; grow the
+  // window by the append delta so its top stays anchored to the same message.
+  // Returning to the bottom trims back to the tail (in handleScroll, where the
+  // transition is observable; the rAF snap compensates the unmounted-above
+  // content so the view stays glued to the bottom). ----
+  let pinnedGrowth = 0;
+  let lastLen = 0;
+  const trimPinnedWindow = () => {
+    if (pinnedGrowth === 0) return;
+    pinnedGrowth = 0;
+    setVisibleCount(PAGE_SIZE);
+    requestAnimationFrame(() => {
+      const el = scrollRef;
+      if (el) el.scrollTop = el.scrollHeight - el.clientHeight;
+    });
+  };
   // Reset the window on every topic switch
   createEffect(() => {
     void currentHarnessTopicId();
     setVisibleCount(PAGE_SIZE);
+    pinnedGrowth = 0;
+    lastLen = 0;
   });
   /** Absolute index of the first rendered message (the tail window start). */
   const windowStart = createMemo(() => Math.max(0, harnessMessages().length - visibleCount()));
+  createEffect(() => {
+    const len = harnessMessages().length;
+    const delta = len - lastLen;
+    lastLen = len;
+    if (delta > 0 && followPaused && windowStart() > 0) {
+      pinnedGrowth += delta;
+      setVisibleCount((c) => c + delta);
+    }
+  });
   let topSentinelRef: HTMLDivElement | undefined;
   let loadingEarlier = false;
   const loadEarlier = () => {

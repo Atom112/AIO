@@ -1,7 +1,7 @@
 //! Topic title and history summary commands (generate_topic_title, summarize_history, archive_history).
 
 use crate::commands::llm::client::{
-    chat_error_message, chat_finish_reason, chat_text_content, non_streaming_http_client,
+    chat_error_message, chat_finish_reason, chat_text_content, non_streaming_http_client_pinned,
     post_chat_completion,
 };
 use crate::commands::llm::handoff::archive_early_messages;
@@ -45,7 +45,8 @@ pub async fn summarize_history(
         &api_url,
         &crate::utils::url_validation::HttpUrlOptions::local_engine(),
     )?;
-    let client = non_streaming_http_client();
+    // SEC-7: pinned resolution (key-bearing request; local/LAN allowed, metadata refused)
+    let client = non_streaming_http_client_pinned(&api_url).await?;
 
     let mut messages_for_api: Vec<serde_json::Value> = messages
         .iter()
@@ -268,7 +269,8 @@ pub async fn generate_topic_title(
         ));
     }
 
-    let client = non_streaming_http_client();
+    // SEC-7: pinned resolution (key-bearing request; local/LAN allowed, metadata refused)
+    let client = non_streaming_http_client_pinned(&api_url).await?;
 
     let mut messages_for_api: Vec<serde_json::Value> = vec![json!({
         "role": "system",

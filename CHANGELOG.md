@@ -190,6 +190,15 @@ cargo 424 Rust 测试（6 ignored 真机项）、78 前端测试、gates 全过�
 
 ## [Unreleased]
 
+### 🏗 多人协作就绪：规范体系建立 + 一次性文档清仓
+
+- **规范文件分工定型**：AGENTS.md = 编码规范唯一事实源（人类与 AI 代理同等适用）；新增 CONTRIBUTING.md（中/英）= 流程规范（issue 模板用法 / 分支模型 / Conventional Commits 提交规范 / 本地测试基线 / PR 流程 / AI 代理协作红线 / 文档与截图纪律）；新增 SECURITY.md（漏洞私密报告通道与范围）；新增 PR 模板（改动-动机-验证证据-UI/文档检查单）与 CODEOWNERS（评审路由，多人扩展点）
+- **AGENTS.md 补全三节**：Code Comments（注释写「为什么」、模块头/公开项/unsafe 注释要求、禁墓碑注释）、Interface Contract（命令命名与稳定性承诺、serde camelCase 契约、含 I/O 命令必须 async、事件双端登记与敏感数据红线、插件 trait 变更视为破坏性变更）、Agent 协作守则（验证诚实 / 不越门禁 / 先读后说 / 最小改动 / 走 PR / 机密卫生 / 遇阻即报 + 多代理并发协调）；分支一节从单人约定升级为多人协作版
+- **CI 回归**：新增 ci.yml（PR 与 dev push 上跑 npm run verify 同套基线；前端/Rust 双 job 并行，ubuntu-22.04）——旧 Quality 工作流自 2026-07 起常红的根因（file: 依赖 junction 不可遍历、AppContainer 测试环境噪音）已在 0.8.3 修复，具备恢复条件
+- **文档撰写规范入档**：docs/zh|en/development/docs-style.md（双语镜像规则、写作规范、维护纪律——一次性产物不入库、截图隐私纪律、示例数据一律虚构）
+- **一次性文档清仓**：删除 docs/reviews/（全量代码审查报告——结论已并入 0.8.x CHANGELOG 与源码注释）、harness-environment-report.md（环境问题记录——根因已修复并沉淀进 CHANGELOG/AGENTS.md）、project-memory-rag-plan.md（实施计划——功能已落地至 docs/usage 与 reference）——「文档随代码、历史归 git/CHANGELOG」纪律自本 PR 起生效
+- docs/zh|en/README.md 索引补文档规范与贡献指南条目；getting-started 补协作流程指引；README 贡献段指向新规范文件
+
 ### ⚡ 设置页卡顿根修：反馈快照命令下主线程（M-11 漏网项）
 
 - **症状**：从其他页面进入「设置 → 应用」明显卡顿——页面挂载即冻结滚动/点击数百毫秒到数秒

@@ -16,12 +16,14 @@ This directory documents the features implemented on the `dev` branch. The docum
 - [Development Environment](development/getting-started.md): Dependencies, running, building, and platform requirements.
 - [System Architecture](development/architecture.md): Frontend and backend layering, state, storage, and major data flows.
 - [Extension Development](development/extensions.md): Provider, Engine, MCP, and file parser extension points.
+- [Documentation Style Guide](development/docs-style.md): Bilingual mirroring, writing rules, and maintenance discipline.
 
 ## Reference and Support
 
 - [Configuration Reference](reference/configuration.md): Configuration files, database, attachment formats, and security boundaries.
 - [Troubleshooting](troubleshooting.md): Connection, engine, MCP, permissions, and build issues.
 - [Feedback and community](../../README.md): Issue Forms, Discussions, in-app feedback, and the Chinese QQ group (1130943633).
+- [Contributing guide](../../CONTRIBUTING.md): Issues / branches / commits / PR process.
 - [Changelog](../../CHANGELOG.md)
 
 > [!IMPORTANT]

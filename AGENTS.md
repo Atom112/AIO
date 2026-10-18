@@ -4,6 +4,8 @@
 
 AIO is a lightweight, cross-platform AI assistant desktop client built with **Tauri 2.x** (Rust backend) and **SolidJS** (frontend). It supports remote API providers (OpenAI-compatible, Anthropic, Google Gemini, Ollama), local inference engines (llama.cpp, Ollama, vLLM — multi-engine, one active at a time), and an **Agent mode** that runs tool-augmented loops (file, git, shell, web, LSP, knowledge tools via MCP), spawns subagents, and enforces a three-tier permission model. Other subsystems: a **Harness workbench** (`/harness` page) that drives third-party CLI coding agents (Claude Code, Codex, OpenCode, Oh My Pi, Gemini CLI, Qwen Code, goose, DSH) over the Agent Client Protocol and renders their streams natively (AIO's own tools stay out of the loop there), project workspaces with Git integration, MCP server management (stdio/HTTP transports, catalog, tool approvals), skills (built-in, market, npx import), LSP diagnostics, usage tracking, app self-update, and full zh-CN/en-US localization. User docs live in `docs/` (mirrored: `docs/zh/`, `docs/en/`); development guides are in `docs/zh|en/development/`.
 
+**文件分工（多人协作）**：本文件（AGENTS.md）是编码规范的唯一事实源，人类与 AI 代理同等适用；[CONTRIBUTING.md](CONTRIBUTING.md) 是流程规范（issue / 分支 / 提交信息 / PR / 发版）；[SECURITY.md](SECURITY.md) 是漏洞报告通道。本文件遵循 [agents.md 开放格式](https://agents.md/)——对仓库内任意文件干活的代理都应先读本文件（多级 AGENTS.md 就近生效）。
+
 ## Tech Stack & Versions
 
 | Layer             | Technology                                                                            | Version                   |
@@ -157,6 +159,24 @@ src-tauri/src/
   2. Export it in `commands/mod.rs`.
   3. Register it in `lib.rs` via `tauri::generate_handler![...]`.
 
+### Code Comments（注释规范）
+
+- **注释写「为什么」，不写「是什么」**：代码自释的行不需要注释；需要的是决策、约束与坑（安全边界、兼容性约束、平台怪癖、性能权衡）。现有代码里的 `SEC-*`/`MCP-*`/`CHAT-*` 编号引用审查结论的注释是范例。
+- **模块头注释**：每个 `mod.rs`/复杂模块顶部一段说明职责与边界（参照 `core/migrate.rs`、`commands/feedback.rs` 的写法）。
+- **公开项必须文档化**：pub fn / pub struct 写明参数、返回、副作用与错误情形（`///` 中文为主，面向用户的消息经 `ierr!` 双语）。
+- **unsafe / 安全敏感代码**（沙箱、路径校验、密钥存储、IPC 边界）：逐段说明不变式与攻击面；禁止裸 `unsafe` 无注释。
+- **不写墓碑注释**（过时的、被注释掉的死代码）：删除即删除，git 记得一切。
+- **临时开关**：调试用的临时代码必须标记 `TODO(<name>)` 或在合入前删除；`TODO` 必须带 issue 号或署名。
+
+### Interface Contract（接口规范：Tauri IPC / 事件 / 插件 trait）
+
+- **命令命名**：`snake_case` 动词开头（`start_local_server`、`export_diagnostic_package`）；域前缀分组（`memory_*`、`harness_*`）。**命令名是对前端的公开 API，一旦发布不得改名**——需要演进时旧名保留为薄包装或废弃标记（`#[deprecated]` 文档注明替代）。
+- **载荷序列化**：Rust 侧统一 `#[serde(rename_all = "camelCase")]`（历史遗留的 snake_case 字段在 TS 侧如实镜像并加注释，见 `AppConfig` 先例）；TS 侧镜像类型放 `core/api/streamPayloads.ts` 或 `core/types/`，**与 Rust 结构体一一对应**。
+- **命令必为 async 或快速返回**：内部有真实 I/O（进程/文件/网络/全系统枚举）的命令一律 `#[tauri::command(async)]` 下沉阻塞池——同步命令在主线程执行，会冻结 UI（0.8.3 后 `get_feedback_snapshot` 即此坑）。评审时对任何新增同步命令默认质疑。
+- **事件契约**：后端→前端事件名 kebab-case，**双端登记**（`core/events.rs` 与 `core/api/events.ts`，守门测试强制）；载荷形状定义在 `streamPayloads.ts` 并注释对应后端结构体。事件是广播——载荷里不得携带敏感数据（密钥、未脱敏路径）。
+- **插件 trait**：`ProviderPlugin` / `LocalEnginePlugin` / harness adapter 等注册顺序即分发顺序（`openai_compat` 恒为兜底、注册最后）；trait 方法变更视为破坏性接口变更，需要 CHANGELOG `BREAKING CHANGE` 标记。
+- **安全边界**：所有接收前端路径参数的命令必须过 `core/path_safety.rs` 的 `safe_join`；返回给前端的错误信息不含本机绝对路径之外的敏感细节。
+
 ### SolidJS / TypeScript
 
 - Components: `PascalCase` files and export names.
@@ -221,13 +241,13 @@ More extension paths (MCP transports, new Tauri commands, agent tools, permissio
 
 ## Branch & Release Workflow
 
-单人开发约定（分支名规范 + PR 流程）：
+多人协作约定（流程细节与提交信息规范见 [CONTRIBUTING.md](CONTRIBUTING.md)）：
 
-- **日常开发**：从 `dev` 切出功能分支，命名 `dev-<功能>`（Git 不允许在 `dev` 分支存在时创建 `dev/<功能>` 命名空间，故用连字符前缀）；更改提交到功能分支。
-- **功能完成**：功能分支 PR 到 `dev`，merge 后删除功能分支（本地 + 远端）。
+- **日常开发**：从最新 `dev` 切出功能分支，命名 `dev-<类型>-<主题>`（如 `dev-feat-memory-panel`；Git 不允许在 `dev` 分支存在时创建 `dev/<功能>` 命名空间，故用连字符）；一个分支只做一件事，改动提交到功能分支。
+- **功能完成**：功能分支 PR 到 `dev`；CI（ci.yml，跑 `npm run verify` 同套基线）全绿 + CODEOWNERS 评审通过后合并，merge 后删除功能分支（本地 + 远端）。外部贡献者走 fork PR。
 - **发布版本**：决定发版时 `dev` PR 到 `master` 并 merge；`dev` 分支保留不动。随后 bump 版本（CHANGELOG + 三处版本号）、打 `vX.Y.Z` tag 推送触发 `release.yml`。
-- **master** 仅包含已发布版本内容；长期存在的分支只有 `dev` 与 `master`。
-- **预发布版本**：tag 形如 `v1.0.0-alpha`（带连字符即预发布）——release.yml 按 tag 名自动将 GitHub Release 标记为 prerelease（`releases/latest` 保持指向稳定版，稳定用户不会被推 alpha），alpha 测试者从该 Release 页面手动下载。
+- **master** 仅包含已发布版本内容；长期存在的分支只有 `dev` 与 `master`；任何分支不得 force-push 这两条长期分支。
+- **预发布版本**：tag 形如 `v1.0.0-alpha`（带连字符即预发布）——release.yml 按版本号自动将 GitHub Release 标记为 prerelease（`releases/latest` 保持指向稳定版，稳定用户不会被推 alpha），alpha 测试者从该 Release 页面手动下载。
 - **本地 exe 重建（快速验收用，不走安装包）**：`cargo +1.97.1 build --release --manifest-path src-tauri/Cargo.toml --features tauri/custom-protocol` —— **`--features tauri/custom-protocol` 不可省略**：Tauri 2 的 `generate_context!` 靠它区分 dev/prod（无此特性时上下文按 dev 烘焙：不嵌入 dist、webview 加载 devUrl，裸 cargo 构建出的 exe 打开即"localhost 拒绝连接"——`tauri dev` 与 CI 的 `tauri build` 各自隐式处理，唯独裸 cargo 不会）。窗口是否可用必须以 webview 内容为准（CDP 截图或 PrintWindow），不能只看进程 responding。
 
 ## Build & Dev Commands
@@ -264,3 +284,21 @@ Before submitting changes, verify:
 - [ ] 新后端→前端事件名：在 `src-tauri/src/core/events.rs` 与 `src/core/api/events.ts` 两端登记（kebab-case）。
 - [ ] 新 Tauri 命令：前端经 `core/api/<域>.ts` 封装调用，组件不得裸 `invoke`。
 - [ ] `npm run check:gates` 全过（裸中文 JSX / 颜色 / any 闸门 / 分层 / 文件规模 / 命令注册 / 子进程隐藏控制台）。
+- [ ] 含 I/O 的命令为 async（阻塞池）；新命令文档注释含参数说明（见 Interface Contract）。
+- [ ] 文档改动双侧同步（`docs/zh/` 与 `docs/en/`），链接过 `check:docs`。
+
+## Agent 协作守则（AI 代理辅助开发规范）
+
+本仓库欢迎 AI 代理参与开发，且大量工作本就由代理完成。代理与人遵守同一套标准（编码规范即本文件、流程规范即 CONTRIBUTING.md），额外红线：
+
+- **验证诚实（最重要）**：「已验证 / 全绿 / 测试通过」的声明必须伴随实际执行的命令与真实结果输出。未运行的测试不得声称通过；无法在本机执行的部分（如平台专属测试）要如实说明并标注留给 CI。
+- **不越门禁**：不放宽 `check-gates.mjs` 阈值、不 `--no-verify`、不为让校验通过而特化代码或跳过用例；门禁调整是独立 PR 且需要维护者批准。
+- **先读后说**：对不确定的行为/接口先读源码与文档再下结论；引用规范时给出来源文件与章节，不凭记忆转述。
+- **最小改动**：只做任务要求的事——不顺手重构、不批量格式化无关文件、不改无关依赖版本；发现相邻问题记录 issue 而不是顺手修。
+- **走 PR**：代理产物一律走 PR 流程（模板、CI、评审），不直接推 `dev`/`master`；提交信息遵守 Conventional Commits，不伪装人工成果，也不虚构评审状态。
+- **机密卫生**：不提交密钥/令牌/个人数据；日志与截图脱敏；示例与会话数据用虚构内容（仓库历史上有过真实数据混入截图的事故，重拍成本很高）。
+- **遇阻即报**：卡住、被环境拒绝、或发现需求与规范冲突时，停下来报告并给出证据，不要静默绕过或降低完成标准。
+
+### 多代理并发写作协调
+
+多个代理（或代理与人）同时改仓库时：改同一文件前先 `git pull`；`core/file_locks.rs` 是产品内的运行时文件锁（与 git 写作协调无关）；git 层面的冲突靠「小 PR + 单一主题分支」消解——大范围重构先开 issue 对齐方案再动手。

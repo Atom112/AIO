@@ -38,13 +38,17 @@ AIO 的权限系统基于三态决策模型：
 - 删除操作（`delete_file`）→ Ask
 - 其他工具 → Ask
 
-### Auto 模式
+### 完全权限 / 本机全权模式（Auto / Danger）
+
+两档共用同一套权限规则（与 `permission.rs` 中 `Auto | Danger` 共臂一致）：
 
 - 内置文件操作（读、写、替换、建目录、搜索）→ Allow
 - Git 操作（全部）→ Allow
 - 命令执行（`execute_command`）→ Allow
 - 删除操作（`delete_file`）→ Allow（与 `execute_command` 对齐：命令本就能 `del`/`rm`，且删除被沙箱限定在项目内；Normal 模式保持逐次确认）
 - 其他工具 → Allow
+
+两档的差异不在权限规则，而在**命令是否运行在 OS 沙箱内**：完全权限（Auto）保留 AppContainer/bwrap/SBPL 沙箱；本机全权（Danger）命令完全脱离沙箱、以完整用户权限原生执行（进入时弹独立的红色风险警告）。
 
 ### Plan 模式
 
@@ -55,14 +59,6 @@ AIO 的权限系统基于三态决策模型：
 - 命令执行（`execute_command`）→ Deny
 - Web 工具 → Deny
 - 其他工具 → Ask
-
-### Workflow 模式
-
-- 常规文件操作（读、写、替换、搜索、建目录）→ Allow
-- Git 操作 → Allow
-- 命令执行 → Allow
-- 删除操作 → Allow
-- 其他工具 → Allow
 
 > 具体规则列表可在源码 `permission.rs:default_rules_for_mode` 查看。
 

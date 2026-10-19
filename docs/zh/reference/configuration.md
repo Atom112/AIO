@@ -25,7 +25,7 @@ AIO 使用 Tauri 提供的应用数据目录和系统配置目录，应用标识
 
 ## 应用配置
 
-`config.json` 当前持久化：
+`config.json` 当前持久化的**主要字段**（非穷尽；沙箱系列 `sandboxWindows` / `sandboxWindowsToolchainDirs` / `sandboxProtectGit` / `sandboxUnsandboxedFallback`、shell 选择 `shellWindows`、记忆管线 `memoryAutoInject` 等见[权限系统参考](permissions.md)与[配置源 `core/models/config.rs`](https://github.com/Atom112/AIO/blob/dev/src-tauri/src/core/models/config.rs)）：
 
 | 字段                          | 行为                                                                                                                                                                                                                                                          |
 | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -40,16 +40,18 @@ AIO 使用 Tauri 提供的应用数据目录和系统配置目录，应用标识
 | `memoryInjectionBudgetTokens` | 记忆注入系统提示词的 token 预算，默认 `3000`                                                                                                                                                                                                                  |
 | `autoStartEnabled`            | 是否随系统启动，默认 `false`                                                                                                                                                                                                                                  |
 
-后端 `AppConfig` 还包含以下运行字段：
+后端 `AppConfig` 还包含以下运行字段（均随 `config.json` 序列化持久化，无设置界面的字段只能手工编辑该文件修改）：
 
-| 字段                     | 当前有效值               |
-| ------------------------ | ------------------------ |
-| `auto_retry_enabled`     | 默认 `true`              |
-| `auto_retry_count`       | 默认 `2`                 |
-| `auto_retry_delay_ms`    | 默认 `500` 毫秒          |
-| `maxConcurrentSubagents` | 未配置时使用并发上限 `5` |
+| 字段                     | 默认值               | 有无设置界面           |
+| ------------------------ | -------------------- | ---------------------- |
+| `auto_retry_enabled`     | `true`               | 无                     |
+| `auto_retry_count`       | `2`                  | 无                     |
+| `auto_retry_delay_ms`    | `500` 毫秒           | 无                     |
+| `maxConcurrentSubagents` | 未配置时并发上限 `5` | 有（子智能体并发旋钮） |
+| `maxToolRounds`          | 未配置时用内置默认   | 有（工具轮数旋钮）     |
+| `parallelToolExecution`  | `true`               | 无                     |
 
-这些重试和并发字段当前没有设置界面，也不会由 `config.json` 的磁盘结构持久化。不要通过手工添加 JSON 字段宣称已经修改运行值；对外开放前需要同时扩展加载、保存与设置界面。
+手工编辑 `config.json` 时注意：应用运行中的内存态会在退出时覆盖写回磁盘，**先退出 AIO 再改文件**。`maxToolRounds` / `maxConcurrentSubagents` 传 `-1` 表示不限制、`0` 无效。
 
 ## SQLite 数据
 
@@ -107,12 +109,12 @@ Provider API Key 和 MCP 环境变量/请求头中的密钥优先写入系统凭
 ```text
 .aio/
 ├── permissions.json
-└── knowledge.json
+└── memory/
 ```
 
 - `permissions.json`：项目工具的允许、询问和拒绝规则，详见[权限系统参考](permissions.md)；
-- `knowledge.json`：跨会话知识，类别为 `decision`、`pattern`、`convention` 或 `note`，最多保留 50 条。
 - `memory/`：项目级语义记忆库（`memory.sqlite`：facts、版本审计、FTS5、向量索引），建议加入 `.gitignore`。
+- `knowledge.json`：**旧版遗留，仅作迁移源**——0.8 之前的项目可能存在；首次打开项目记忆时其内容被自动迁移为 RAG 事实（幂等，只读），新项目不会再生成该文件。
 
 ## 附件白名单
 

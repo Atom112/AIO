@@ -22,9 +22,9 @@ Only add a dedicated Provider plugin when the request or streaming response form
 ## Adding a Local Engine
 
 1. Add an implementation in `src-tauri/src/plugins/engine/`.
-2. Implement `LocalEnginePlugin` for identification, platform, extensions, install path, startup and progress parsing.
+2. Implement `LocalEnginePlugin` for identification, platform, extensions, startup and progress parsing.
 3. Register in `EngineManager::new()`.
-4. For auto-install, integrate with the existing `EngineInstaller`.
+4. Engine binaries are user-installed by convention (not bundled, not auto-downloaded); `detect_installation` probes PATH and common install locations (winget/conda/homebrew/nix, ...) while `installer.rs` only provides install-dir and detection helpers.
 5. Explicitly expose in the frontend engine options, with format filtering and necessary safety notes.
 
 After backend registration, the engine is automatically discovered by `EngineManager` and included in scan results. vLLM is the current example: once the plugin is registered, it is covered by the engine scanning pipeline without a separate frontend settings page. All three engines (llama.cpp, vLLM, Ollama) now share a unified engine card UI, with status indicators and start/stop operations handled in the Provider details page.

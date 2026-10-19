@@ -25,6 +25,7 @@ const REPO_URL = 'https://github.com/Atom112/AIO';
 const FeedbackSection: Component = () => {
   const [snapshot, setSnapshot] = createSignal<FeedbackSnapshot | null>(null);
   const [copied, setCopied] = createSignal(false);
+  const [bugCopied, setBugCopied] = createSignal(false);
   const [exported, setExported] = createSignal<string | null>(null);
   const [exporting, setExporting] = createSignal(false);
 
@@ -56,8 +57,18 @@ const FeedbackSection: Component = () => {
     const s = snapshot()?.summary ?? '';
     openLink(`/issues/new?template=bug_report.yml&title=${encodeURIComponent('[bug] ')}`);
     // Snapshot goes to the clipboard as a convenience (the form's first field
-    // says to paste it there).
-    if (s) navigator.clipboard.writeText(s).catch(() => undefined);
+    // says to paste it there). The button label flips for ~1.2s so the hidden
+    // clipboard side effect is visible (copy-discipline: state change beats a
+    // permanent explainer line).
+    if (s) {
+      navigator.clipboard
+        .writeText(s)
+        .then(() => {
+          setBugCopied(true);
+          setTimeout(() => setBugCopied(false), 1200);
+        })
+        .catch(() => undefined);
+    }
   };
 
   const openAlphaFeedback = () => {
@@ -120,7 +131,8 @@ const FeedbackSection: Component = () => {
       {/* GitHub channel buttons */}
       <div class="flex flex-wrap gap-2 mb-4">
         <button class={btnPrimaryOutlineSm} onClick={openBugReport}>
-          <Icon name="bug" size={12} /> {t('feedback.reportBug')}
+          <Icon name="bug" size={12} />
+          {bugCopied() ? t('feedback.reportBugCopied') : t('feedback.reportBug')}
         </button>
         <button class={btnSecondarySm} onClick={openAlphaFeedback}>
           <Icon name="sparkles" size={12} /> {t('feedback.alphaFeedback')}

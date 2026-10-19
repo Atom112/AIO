@@ -222,6 +222,14 @@ cargo 424 Rust 测试（6 ignored 真机项）、78 前端测试、gates 全过�
 
 ## [Unreleased]
 
+### 🔥 P0：安装版供应商目录加载失败——bundled resource 路径与打包布局不匹配
+
+- **症状（v1.0.0-alpha.2 实装报告）**：供应商设置页仅剩三个本地推理引擎卡，目录供应商列表为空；点「拉取」报失败
+- **根因**：tauri.conf.json 用列表形式声明 `"resources": ["../node_modules/@aio/models-data/dist/data/models.json"]`，tauri-bundler 把 `..` 路径段编码为 `_up_` 目录——安装包内文件落在 `{install}/_up_/node_modules/@aio/models-data/dist/data/models.json`，而 `catalog.rs` 读 `{resource_dir}/models.json`，**永不命中** → 静默返回空目录（前端无报错，只剩前端硬编码的本地引擎卡）
+- **考古（7z 解包实证）**：v0.8.3 的 NSIS 包内布局完全相同——**该 bug 自首个发行版即存在**，此前未暴露的完整因果链：目录缺失走静默空降级 + 用户日常使用已保存的自定义 provider（provider-configs.json 不依赖目录）+ 本地开发构建走 dev fallback（node_modules 直命中，开发者视角永远正常——与 console 闪窗同款的「只在安装版复现」模式）
+- **修复（双保险）**：① resources 改 map 形式 `"../node_modules/...": "models.json"`——安装后文件平铺在 exe 旁（新布局）；② `catalog.rs` bundled 读取按候选路径探测（平铺 → `_up_` 旧布局）——存量坏安装升级后（NSIS 覆盖安装不清理旧文件）任一命中即恢复
+- 附注：用户点「拉取」失败的网络因素（raw.githubusercontent.com 在中国大陆不可达）独立于此 bug——修复后 bundled 快照可用，拉取仅影响更新到最新目录
+
 ### 📝 文档-代码事实全面审计：11 处漂移清偿（双语同步）
 
 引擎安装行为修正的后续轮——系统性提取文档行为断言逐条对照代码（permission.rs / subagent.rs / tool_names.rs / memory/tools.rs / config.rs / chatCommands.ts / AgentModeSelector.tsx）后确认并修正：

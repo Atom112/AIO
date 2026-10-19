@@ -32,7 +32,9 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "resources": ["../node_modules/@aio/models-data/dist/data/models.json"]
+    "resources": {
+      "../node_modules/@aio/models-data/dist/data/models.json": "models.json"
+    }
   },
   "plugins": {
     "updater": {

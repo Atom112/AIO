@@ -33,7 +33,7 @@
 ### 2. Local LLM Inference
 
 - **llama.cpp powered**: Select and run local GGUF models directly.
-- **Auto-install on first use**: When the runtime engine is missing, AIO downloads it automatically on model startup.
+- **Bring your own engine**: AIO detects llama.cpp on your machine and links to the official builds when missing — the engine binary is neither bundled nor auto-downloaded.
 - **Model market**: Search and download GGUF models from HuggingFace or ModelScope, with hardware-aware picks.
 - **Unified experience**: Local and remote models share the same assistant, thread, and model selector.
 

@@ -222,6 +222,10 @@ cargo 424 Rust 测试（6 ignored 真机项）、78 前端测试、gates 全过�
 
 ## [Unreleased]
 
+### 📝 引擎安装行为文档修正：llama.cpp 从不自动下载（宣传口径对齐）
+
+准备 alpha 宣传文案时发现**文档漂移**：业务早已改为「引擎自备、用户选择性下载」，但 8 处文档仍宣称「首次启动自动下载引擎」（README 双语、getting-started 双语、providers-and-models 双语、AGENTS.md 扩展指南、extensions 双语）——照此宣传即虚假承诺。逐处修正为如实描述：AIO 检测本机 llama.cpp（PATH + winget/conda/homebrew/nix 常见位置），未安装时设置页提供官方下载链接；`installer.rs` 现仅含安装目录与探测辅助（无下载路径），扩展指南同步更正。harness CLI 工具的 npx 自动拉取是真实存在的行为，未动。
+
 ### 🪜 第十二轮：模式阶梯改名 + 完全权限内置化 + 工作流功能移除（PR #131）
 
 - **Agent 模式阶梯改名（wire 值稳定，assistants DB 无迁移）**：`off`=「只读」、`normal`=「工作区内修改」、`auto`=「完全权限」、`plan`=「计划」不变——

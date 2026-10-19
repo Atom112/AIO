@@ -16,6 +16,8 @@ pub mod anthropic;
 pub mod google;
 pub mod ollama;
 pub mod openai_compat;
+pub mod opencode;
+pub mod perplexity;
 
 use crate::core::models::LiveModel;
 use crate::ierr;
@@ -111,6 +113,22 @@ pub trait ProviderPlugin: Send + Sync {
         }
     }
 
+    /// Attaches conversation-scoped session identity to the CHAT completions
+    /// path (post-auth). Currently only OpenCode Go needs it: the gateway
+    /// rejects session-less chat requests with `400 MissingSessionID` and uses
+    /// the stable per-conversation ID for routing / prompt-cache locality.
+    /// `session_id` is the caller's conversation identity (AIO topic id) when
+    /// known; `None` marks conversation-less auxiliary calls (titles / BTW /
+    /// memory pipeline) — plugins fall back to their own stable session.
+    /// Default: no extra headers (every provider except OpenCode Go).
+    fn apply_chat_session(
+        &self,
+        req: reqwest::RequestBuilder,
+        _session_id: Option<&str>,
+    ) -> reqwest::RequestBuilder {
+        req
+    }
+
     /// Parses the JSON response into the unified LiveModel list
     fn parse_models(&self, body: &serde_json::Value) -> Vec<LiveModel>;
 
@@ -139,6 +157,8 @@ impl ProviderManager {
         mgr.register(Arc::new(google::GoogleProvider));
         mgr.register(Arc::new(anthropic::AnthropicProvider));
         mgr.register(Arc::new(ollama::OllamaProvider));
+        mgr.register(Arc::new(opencode::OpenCodeProvider));
+        mgr.register(Arc::new(perplexity::PerplexityProvider));
         mgr.register(Arc::new(openai_compat::OpenAICompatProvider));
         mgr
     }

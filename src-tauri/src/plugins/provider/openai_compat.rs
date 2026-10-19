@@ -30,7 +30,12 @@ impl ProviderPlugin for OpenAICompatProvider {
         if api_url.ends_with("/models") {
             api_url.to_string()
         } else {
+            // A base carrying the full chat path (catalog reality, e.g. bailing's
+            // https://api.tbox.cn/api/llm/v1/chat/completions) must not get
+            // /v1/models appended AFTER the chat suffix — strip it first, then
+            // apply the /v1 rule (chat_completions_url strips the same suffix).
             let trimmed = api_url.trim_end_matches('/');
+            let trimmed = trimmed.strip_suffix("/chat/completions").unwrap_or(trimmed);
             if trimmed.ends_with("/v1") || trimmed.ends_with("/v1beta") {
                 format!("{}/models", trimmed)
             } else {
@@ -74,5 +79,58 @@ impl ProviderPlugin for OpenAICompatProvider {
                 })
             })
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Models URL building: the /v1 rule for bare bases, /models passthrough,
+    /// and the full-chat-path base (catalog's bailing shape) must strip the
+    /// chat suffix before composing — not append /v1/models after it.
+    #[test]
+    fn models_url_composes_for_bare_and_full_chat_path_bases() {
+        let p = OpenAICompatProvider;
+        // /v1 bases: {base}/models
+        assert_eq!(
+            p.models_url("https://api.deepseek.com/v1"),
+            "https://api.deepseek.com/v1/models"
+        );
+        // Bare host: {base}/v1/models
+        assert_eq!(
+            p.models_url("https://api.deepseek.com"),
+            "https://api.deepseek.com/v1/models"
+        );
+        // Already a models URL: unchanged
+        assert_eq!(
+            p.models_url("https://x.example.com/v1/models"),
+            "https://x.example.com/v1/models"
+        );
+        // Full chat-path base (bailing): suffix stripped, then the /v1 rule
+        assert_eq!(
+            p.models_url("https://api.tbox.cn/api/llm/v1/chat/completions"),
+            "https://api.tbox.cn/api/llm/v1/models"
+        );
+        // Chat path without /v1: fallback append, still after stripping
+        assert_eq!(
+            p.models_url("https://x.example.com/api/chat/completions"),
+            "https://x.example.com/api/v1/models"
+        );
+    }
+
+    /// Chat URL building mirrors the same suffix handling (regression guard for
+    /// the pairing with models_url above).
+    #[test]
+    fn chat_url_round_trips_full_chat_path_base() {
+        let p = OpenAICompatProvider;
+        assert_eq!(
+            p.chat_completions_url("https://api.tbox.cn/api/llm/v1/chat/completions"),
+            "https://api.tbox.cn/api/llm/v1/chat/completions"
+        );
+        assert_eq!(
+            p.chat_completions_url("https://api.deepseek.com"),
+            "https://api.deepseek.com/chat/completions"
+        );
     }
 }

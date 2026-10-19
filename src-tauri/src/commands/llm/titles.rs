@@ -78,7 +78,7 @@ pub async fn summarize_history(
     });
     let (res, is_anthropic) = tokio::time::timeout(
         std::time::Duration::from_secs(45),
-        post_chat_completion(&client, &api_url, &api_key, &body),
+        post_chat_completion(&client, &api_url, &api_key, &body, None),
     )
     .await
     .map_err(|_| ierr!("摘要请求超时（45s）", "Summary request timed out (45s)"))?
@@ -310,7 +310,7 @@ pub async fn generate_topic_title(
 
     let (res, is_anthropic) = tokio::time::timeout(
         std::time::Duration::from_secs(45),
-        post_chat_completion(&client, &api_url, &api_key, &body),
+        post_chat_completion(&client, &api_url, &api_key, &body, None),
     )
     .await
     .map_err(|_| {

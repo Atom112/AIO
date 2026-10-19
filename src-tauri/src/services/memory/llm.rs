@@ -53,7 +53,9 @@ pub(crate) async fn chat_json(
     });
     let (res, is_anthropic) = tokio::time::timeout(
         Duration::from_secs(45),
-        crate::plugins::llm::post_chat_completion(&client, &cfg.api_url, &cfg.api_key, &body),
+        // Memory pipeline calls are conversation-less background work; the
+        // plugin's stable per-process session applies for session-keyed gateways.
+        crate::plugins::llm::post_chat_completion(&client, &cfg.api_url, &cfg.api_key, &body, None),
     )
     .await
     .map_err(|_| ierr!("LLM 调用超时（45s）", "LLM request timed out (45s)"))??;

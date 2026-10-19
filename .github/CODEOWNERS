@@ -1,0 +1,5 @@
+# CODEOWNERS — PR 评审路由（多人协作扩展点：按目录追加条目）
+# 当前默认所有路径由仓库所有者评审；新增维护者后按域拆分，例如：
+# src-tauri/   @rust-maintainer
+# src/         @frontend-maintainer
+* @Atom112

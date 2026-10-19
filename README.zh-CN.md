@@ -162,11 +162,11 @@ cargo check
 
 ## 🤝 贡献 | Contributing
 
-发现 Bug 或有新点子？欢迎前往 [GitHub Issues](https://github.com/Atom112/AIO/issues)：
+欢迎参与开发！流程规范（issue / 分支 / 提交 / PR）见[贡献指南](CONTRIBUTING.md)，编码规范见 [AGENTS.md](AGENTS.md)——人类与 AI 代理同一套标准。安全漏洞请按 [SECURITY.md](SECURITY.md) 私密报告。
 
-- 提交 Bug 时请附上系统版本、AIO 提交和脱敏后的错误日志；
-- 功能建议尽量描述真实使用场景；
-- Pull Request 提交前请运行 `npm run build` 与 `cargo check`。
+- Pull Request 提交前请运行 `npm run verify` 与相关测试；
+- 文档为双语镜像（`docs/zh/` 与 `docs/en/`），行为变更需双侧同步；
+- 提交信息遵循 Conventional Commits。
 
 ---
 

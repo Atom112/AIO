@@ -161,11 +161,11 @@ For the full index, see the [AIO Documentation Center](docs/en/README.md). For v
 
 ## Contributing
 
-Found a bug or have an idea? Visit [GitHub Issues](https://github.com/Atom112/AIO/issues):
+Contributions are welcome! See the [contributing guide](CONTRIBUTING.md) for the process (issues / branches / commits / PRs) and [AGENTS.md](AGENTS.md) for coding standards — the same rules apply to humans and AI agents. Report vulnerabilities privately per [SECURITY.md](SECURITY.md).
 
-- When filing a bug, include your OS version, AIO commit, and sanitized error logs;
-- Feature requests should describe real-world use cases;
-- Before submitting a Pull Request, run `npm run build` and `cargo check`.
+- Run `npm run verify` and the relevant tests before opening a Pull Request;
+- Docs are a bilingual mirror (`docs/zh/` ↔ `docs/en/`) — behavior changes must update both sides;
+- Commit messages follow Conventional Commits.
 
 ---
 

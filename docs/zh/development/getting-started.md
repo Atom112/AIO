@@ -44,6 +44,8 @@ npm run verify
 
 `npm run dev` 只启动 Vite，无法验证 Tauri invoke、文件选择、系统凭据库、本地引擎或更新功能。日常功能开发应使用 `npm run tauri dev`。
 
+多人协作流程（issue 规范、分支命名、提交信息、PR 检查单）见仓库根目录的[贡献指南](../../../CONTRIBUTING.md)；编码规范（风格、注释、接口、门禁）见 [AGENTS.md](../../../AGENTS.md)。提交前在本机跑 `npm run verify`——PR CI 会跑同一套基线。
+
 仓库的 `.cargo/config.toml` 将 crates.io 替换为 rsproxy 稀疏镜像，用于规避部分 Windows 网络中 IPv6 + Schannel 的 TLS 握手失败。依赖版本和校验和仍由 `Cargo.lock` 约束；若所在组织要求直接访问官方源，可删除本地 source replacement 后构建。
 
 ## Linux

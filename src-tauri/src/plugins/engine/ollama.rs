@@ -477,7 +477,10 @@ impl LocalEnginePlugin for OllamaPlugin {
     }
 }
 
-#[cfg(test)]
+// Tests exercise the known-dirs fallback which is Windows/Linux-specific
+// (LOCALAPPDATA / HOME probing); macOS has no testable fallback path here.
+// Gating the whole mod keeps `use super::*` / helpers from going dead on macOS.
+#[cfg(all(test, any(target_os = "windows", target_os = "linux")))]
 mod tests {
     use super::*;
 

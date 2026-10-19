@@ -11,6 +11,9 @@ use std::sync::LazyLock;
 /// 系统代理环境变量因此在首次使用时解析一次（桌面应用可接受：改代理需重启）。
 static STREAMING_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
     reqwest::Client::builder()
+        // Self-identifying UA (OpenCode Go rejects generic SDK/library agents;
+        // some gateways key routing on it). Format matches build_http_client.
+        .user_agent(format!("AIO-Desktop/{}", env!("CARGO_PKG_VERSION")))
         .connect_timeout(std::time::Duration::from_secs(5))
         .timeout(std::time::Duration::from_secs(600))
         .tcp_keepalive(std::time::Duration::from_secs(30))
@@ -22,6 +25,7 @@ static STREAMING_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
 /// Non-streaming client singleton (same reuse rationale as [`STREAMING_CLIENT`]).
 static NON_STREAMING_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
     reqwest::Client::builder()
+        .user_agent(format!("AIO-Desktop/{}", env!("CARGO_PKG_VERSION")))
         .connect_timeout(std::time::Duration::from_secs(5))
         .timeout(std::time::Duration::from_secs(60))
         .build()
@@ -132,12 +136,14 @@ async fn pinned_client_for(api_url: &str, streaming: bool) -> Result<reqwest::Cl
         } => {
             let mut builder = if streaming {
                 reqwest::Client::builder()
+                    .user_agent(format!("AIO-Desktop/{}", env!("CARGO_PKG_VERSION")))
                     .connect_timeout(std::time::Duration::from_secs(5))
                     .timeout(std::time::Duration::from_secs(600))
                     .tcp_keepalive(std::time::Duration::from_secs(30))
                     .http2_keep_alive_interval(std::time::Duration::from_secs(30))
             } else {
                 reqwest::Client::builder()
+                    .user_agent(format!("AIO-Desktop/{}", env!("CARGO_PKG_VERSION")))
                     .connect_timeout(std::time::Duration::from_secs(5))
                     .timeout(std::time::Duration::from_secs(60))
             };
@@ -180,13 +186,23 @@ pub(crate) async fn non_streaming_http_client_pinned(
 /// endpoint, `apply_chat_auth` attaches auth (Bearer by default; Anthropic its
 /// native headers; Ollama none — the historic two hardcoded branches and the
 /// second host-matching call are gone), and the Anthropic native protocol adapts
-/// the body when the dispatched plugin is Anthropic.
+/// the body when the dispatched plugin is Anthropic. `apply_chat_session`
+/// attaches conversation-scoped session identity afterward (OpenCode Go's
+/// `x-opencode-session`; no-op for every other provider).
+///
+/// `session_id`: the conversation identity (AIO topic id) when the caller has
+/// one — conversation-bearing callers MUST pass it (OpenCode Go rejects
+/// session-less chat requests). `None` is for conversation-less auxiliary calls
+/// (title generation / BTW / memory pipeline); plugins substitute a stable
+/// per-process session.
+///
 /// Returns (response, is_anthropic); the caller parses the response accordingly.
 pub(crate) async fn post_chat_completion(
     client: &reqwest::Client,
     api_url: &str,
     api_key: &str,
     body: &serde_json::Value,
+    session_id: Option<&str>,
 ) -> Result<(reqwest::Response, bool), String> {
     let plugin = crate::plugins::provider::ProviderManager::new().for_url(api_url);
     let endpoint = plugin.chat_completions_url(api_url);
@@ -200,6 +216,7 @@ pub(crate) async fn post_chat_completion(
     } else {
         plugin.apply_chat_auth(client.post(&endpoint).json(body), api_key)
     };
+    let req = plugin.apply_chat_session(req, session_id);
     let res = req
         .send()
         .await
@@ -239,31 +256,33 @@ pub(crate) async fn post_chat_completion_with_retry(
     api_key: &str,
     body: &serde_json::Value,
     max_retries: u32,
+    session_id: Option<&str>,
 ) -> Result<(reqwest::Response, bool), String> {
     let mut attempt: u32 = 0;
     loop {
-        let (err, retryable) = match post_chat_completion(client, api_url, api_key, body).await {
-            Ok((response, is_anthropic)) => {
-                if response.status().is_success() {
-                    return Ok((response, is_anthropic));
+        let (err, retryable) =
+            match post_chat_completion(client, api_url, api_key, body, session_id).await {
+                Ok((response, is_anthropic)) => {
+                    if response.status().is_success() {
+                        return Ok((response, is_anthropic));
+                    }
+                    let status = response.status();
+                    let body_text = response.text().await.unwrap_or_default();
+                    let truncated = if body_text.len() > 512 {
+                        &body_text[..body_text.floor_char_boundary(512)]
+                    } else {
+                        &body_text
+                    };
+                    (
+                        format!("LLM API {}: {}", status, truncated),
+                        is_retryable_http_status(status),
+                    )
                 }
-                let status = response.status();
-                let body_text = response.text().await.unwrap_or_default();
-                let truncated = if body_text.len() > 512 {
-                    &body_text[..body_text.floor_char_boundary(512)]
-                } else {
-                    &body_text
-                };
-                (
-                    format!("LLM API {}: {}", status, truncated),
-                    is_retryable_http_status(status),
-                )
-            }
-            Err(e) => {
-                let retryable = is_retryable_transport_error(&e);
-                (e, retryable)
-            }
-        };
+                Err(e) => {
+                    let retryable = is_retryable_transport_error(&e);
+                    (e, retryable)
+                }
+            };
         if !retryable || attempt >= max_retries {
             return Err(err);
         }

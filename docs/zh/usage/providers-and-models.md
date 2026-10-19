@@ -9,9 +9,14 @@ AIO 后端按顺序匹配专用 Provider，最后使用 OpenAI-compatible 实现
 | Google            | Google 原生生成接口及其流式响应格式                 |
 | Anthropic         | Anthropic Messages 接口                             |
 | Ollama            | 本机或局域网 Ollama 服务                            |
+| OpenCode          | OpenCode Go（`opencode.ai`）托管推理                |
 | OpenAI-compatible | OpenAI 及兼容 `/chat/completions`、`/models` 的服务 |
 
 供应商列表和模型元数据来自相邻依赖 `@aio/models-data`。Provider 配置只保存开关、API URL、启用模型等运行信息；模型能力、上下文窗口和展示名称由目录提供。
+
+### OpenCode Go
+
+OpenCode Go 订阅（Go / Go Plus）的 API Key 在 AIO 中作为自定义 Provider 使用：API URL 填 OpenAI 兼容端点 `https://opencode.ai/inference/go/openai/v1`，模型经「从 API 拉取模型」获取。AIO 自动为每个话题的聊天请求附带 `x-opencode-session` 会话头（OpenCode Go 网关的必需字段，也用于其路由与提示词缓存优化）。注意其 Anthropic 协议端点（`/inference/go/anthropic/v1`，服务 Claude / MiniMax / Qwen 系模型）暂不在支持范围内。
 
 ## 配置流程
 

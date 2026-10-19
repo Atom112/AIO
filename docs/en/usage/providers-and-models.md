@@ -9,9 +9,14 @@ AIO backend matches dedicated Providers in order, falling back to the OpenAI-com
 | Google            | Google native generation API and its streaming response format     |
 | Anthropic         | Anthropic Messages API                                             |
 | Ollama            | Local or LAN Ollama service                                        |
+| OpenCode          | OpenCode Go (`opencode.ai`) hosted inference                       |
 | OpenAI-compatible | OpenAI and services compatible with `/chat/completions`, `/models` |
 
 Provider list and model metadata come from the adjacent dependency `@aio/models-data`. Provider configuration only stores toggles, API URLs, enabled models, and other runtime information; model capabilities, context windows, and display names are provided by the catalog.
+
+### OpenCode Go
+
+An OpenCode Go subscription (Go / Go Plus) API key works in AIO as a custom Provider: set the API URL to the OpenAI-compatible endpoint `https://opencode.ai/inference/go/openai/v1` and fetch models via "Fetch models from API". AIO automatically attaches the `x-opencode-session` header to each topic's chat requests (required by the OpenCode Go gateway, which also uses it for routing and prompt-cache optimization). Note that its Anthropic-protocol endpoints (`/inference/go/anthropic/v1`, serving Claude / MiniMax / Qwen models) are not supported yet.
 
 ## Configuration Workflow
 

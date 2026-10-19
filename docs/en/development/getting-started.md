@@ -44,6 +44,8 @@ npm run verify
 
 `npm run dev` only starts Vite; it cannot verify Tauri invoke, file selection, system credential store, local engines or update functionality. Daily feature development should use `npm run tauri dev`.
 
+Collaboration process (issue rules, branch naming, commit messages, PR checklist) lives in the [contributing guide](../../../CONTRIBUTING.md) at the repository root; coding standards (style, comments, interfaces, gates) live in [AGENTS.md](../../../AGENTS.md). Run `npm run verify` locally before committing — PR CI runs the same baseline.
+
 The repository's `.cargo/config.toml` replaces crates.io with the rsproxy sparse mirror to avoid TLS handshake failures caused by IPv6 + Schannel on some Windows networks. Dependency versions and checksums are still constrained by `Cargo.lock`; if your organization requires direct access to the official registry, delete the local source replacement before building.
 
 ## Linux

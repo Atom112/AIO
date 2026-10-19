@@ -16,12 +16,14 @@
 - [开发环境](development/getting-started.md)：依赖、运行、构建与平台要求。
 - [系统架构](development/architecture.md)：前后端分层、状态、存储与主要数据流。
 - [扩展开发](development/extensions.md)：Provider、Engine、MCP 和文件解析扩展点。
+- [文档撰写规范](development/docs-style.md)：双语镜像、写作与维护纪律。
 
 ## 参考与支持
 
 - [配置参考](reference/configuration.md)：配置文件、数据库、附件格式和安全边界。
 - [故障排查](troubleshooting.md)：连接、引擎、MCP、权限与构建问题。
 - [反馈与社区](../../README.zh-CN.md)：Issue Forms、Discussions、应用内反馈与 QQ 中文交流群（1130943633）。
+- [贡献指南](../../CONTRIBUTING.md)：issue / 分支 / 提交 / PR 流程规范。
 - [变更日志](../../CHANGELOG.md)
 
 > [!IMPORTANT]

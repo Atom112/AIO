@@ -19,6 +19,9 @@ use std::path::{Path, PathBuf};
 /// semantics). EXE is always forced first so a same-named script (`.cmd`/`.bat`) in an
 /// earlier PATH directory cannot shadow the real binary; an already-extensioned name
 /// (e.g. `npx.cmd`) is tried as-is. Pure — unit-testable cross-platform.
+// Runtime callers are Windows-only (PATHEXT resolution); the pure-logic unit test
+// keeps running on the Windows CI runner.
+#[cfg(windows)]
 pub(crate) fn windows_candidate_suffixes(name_has_ext: bool, pathext: Option<&str>) -> Vec<String> {
     if name_has_ext {
         return vec![String::new()];
@@ -252,6 +255,7 @@ mod tests {
 
     /// PATHEXT order is normalized: EXE first, duplicates case-folded away.
     #[test]
+    #[cfg(windows)]
     fn suffixes_force_exe_first() {
         let sfx = windows_candidate_suffixes(false, Some(".CMD;.EXE;.BAT;.COM;.exe"));
         assert_eq!(sfx[0], ".exe");

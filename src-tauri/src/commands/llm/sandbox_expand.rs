@@ -17,6 +17,12 @@
 //! per [`REASK_AFTER`] window — unattended runs degrade to today's behavior
 //! (timeout = Ignore) instead of stalling the turn repeatedly.
 
+// Windows-only module: every runtime caller (the AppContainer execution path in
+// commands/llm) is `#[cfg(windows)]`. Gating the whole module keeps clippy's
+// dead-code analysis honest on the Linux/macOS CI matrix; the pure-logic tests
+// below keep running on the Windows CI runner.
+#![cfg(windows)]
+
 use crate::commands::llm::tasks::{ask_user_questions, QuestionOptionView, QuestionView};
 use crate::core::i18n::pick;
 use crate::core::models::QuestionResponse;

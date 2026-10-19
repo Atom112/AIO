@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-AIO is a lightweight, cross-platform AI assistant desktop client built with **Tauri 2.x** (Rust backend) and **SolidJS** (frontend). It supports remote API providers (OpenAI-compatible, Anthropic, Google Gemini, Ollama), local inference engines (llama.cpp, Ollama, vLLM — multi-engine, one active at a time), and an **Agent mode** that runs tool-augmented loops (file, git, shell, web, LSP, knowledge tools via MCP), spawns subagents, and enforces a three-tier permission model. Other subsystems: a **Harness workbench** (`/harness` page) that drives third-party CLI coding agents (Claude Code, Codex, OpenCode, Oh My Pi, Gemini CLI, Qwen Code, goose, DSH) over the Agent Client Protocol and renders their streams natively (AIO's own tools stay out of the loop there), project workspaces with Git integration, MCP server management (stdio/HTTP transports, catalog, tool approvals), skills (built-in, market, npx import), LSP diagnostics, usage tracking, app self-update, and full zh-CN/en-US localization. User docs live in `docs/` (mirrored: `docs/zh/`, `docs/en/`); development guides are in `docs/zh|en/development/`.
+AIO is a lightweight, cross-platform AI assistant desktop client built with **Tauri 2.x** (Rust backend) and **SolidJS** (frontend). It supports remote API providers (OpenAI-compatible, Anthropic, Google Gemini, Ollama), local inference engines (llama.cpp, Ollama, vLLM — multi-engine, one active at a time), and an **Agent mode** that runs tool-augmented loops (file, git, shell, web, LSP, knowledge tools via MCP), spawns subagents, and enforces a three-state permission model (Allow/Ask/Deny) across five agent modes (read-only / workspace-edit / full-permission / machine-full-trust / plan). Other subsystems: a **Harness workbench** (`/harness` page) that drives third-party CLI coding agents (Claude Code, Codex, OpenCode, Oh My Pi, Gemini CLI, Qwen Code, goose, DSH) over the Agent Client Protocol and renders their streams natively (AIO's own tools stay out of the loop there), project workspaces with Git integration, MCP server management (stdio/HTTP transports, catalog, tool approvals), skills (built-in, market, npx import), LSP diagnostics, usage tracking, app self-update, and full zh-CN/en-US localization. User docs live in `docs/` (mirrored: `docs/zh/`, `docs/en/`); development guides are in `docs/zh|en/development/`.
 
 **文件分工（多人协作）**：本文件（AGENTS.md）是编码规范的唯一事实源，人类与 AI 代理同等适用；[CONTRIBUTING.md](CONTRIBUTING.md) 是流程规范（issue / 分支 / 提交信息 / PR / 发版）；[SECURITY.md](SECURITY.md) 是漏洞报告通道。本文件遵循 [agents.md 开放格式](https://agents.md/)——对仓库内任意文件干活的代理都应先读本文件（多级 AGENTS.md 就近生效）。
 
@@ -33,7 +33,7 @@ src/
 ├── Layout.tsx           # Root layout with NavBar
 ├── index.css            # Tailwind v4 CSS + theme CSS variables (light/dark mode)
 ├── core/
-│   ├── store/           # 域模块：types/models/chat/engine/project/profiles/ui-prefs/update/workflow（store.ts 仅作 barrel 再导出；接口在 types.ts）；diagnostics.ts
+│   ├── store/           # 域模块：types/models/chat/engine/project/profiles/ui-prefs/update/harness/stream/layout/task-board/subagent-view/background-tasks（store.ts 仅作 barrel 再导出；接口在 types.ts）；diagnostics.ts
 │   ├── api/             # Tauri 命令封装层（chat/mcp/skills/config/update/engine/project/chat/attachment/lsp/usage/providers/memory/catalog/dialog）+ events.ts（事件名常量，双端守门测试）+ streamPayloads.ts（流事件载荷类型）—— 组件与 utils 均不得裸 invoke
 │   ├── types/           # Backend mirror types: mcp.ts, skill.ts
 │   ├── utils/           # modelLogo.ts (provider logos), models.ts (ProviderConfig/Catalog 缓存+查询，invoke 已下沉 api/catalog), mcp.ts, exportConversation.ts —— 禁止裸 invoke（门禁 layering-utils）
@@ -220,10 +220,10 @@ More extension paths (MCP transports, new Tauri commands, agent tools, permissio
 - `chat.ts`：`datas`（助手/话题/消息）+ 应用配置 + MCP 状态 + Skills + 标题重命名
 - `models.ts`：选中模型 / 模型目录 / 供应商配置 / modelKey / isLocalModel
 - `engine.ts`：本地引擎启动 / 进度 / 连接 / 扫描缓存
-- `project.ts` / `profiles.ts` / `ui-prefs.ts` / `update.ts` / `workflow.ts`：各自域
+- `project.ts` / `profiles.ts` / `ui-prefs.ts` / `update.ts` / `task-board.ts` / `stream.ts` / `layout.ts` / `background-tasks.ts`：各自域
 - `harness.ts`：Harness 工作台（工具检测/工作区/话题/消息/草稿/审批/运行态，选择持久化到 localStorage）
 
-关键信号：`datas`（Store: assistants/activatedModels）、`config`（apiUrl/apiKey）、`selectedModel`、`currentAssistantId`、`currentTopicId`、`projects`/`currentProjectId`（+ `gitBranch`/`gitBranches`）、`mcpServers`/`mcpServerStatus`/`mcpToolsCache`、`skills`、`providerConfigs`、`modelsCatalog*`、`profileModelOverrides`、`customSubagentProfiles`、`engineScanResults`、`workflowState`、`appUpdate*`、harness 域信号（`harnessTools`/`harnessWorkspaces`/`harnessTopics`/`harnessMessages`/`harnessDrafts`/`harnessApprovals`/`harnessRunStates`）；UI 偏好（`themeColor`/`isDarkMode`/`reasoningLevel`/`webSearchEnabled`）持久化到 localStorage。
+关键信号：`datas`（Store: assistants/activatedModels）、`config`（apiUrl/apiKey）、`selectedModel`、`currentAssistantId`、`currentTopicId`、`projects`/`currentProjectId`（+ `gitBranch`/`gitBranches`）、`mcpServers`/`mcpServerStatus`/`mcpToolsCache`、`skills`、`providerConfigs`、`modelsCatalog*`、`profileModelOverrides`、`customSubagentProfiles`、`engineScanResults`、`appUpdate*`、harness 域信号（`harnessTools`/`harnessWorkspaces`/`harnessTopics`/`harnessMessages`/`harnessDrafts`/`harnessApprovals`/`harnessRunStates`）；UI 偏好（`themeColor`/`isDarkMode`/`reasoningLevel`/`webSearchEnabled`）持久化到 localStorage。
 
 ### Backend State (`core/state.rs` + `lib.rs`)
 

@@ -25,7 +25,7 @@ The repository retains legacy read/write paths for `activated_models.json` and `
 
 ## App Configuration
 
-`config.json` currently persists:
+`config.json` currently persists these **major fields** (not exhaustive; the sandbox family `sandboxWindows` / `sandboxWindowsToolchainDirs` / `sandboxProtectGit` / `sandboxUnsandboxedFallback`, the shell selector `shellWindows`, and memory-pipeline fields like `memoryAutoInject` are documented in the [Permission System Reference](permissions.md) and the [config source `core/models/config.rs`](https://github.com/Atom112/AIO/blob/dev/src-tauri/src/core/models/config.rs)):
 
 | Field                         | Behavior                                                                                                                                                                                                                                                                                                                                                |
 | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -40,16 +40,18 @@ The repository retains legacy read/write paths for `activated_models.json` and `
 | `memoryInjectionBudgetTokens` | Token budget for injecting memory into the system prompt, default `3000`                                                                                                                                                                                                                                                                                |
 | `autoStartEnabled`            | Whether to launch at system startup, default `false`                                                                                                                                                                                                                                                                                                    |
 
-The backend `AppConfig` also includes the following runtime fields:
+The backend `AppConfig` also includes the following runtime fields (all serialized into `config.json`; fields without a settings UI can only be changed by editing the file):
 
-| Field                    | Current Effective Values               |
-| ------------------------ | -------------------------------------- |
-| `auto_retry_enabled`     | Default `true`                         |
-| `auto_retry_count`       | Default `2`                            |
-| `auto_retry_delay_ms`    | Default `500` ms                       |
-| `maxConcurrentSubagents` | Concurrent cap `5` when not configured |
+| Field                    | Default                       | Settings UI            |
+| ------------------------ | ----------------------------- | ---------------------- |
+| `auto_retry_enabled`     | `true`                        | None                   |
+| `auto_retry_count`       | `2`                           | None                   |
+| `auto_retry_delay_ms`    | `500` ms                      | None                   |
+| `maxConcurrentSubagents` | Concurrent cap `5` when unset | Yes (subagent dial)    |
+| `maxToolRounds`          | Built-in default when unset   | Yes (tool-rounds dial) |
+| `parallelToolExecution`  | `true`                        | None                   |
 
-These retry and concurrency fields currently have no settings UI and are not persisted by the disk structure of `config.json`. Do not attempt to modify runtime values by manually adding JSON fields; extending load, save, and settings UI is required before exposing them.
+When editing `config.json` by hand: the in-memory state is written back to disk on app exit, so **quit AIO before editing the file**. For `maxToolRounds` / `maxConcurrentSubagents`, `-1` means unlimited and `0` is invalid.
 
 ## SQLite Data
 
@@ -107,13 +109,12 @@ Additional files may appear after feature usage:
 ```text
 .aio/
 ├── permissions.json
-├── knowledge.json
-└── memory/memory.sqlite
+└── memory/
 ```
 
 - `permissions.json`: Allow, ask, and deny rules for project tools. See [Permissions System Reference](permissions.md);
-- `knowledge.json`: Cross-session knowledge, with categories `decision`, `pattern`, `convention`, or `note`, retaining up to 50 entries.
 - `memory/`: Project-level semantic memory store (`memory.sqlite`: facts, version audit, FTS5, vector indexes); consider adding it to `.gitignore`.
+- `knowledge.json`: **legacy, migration source only** — may exist in projects created before v0.8; its content is migrated into RAG facts (idempotently, read-only) the first time project memory opens. New projects never create it.
 
 ## Attachment Whitelist
 

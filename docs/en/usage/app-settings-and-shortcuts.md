@@ -99,7 +99,7 @@ On macOS, shortcuts are displayed using `^`, `⌥`, `⇧`, `⌘` symbols; on Win
 | Previous / Next assistant   | `Ctrl+[` / `Ctrl+]`             |
 | Previous / Next topic       | `Ctrl+Shift+[` / `Ctrl+Shift+]` |
 
-"Toggle Agent Mode" cycles through "Read-only -> Workspace edit -> Full permission -> Plan"; entering Full permission first shows a risk confirmation.
+"Toggle Agent Mode" cycles through "Read-only -> Workspace edit -> Full permission -> Machine full trust -> Plan"; entering Full permission first shows a risk confirmation, and entering Machine full trust shows a separate red risk warning (once per session).
 
 "New Assistant" and "New Project" currently share the same default key combination; which one executes depends on the command registered by the current page. If this default behavior causes issues, you can set a dedicated key combination for either action.
 

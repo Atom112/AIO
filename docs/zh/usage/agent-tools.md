@@ -2,51 +2,54 @@
 
 ## 概述
 
-Agent 模式下提供 20+ 个内置工具，跨 6 个类别。以下总表列出所有工具及其基本权限特征：
+Agent 模式下提供 30+ 个内置工具，跨 7 个类别。以下总表列出**核心工具**及其基本权限特征（记忆工具六件套与编排工具的完整参数见各分节；子代理管理类 `get_subagent_result` 等并入编排分节）：
 
-> **执行语义**：同一响应块内的只读工具（读取/搜索/Web 查询/Git 读取/LSP/记忆检索）并发执行；变更类工具（文件写入、命令执行、Git 写）与 MCP 工具按原始顺序串行。可在应用配置中关闭（`parallelToolExecution`）。
->
-> **主 Agent 工具集**：默认 hybrid——只读内置工具直达，变更操作委托子智能体（`mainAgentToolAccess`：hybrid / orchestrator / full）。
+> **执行语义**：同一响应块内的只读工具（读取/搜索/Web 查询/Git 读取/LSP/记忆检索）并发执行；变更类工具（文件写入、命令执行、Git 写）与 MCP 工具按原始顺序串行。并行执行默认开启，可在 `config.json` 中设 `parallelToolExecution: false` 关闭（无设置界面）。
 >
 > **主体口径**：上表与权限矩阵描述的是**主代理**。子智能体的工具集按角色白名单装配（`SubagentProfile.allowed_tools/denied_tools`），与主代理不同——例如 explorer/architect 等只读角色明确拒绝 `git_*`（9 个只读工具，无 Git 工具），只有 coder/general 等持有 Git 读取。子智能体对未注入工具的调用会得到「工具不存在/不允许」的 fail-closed 错误。
 >
 > **MCP 工具**：助手勾选的 MCP server 工具会注入 Agent 循环（general 子代理角色亦可用）；与其他工具重名时自动重命名为 `mcp__<server>__<tool>`。未信任 server 的工具在完全权限模式下仍逐次审批（MCP 设置中的「受信任」开关，或审批弹窗「始终允许」把该工具写入项目权限配置后不再询问）。
 
-| 工具名            | 类别 | Normal 默认 | Auto 默认 | Plan 默认 |
-| ----------------- | ---- | ----------- | --------- | --------- |
-| `read_file`       | 文件 | Allow       | Allow     | Allow     |
-| `write_file`      | 文件 | Ask         | Allow     | Deny      |
-| `list_directory`  | 文件 | Allow       | Allow     | Allow     |
-| `search_files`    | 文件 | Allow       | Allow     | Allow     |
-| `search_content`  | 文件 | Allow       | Allow     | Allow     |
-| `replace_in_file` | 文件 | Ask         | Allow     | Deny      |
-| `delete_file`     | 文件 | Ask         | Allow     | Deny      |
-| `make_directory`  | 文件 | Ask         | Allow     | Deny      |
-| `git_status`      | Git  | Allow       | Allow     | Allow     |
-| `git_diff`        | Git  | Allow       | Allow     | Allow     |
-| `git_log`         | Git  | Allow       | Allow     | Allow     |
-| `git_add`         | Git  | Ask         | Allow     | Deny      |
-| `git_commit`      | Git  | Ask         | Allow     | Deny      |
-| `read_lints`      | LSP  | Ask         | Allow     | Ask       |
-| `lsp_definition`  | LSP  | Ask         | Allow     | Ask       |
-| `lsp_references`  | LSP  | Ask         | Allow     | Ask       |
-| `lsp_hover`       | LSP  | Ask         | Allow     | Ask       |
-| `lsp_symbols`     | LSP  | Ask         | Allow     | Ask       |
-| `web_fetch`       | Web  | Ask         | Allow     | Deny      |
-| `web_search`      | Web  | Ask         | Allow     | Deny      |
-| `execute_command` | 命令 | Ask         | Allow     | Deny      |
-| `think`           | 编排 | Allow       | Allow     | Allow     |
-| `project_map`     | 编排 | Allow       | Allow     | Allow     |
-| `delegate_task`   | 编排 | Ask         | Allow     | Ask       |
-| `delegate_tasks`  | 编排 | Ask         | Allow     | Ask       |
-| `create_tasks`    | 编排 | Allow       | Allow     | Allow     |
-| `update_task`     | 编排 | Allow       | Allow     | Allow     |
-| `list_tasks`      | 编排 | Allow       | Allow     | Allow     |
-| `ask_user`        | 编排 | Allow       | Allow     | Allow     |
-| `read_skill`      | 编排 | Allow       | Allow     | Allow     |
-| `read_artifact`   | 编排 | Allow       | Allow     | Allow     |
-| `remember`        | 知识 | Ask         | Allow     | Ask       |
-| `recall`          | 知识 | Ask         | Allow     | Ask       |
+| 工具名                | 类别 | Normal 默认 | Auto 默认 | Plan 默认 |
+| --------------------- | ---- | ----------- | --------- | --------- |
+| `read_file`           | 文件 | Allow       | Allow     | Allow     |
+| `write_file`          | 文件 | Ask         | Allow     | Deny      |
+| `list_directory`      | 文件 | Allow       | Allow     | Allow     |
+| `search_files`        | 文件 | Allow       | Allow     | Allow     |
+| `search_content`      | 文件 | Allow       | Allow     | Allow     |
+| `replace_in_file`     | 文件 | Ask         | Allow     | Deny      |
+| `delete_file`         | 文件 | Ask         | Allow     | Deny      |
+| `make_directory`      | 文件 | Ask         | Allow     | Deny      |
+| `git_status`          | Git  | Allow       | Allow     | Allow     |
+| `git_diff`            | Git  | Allow       | Allow     | Allow     |
+| `git_log`             | Git  | Allow       | Allow     | Allow     |
+| `git_add`             | Git  | Ask         | Allow     | Deny      |
+| `git_commit`          | Git  | Ask         | Allow     | Deny      |
+| `read_lints`          | LSP  | Ask         | Allow     | Ask       |
+| `lsp_definition`      | LSP  | Ask         | Allow     | Ask       |
+| `lsp_references`      | LSP  | Ask         | Allow     | Ask       |
+| `lsp_hover`           | LSP  | Ask         | Allow     | Ask       |
+| `lsp_symbols`         | LSP  | Ask         | Allow     | Ask       |
+| `web_fetch`           | Web  | Ask         | Allow     | Deny      |
+| `web_search`          | Web  | Ask         | Allow     | Deny      |
+| `execute_command`     | 命令 | Ask         | Allow     | Deny      |
+| `think`               | 编排 | Allow       | Allow     | Allow     |
+| `project_map`         | 编排 | Allow       | Allow     | Allow     |
+| `delegate_task`       | 编排 | Ask         | Allow     | Ask       |
+| `delegate_tasks`      | 编排 | Ask         | Allow     | Ask       |
+| `create_tasks`        | 编排 | Allow       | Allow     | Allow     |
+| `update_task`         | 编排 | Allow       | Allow     | Allow     |
+| `list_tasks`          | 编排 | Allow       | Allow     | Allow     |
+| `ask_user`            | 编排 | Allow       | Allow     | Allow     |
+| `read_skill`          | 编排 | Allow       | Allow     | Allow     |
+| `read_artifact`       | 编排 | Allow       | Allow     | Allow     |
+| `get_subagent_result` | 编排 | Ask         | Allow     | Ask       |
+| `remember`            | 知识 | Allow       | Allow     | Deny      |
+| `recall`              | 知识 | Allow       | Allow     | Allow     |
+| `search_memory`       | 知识 | Allow       | Allow     | Allow     |
+| `update_memory`       | 知识 | Allow       | Allow     | Deny      |
+| `forget_memory`       | 知识 | Allow       | Allow     | Deny      |
+| `search_code`         | 知识 | Ask         | Allow     | Ask       |
 
 > 权限具体受项目 `.aio/permissions.json` 自定义规则影响。Deny 规则始终优先于 Allow。详见[权限系统参考](../reference/permissions.md)。
 

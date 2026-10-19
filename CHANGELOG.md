@@ -2,6 +2,38 @@
 
 # Changelog
 
+## [v1.0.0-alpha.2]
+
+<sup>Released on **2026-10-19**</sup>
+
+本版本主题：**alpha 公测首轮修复**——应用信息页卡顿根修与反馈快照体验打磨（两条均来自 alpha 实测反馈）；同期仓库完成多人协作转型（规范体系 + 三平台 CI 门禁），社区贡献链路就绪。
+
+### ⚡ 应用信息页卡顿根修（alpha 反馈，PR #220）
+
+- **症状**：从其他页面进入「设置 → 应用」明显卡顿——页面挂载即冻结滚动/点击数百毫秒到数秒
+- **根因**：`get_feedback_snapshot` 是同步 Tauri 命令（同步命令在主线程执行），而它内部做的是真实 I/O——`sysinfo::System::new_all()`（Windows 上枚举全部进程/磁盘/组件/网络，秒级）+ 每工具 PATH 探测 + 引擎安装探测（ollama 含 localhost HTTP 可达性检查与 `ollama --version` 子进程）——整条链把窗口事件循环堵死。审查轮的「5 个同步命令改 async」（M-11/HOR-4）漏了这一条：同文件的 `export_diagnostic_package` 是 async 的，`harness_detect_tools` 也已下沉阻塞池，唯独它不是
+- **修复**：命令改 `#[tauri::command(async)]`（阻塞池执行，前端本就有 loading 占位，快照就绪后填充）；`detect_ram_gb` 的 `new_all()` 收敛为仅内存刷新（`RefreshKind::nothing().with_memory(...)`——读一个数字不再枚举全系统）
+
+### ✨ 反馈快照用途显性化（alpha 反馈，PR #222）
+
+- **症状**：反馈区的环境快照那一行用途不自解释——能点、复制什么、贴哪，三个环节用户都看不出来（0.8.3 文案克制轮删引导句后仅剩 hover title，可发现性不足）
+- **修复（克制体裁，不加常驻解释行）**：快照行悬停提示扩充为完整操作提示「点击复制环境快照 · 反馈问题时随 issue 粘贴」；「报告问题」按钮的静默剪贴板联动显性化——点击后按钮文字短暂切换「已复制环境快照」1.2s（控件自身状态变化表达操作反馈）；i18n +1 键
+
+### 🏗 多人协作就绪（贡献者向，PR #221）
+
+- **规范体系**：AGENTS.md（编码规范唯一事实源）补 Code Comments / Interface Contract / Agent 协作守则三节并升级为多人分支模型；新增 CONTRIBUTING.md（中/英，issue / 分支 / Conventional Commits / 测试 / PR 流程）、SECURITY.md（漏洞私密报告）、PR 模板、CODEOWNERS、issue 标签；文档撰写规范入档（docs/zh|en/development/docs-style.md）——AGENTS=编码、CONTRIBUTING=流程、SECURITY=漏洞报告的分工定型，人类与 AI 代理同等适用
+- **CI 三平台矩阵**：新增 ci.yml（PR 与 dev push 跑 `npm run verify` 同套基线，Rust 矩阵覆盖 ubuntu/windows/macos）。首跑即抓出单平台时代三层结构性失明并逐轮清偿：Linux clippy 33 处平台性死代码 → 10 处 `#[cfg]` 门控；平台语义测试错位（PATHEXT 语义 / GBK 解码 ACP 依赖 / ollama 探测平台门控）；rsproxy 镜像在海外 runner stall → CI 直连官方源。旧 Quality 工作流（2026-07 起常红）自此由实证全绿的矩阵接替
+- **仓库治理**：分支保护落地（dev 四 check 必绿 + 禁 force push，admin 同样生效；master 禁改写）；私密漏洞报告与 Dependabot 告警开启；一次性文档清仓（审查报告 / 环境报告 / 实施计划——−1239 行，结论已沉淀）——「一次性产物不入库」成文
+- 对应用二进制无行为变化（纯仓库工程）
+
+### 验证基线
+
+CI 三平台矩阵全绿（前端全链 + Rust fmt/clippy/test × ubuntu/windows/macos + CodeQL）；本机 Windows cargo test 434 项全绿；`releases/latest` 仍指向 v0.8.3——alpha 用户从 Release 页手动下载更新
+
+<p align="right"><a href="#top"><img src="/public/icons/top.svg"></img></a></p>
+
+[v1.0.0-alpha.2]: https://github.com/Atom112/AIO/releases/tag/v1.0.0-alpha.2
+
 ## [v1.0.0-alpha]
 
 <sup>Released on **2026-10-18**</sup>
@@ -189,21 +221,6 @@ cargo 424 Rust 测试（6 ignored 真机项）、78 前端测试、gates 全过�
 [v0.8.1]: https://github.com/Atom112/AIO/releases/tag/v0.8.1
 
 ## [Unreleased]
-
-### 🏗 多人协作就绪：规范体系建立 + 一次性文档清仓
-
-- **规范文件分工定型**：AGENTS.md = 编码规范唯一事实源（人类与 AI 代理同等适用）；新增 CONTRIBUTING.md（中/英）= 流程规范（issue 模板用法 / 分支模型 / Conventional Commits 提交规范 / 本地测试基线 / PR 流程 / AI 代理协作红线 / 文档与截图纪律）；新增 SECURITY.md（漏洞私密报告通道与范围）；新增 PR 模板（改动-动机-验证证据-UI/文档检查单）与 CODEOWNERS（评审路由，多人扩展点）
-- **AGENTS.md 补全三节**：Code Comments（注释写「为什么」、模块头/公开项/unsafe 注释要求、禁墓碑注释）、Interface Contract（命令命名与稳定性承诺、serde camelCase 契约、含 I/O 命令必须 async、事件双端登记与敏感数据红线、插件 trait 变更视为破坏性变更）、Agent 协作守则（验证诚实 / 不越门禁 / 先读后说 / 最小改动 / 走 PR / 机密卫生 / 遇阻即报 + 多代理并发协调）；分支一节从单人约定升级为多人协作版
-- **CI 回归（三平台矩阵，三轮实证全绿）**：新增 ci.yml（PR 与 dev push 上跑 `npm run verify` 同套基线；前端单 job + Rust ubuntu/windows/macos 三平台矩阵 + Swatinem/rust-cache）——旧 Quality 工作流自 2026-07 常红的根因已在 0.8.3 修复，本次恢复。矩阵首跑即抓出单平台时代的三层结构性失明并逐轮清偿：① Linux clippy 33 处平台性死代码（Windows-only 的 AppContainer 扩权/PowerShell 命令构造/PATHEXT 解析在 Linux 构建无调用方）→ 10 处 `#[cfg]` 门控（sandbox_expand 整模块、shell_tools 的 pwsh/cmd 构造族、WindowsShell::PowerShell 变体、PATHEXT 解析等）；② 平台语义测试错位 → PATHEXT 大小写/后缀转发测试 `cfg(windows)`、GBK 解码测试改 `GetACP()==936` 条件断言（ACP 相关回退按设计只对 zh-CN 系统保证）、ollama 已知目录测试模块按 LOCALAPPDATA/HOME 平台门控、macOS sandbox-exec let-else 改 `?`；③ 仓库级 rsproxy 镜像（中国网络 TLS 抖动对策）在海外 runner 上 stall → CI 删除 `.cargo/config.toml` 直连官方源（getting-started 本就文档化的场景）
-- **文档撰写规范入档**：docs/zh|en/development/docs-style.md（双语镜像规则、写作规范、维护纪律——一次性产物不入库、截图隐私纪律、示例数据一律虚构）
-- **一次性文档清仓**：删除 docs/reviews/（全量代码审查报告——结论已并入 0.8.x CHANGELOG 与源码注释）、harness-environment-report.md（环境问题记录——根因已修复并沉淀进 CHANGELOG/AGENTS.md）、project-memory-rag-plan.md（实施计划——功能已落地至 docs/usage 与 reference）——「文档随代码、历史归 git/CHANGELOG」纪律自本 PR 起生效
-- docs/zh|en/README.md 索引补文档规范与贡献指南条目；getting-started 补协作流程指引；README 贡献段指向新规范文件
-
-### ⚡ 设置页卡顿根修：反馈快照命令下主线程（M-11 漏网项）
-
-- **症状**：从其他页面进入「设置 → 应用」明显卡顿——页面挂载即冻结滚动/点击数百毫秒到数秒
-- **根因**：`get_feedback_snapshot` 是同步 Tauri 命令（同步命令在主线程执行），而它内部做的是真实 I/O——`sysinfo::System::new_all()`（Windows 上枚举全部进程/磁盘/组件/网络，秒级）+ 每工具 PATH 探测 + 引擎安装探测（ollama 含 localhost HTTP 可达性检查与 `ollama --version` 子进程）——整条链把窗口事件循环堵死。审查轮的「5 个同步命令改 async」（M-11/HOR-4）漏了这一条：同文件的 `export_diagnostic_package` 是 async 的，`harness_detect_tools` 也已下沉阻塞池，唯独它不是
-- **修复**：命令改 `#[tauri::command(async)]`（阻塞池执行，前端本就有 loading 占位，快照就绪后填充）；`detect_ram_gb` 的 `new_all()` 收敛为仅内存刷新（`RefreshKind::nothing().with_memory(...)`——读一个数字不再枚举全系统）
 
 ### 🪜 第十二轮：模式阶梯改名 + 完全权限内置化 + 工作流功能移除（PR #131）
 

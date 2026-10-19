@@ -118,7 +118,7 @@ dependencies = [
 
 [[package]]
 name = "aio"
-version = "1.0.0-alpha"
+version = "1.0.0-alpha.2"
 dependencies = [
  "aes-gcm",
  "agent-client-protocol",

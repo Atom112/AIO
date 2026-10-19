@@ -151,12 +151,15 @@ pub(crate) async fn stream_one_round(
     // transport errors and 429/5xx retry with backoff only before any content is emitted; mid-stream errors are not retried.
     // Token-guarded: the pre-header wait is bounded by the client's 600s total timeout, but the
     // stop button must stay responsive during it (a stalled gateway must not freeze the turn).
+    // Session identity = topic id: OpenCode Go keys routing/prompt-cache on it; subagent
+    // rounds pass the parent topic, so one user task clusters on one gateway session.
     let post_fut = crate::plugins::llm::post_chat_completion_with_retry(
         client,
         &api_url,
         api_key,
         &body,
         max_retries,
+        Some(topic_id),
     );
     let (response, is_anthropic_request) = tokio::select! {
         _ = token.cancelled() => return Err("cancelled".to_string()),

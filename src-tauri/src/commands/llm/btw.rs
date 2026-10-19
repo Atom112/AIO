@@ -53,7 +53,9 @@ pub async fn ask_btw_question(
 
     let (res, is_anthropic) = match tokio::time::timeout(
         std::time::Duration::from_secs(60),
-        super::client::post_chat_completion(&client, &api_url, &api_key, &body),
+        // No conversation identity at this layer (frontend sends only messages);
+        // the plugin substitutes its stable session for session-keyed gateways.
+        super::client::post_chat_completion(&client, &api_url, &api_key, &body, None),
     )
     .await
     {

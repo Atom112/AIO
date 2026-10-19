@@ -249,6 +249,15 @@ cargo 424 Rust 测试（6 ignored 真机项）、78 前端测试、gates 全过�
 
 ## [Unreleased]
 
+### 🔌 OpenCode Go 对话 400 MissingSessionID 根修（alpha.3 实装反馈）
+
+- **症状**：OpenCode Go（`opencode.ai`）自定义 Provider 测试连接与拉取模型正常，发送对话即报 `LLM API 400 MissingSessionID`——其网关要求聊天请求携带 `x-opencode-session` 会话头（模型列表端点不要求，故配置期一切正常，对话期才暴露）
+- **修复**：新增 `opencode` provider 插件（host 匹配 `opencode.ai`；OpenAI 兼容 URL 构建/鉴权/模型解析全部委托 fallback 实现，行为零变化），仅在聊天路径追加会话头：
+  - 主对话/子智能体/上下文压缩传话题 ID（每话题稳定、跨重启不变——命中 OpenCode Go 的路由与提示词缓存优化）；标题生成/BTW 侧问/记忆管线等无会话上下文的辅助调用回退进程级稳定会话
+  - 聊天路径全局客户端补自识别 UA（`AIO-Desktop/<version>`，OpenCode Go 文档要求的客户端识别项；此前该路径不发任何 User-Agent）
+- **边界**：OpenCode Go 的 Anthropic 协议端点（`/inference/go/anthropic/v1`，服务 Claude Haiku/MiniMax M3/Qwen3.8）仍走 fallback（现状保持，需要 Anthropic 协议适配，另立 issue 跟踪）；`apply_chat_session` trait 方法默认空实现，其他 Provider 不受影响
+- 测试：`plugins::provider` 20 过（新增 5 项：路径声明/避让、会话头存在与回退稳定、URL 委托、管理器分发）；全量 439 过；clippy/fmt 绿；文档 providers-and-models zh/en 同步补 OpenCode Go 小节
+
 ### 🪜 第十二轮：模式阶梯改名 + 完全权限内置化 + 工作流功能移除（PR #131）
 
 - **Agent 模式阶梯改名（wire 值稳定，assistants DB 无迁移）**：`off`=「只读」、`normal`=「工作区内修改」、`auto`=「完全权限」、`plan`=「计划」不变——

@@ -145,7 +145,7 @@ pub async fn vision_analyze_images(
     let client = non_streaming_http_client_pinned(&api_url).await?;
     let (res, is_anthropic) = tokio::time::timeout(
         std::time::Duration::from_secs(45),
-        post_chat_completion(&client, &api_url, &api_key, &body),
+        post_chat_completion(&client, &api_url, &api_key, &body, None),
     )
     .await
     .map_err(|_| {

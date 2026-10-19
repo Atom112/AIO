@@ -168,7 +168,10 @@ pub(crate) async fn compress_context(
             _ = token.cancelled() => return Err("cancelled".to_string()),
             result = tokio::time::timeout(
                 std::time::Duration::from_secs(45),
-                post_chat_completion(client, api_url, api_key, &body),
+                // Same topic session as the main rounds: the summary request
+                // carries the early conversation, so a session-keyed gateway
+                // (OpenCode Go prompt-cache routing) can reuse the warm route.
+                post_chat_completion(client, api_url, api_key, &body, Some(topic_id)),
             ) => result,
         }
         .map_err(|_| {

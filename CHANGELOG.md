@@ -2,6 +2,33 @@
 
 # Changelog
 
+## [v1.0.0-alpha.3]
+
+<sup>Released on **2026-10-19**</sup>
+
+本版本主题：**P0 根修**——安装版供应商目录自首发以来始终为空（bundled resource 路径与打包布局不匹配）；附带两轮文档-代码事实审计清偿（19 处）。
+
+### 🔥 P0：安装版供应商目录加载失败——resource 布局与读取路径不匹配
+
+- **症状（alpha.2 实装报告）**：供应商设置页仅剩三个本地推理引擎卡，目录供应商列表为空
+- **根因**：列表形式 resources 声明使 tauri-bundler 将 `..` 路径段编码为 `_up_` 目录——安装包内文件位于 `{install}/_up_/node_modules/.../models.json`，`catalog.rs` 读 `{resource_dir}/models.json` 永不命中，静默返回空目录
+- **考古（7z 解包 v0.8.3 实证）**：同样布局——**bug 自首个发行版即存在**；未暴露因果链：静默空降级 + 用户日常用已保存的自定义 provider + 本地开发构建走 dev fallback（「只在安装版复现」模式）
+- **修复（双保险）**：resources 改 map 形式平铺到安装根（新布局）+ catalog.rs 候选路径探测（平铺 → `_up_` 旧布局）——存量安装覆盖升级后任一命中即恢复
+- 附注：「拉取最新目录」的网络失败（raw.githubusercontent.com 中国大陆不可达）独立于此 bug——修复后内置快照可用
+
+### 📝 文档-代码事实审计（两轮 19 处，双语同步）
+
+- 引擎安装行为（8 处）：文档宣称「首次启动自动下载 llama.cpp」而代码从不自动下载——改「引擎自备（检测 + 官方链接）」，宣传口径对齐
+- 行为断言审计（11 处）：permissions.md 删已移除的 Workflow 模式段并补 Auto/Danger 共臂说明；agent-tools/architecture 删 0.8.1 已移除的 `mainAgentToolAccess`；总表补 6 个缺失工具（权限按 permission.rs 实测修正）；configuration 的 knowledge.json 改「遗留只读迁移源」、运行字段持久化事实更正；五档模式概述与快捷键循环补「本机全权」；AGENTS.md 三态×五档表述消除歧义 + store 域清单更正
+
+### 验证基线
+
+CI 三平台矩阵 + CodeQL 全绿（PR #226）；`releases/latest` 仍指向 v0.8.3——alpha 用户手动下载升级，覆盖安装即触发目录恢复
+
+<p align="right"><a href="#top"><img src="/public/icons/top.svg"></img></a></p>
+
+[v1.0.0-alpha.3]: https://github.com/Atom112/AIO/releases/tag/v1.0.0-alpha.3
+
 ## [v1.0.0-alpha.2]
 
 <sup>Released on **2026-10-19**</sup>
@@ -221,28 +248,6 @@ cargo 424 Rust 测试（6 ignored 真机项）、78 前端测试、gates 全过�
 [v0.8.1]: https://github.com/Atom112/AIO/releases/tag/v0.8.1
 
 ## [Unreleased]
-
-### 🔥 P0：安装版供应商目录加载失败——bundled resource 路径与打包布局不匹配
-
-- **症状（v1.0.0-alpha.2 实装报告）**：供应商设置页仅剩三个本地推理引擎卡，目录供应商列表为空；点「拉取」报失败
-- **根因**：tauri.conf.json 用列表形式声明 `"resources": ["../node_modules/@aio/models-data/dist/data/models.json"]`，tauri-bundler 把 `..` 路径段编码为 `_up_` 目录——安装包内文件落在 `{install}/_up_/node_modules/@aio/models-data/dist/data/models.json`，而 `catalog.rs` 读 `{resource_dir}/models.json`，**永不命中** → 静默返回空目录（前端无报错，只剩前端硬编码的本地引擎卡）
-- **考古（7z 解包实证）**：v0.8.3 的 NSIS 包内布局完全相同——**该 bug 自首个发行版即存在**，此前未暴露的完整因果链：目录缺失走静默空降级 + 用户日常使用已保存的自定义 provider（provider-configs.json 不依赖目录）+ 本地开发构建走 dev fallback（node_modules 直命中，开发者视角永远正常——与 console 闪窗同款的「只在安装版复现」模式）
-- **修复（双保险）**：① resources 改 map 形式 `"../node_modules/...": "models.json"`——安装后文件平铺在 exe 旁（新布局）；② `catalog.rs` bundled 读取按候选路径探测（平铺 → `_up_` 旧布局）——存量坏安装升级后（NSIS 覆盖安装不清理旧文件）任一命中即恢复
-- 附注：用户点「拉取」失败的网络因素（raw.githubusercontent.com 在中国大陆不可达）独立于此 bug——修复后 bundled 快照可用，拉取仅影响更新到最新目录
-
-### 📝 文档-代码事实全面审计：11 处漂移清偿（双语同步）
-
-引擎安装行为修正的后续轮——系统性提取文档行为断言逐条对照代码（permission.rs / subagent.rs / tool_names.rs / memory/tools.rs / config.rs / chatCommands.ts / AgentModeSelector.tsx）后确认并修正：
-
-- **permissions.md zh**：删除已移除的「Workflow 模式」段（0.8.1 功能端到端移除时漏删）；zh/en 补「完全权限 / 本机全权」共臂段（代码 `Auto | Danger` 共权限规则，差异在沙箱开关）——此前文档完全缺失 Danger 档
-- **agent-tools.md zh/en**：删除 `mainAgentToolAccess`（hybrid/orchestrator/full）段——配置项 0.8.1 端到端移除、代码零命中；总表补 6 个缺失工具行（`get_subagent_result` + 记忆五件套，权限值按 permission.rs 实测：Normal 模式记忆工具全 Allow，旧总表 remember/recall=Ask 系漂移）；`parallelToolExecution` 措辞精确化（config.json 可关，无设置界面）；「20+ 工具」改「30+ 核心工具」
-- **configuration.md zh/en**：`knowledge.json` 改为「遗留只读迁移源」（旧文「跨会话知识…最多保留 50 条」——代码无上限且为只读）；运行字段段重写（`maxConcurrentSubagents`/`maxToolRounds` 已有设置旋钮且随 config.json 持久化——旧文声称「无界面不持久化」过时）；补手工编辑注意事项（退出后改、-1 不限制）
-- **chat-and-agent.md / app-settings-and-shortcuts.md zh/en**：概述句与快捷键循环描述补「本机全权」档（代码循环为五档 `['off','normal','auto','danger','plan']`，旧文四档）；补充 danger 档独立红色警告说明
-- **AGENTS.md**：「three-tier permission model」歧义消除（改「三态决策 Allow/Ask/Deny × 五档模式」）；store 域清单更正（删除已不存在的 `workflow.ts`/`workflowState`，补 task-board/stream/layout/background-tasks 等实际模块）
-
-### 📝 引擎安装行为文档修正：llama.cpp 从不自动下载（宣传口径对齐）
-
-准备 alpha 宣传文案时发现**文档漂移**：业务早已改为「引擎自备、用户选择性下载」，但 8 处文档仍宣称「首次启动自动下载引擎」（README 双语、getting-started 双语、providers-and-models 双语、AGENTS.md 扩展指南、extensions 双语）——照此宣传即虚假承诺。逐处修正为如实描述：AIO 检测本机 llama.cpp（PATH + winget/conda/homebrew/nix 常见位置），未安装时设置页提供官方下载链接；`installer.rs` 现仅含安装目录与探测辅助（无下载路径），扩展指南同步更正。harness CLI 工具的 npx 自动拉取是真实存在的行为，未动。
 
 ### 🪜 第十二轮：模式阶梯改名 + 完全权限内置化 + 工作流功能移除（PR #131）
 

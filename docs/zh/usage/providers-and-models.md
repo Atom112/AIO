@@ -10,13 +10,22 @@ AIO 后端按顺序匹配专用 Provider，最后使用 OpenAI-compatible 实现
 | Anthropic         | Anthropic Messages 接口                             |
 | Ollama            | 本机或局域网 Ollama 服务                            |
 | OpenCode          | OpenCode Go（`opencode.ai`）托管推理                |
+| Perplexity        | Perplexity（`api.perplexity.ai`）                   |
 | OpenAI-compatible | OpenAI 及兼容 `/chat/completions`、`/models` 的服务 |
 
 供应商列表和模型元数据来自相邻依赖 `@aio/models-data`。Provider 配置只保存开关、API URL、启用模型等运行信息；模型能力、上下文窗口和展示名称由目录提供。
 
 ### OpenCode Go
 
-OpenCode Go 订阅（Go / Go Plus）的 API Key 在 AIO 中作为自定义 Provider 使用：API URL 填 OpenAI 兼容端点 `https://opencode.ai/inference/go/openai/v1`，模型经「从 API 拉取模型」获取。AIO 自动为每个话题的聊天请求附带 `x-opencode-session` 会话头（OpenCode Go 网关的必需字段，也用于其路由与提示词缓存优化）。注意其 Anthropic 协议端点（`/inference/go/anthropic/v1`，服务 Claude / MiniMax / Qwen 系模型）暂不在支持范围内。
+OpenCode Go 订阅（Go / Go Plus）的 API Key 在 AIO 中作为自定义 Provider 使用：API URL 填 OpenAI 兼容端点 `https://opencode.ai/inference/go/openai/v1`，模型经「从 API 拉取模型」获取。AIO 自动为每个话题的聊天请求附带 `x-opencode-session` 会话头（OpenCode Go 网关的必需字段，也用于其路由与提示词缓存优化）。其 Anthropic 协议端点（`/inference/go/anthropic/v1`）按下方「Anthropic 协议端点」规则对话，该面上的会话头要求仍在跟进。
+
+### Anthropic 协议端点
+
+API URL 路径包含 `anthropic` 段的端点（如 MiniMax 系列的 `https://api.minimax.io/anthropic/v1`）按 Anthropic Messages 协议对话：AIO 自动转换请求体、解析流式响应并以 `x-api-key` 鉴权。这类端点的模型列表通常兼容 Anthropic 格式，无需额外配置。
+
+### Perplexity
+
+`api.perplexity.ai` 的聊天请求自动映射到现行文档的 `/router/v1/chat/completions`（旧 Sonar 路径已从文档移除）。API URL 填 `https://api.perplexity.ai` 即可，模型列表走 `/v1/models`。
 
 ## 配置流程
 

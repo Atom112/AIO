@@ -13,12 +13,12 @@
 //! ONLY behavioral delta is the session header on chat requests.
 //!
 //! Scope: claims `opencode.ai` hosts whose path is NOT Anthropic/Google-protocol
-//! shaped. The Anthropic-protocol Go surface (`/inference/go/anthropic/v1`,
-//! serving Claude Haiku / MiniMax M3 / Qwen3.8) needs the Anthropic
-//! request+stream protocol, which only the native `api.anthropic.com` plugin
-//! implements today; claiming it here without that protocol would send
-//! OpenAI-shaped requests to an Anthropic endpoint. Those URLs stay on the
-//! fallback (unchanged pre-existing behavior) — tracked in the follow-up issue.
+//! shaped. The Anthropic-protocol Go surface (`/inference/go/anthropic/v1`)
+//! needs the Anthropic request+stream protocol — the anthropic plugin's
+//! path-segment claim now routes those URLs through the native Anthropic
+//! adapter (protocol + x-api-key work; OpenCode's own session requirement on
+//! that surface remains tracked in the follow-up issue). The Google-protocol
+//! surface stays on the fallback (pre-existing behavior).
 
 use reqwest::RequestBuilder;
 use std::sync::LazyLock;
@@ -34,8 +34,10 @@ static FALLBACK_SESSION: LazyLock<String> = LazyLock::new(|| uuid::Uuid::new_v4(
 
 pub struct OpenCodeProvider;
 
-/// Path-level protocol guard: `/anthropic/` and `/google/` Go surfaces speak
-/// native vendor protocols this plugin must not claim (see module doc).
+/// Path-level protocol guard: the Anthropic-protocol shape is claimed by the
+/// anthropic plugin's path rule (registered earlier — it wins dispatch); this
+/// guard keeps the claim honest even if registration order ever changes.
+/// Google-protocol Go paths speak a native protocol this plugin must not claim.
 fn is_native_protocol_path(path: &str) -> bool {
     path.contains("/anthropic/") || path.contains("/google/")
 }
@@ -184,7 +186,8 @@ mod tests {
     }
 
     /// Dispatch through the manager: Go OpenAI-compatible URLs reach this plugin
-    /// (registered before the fallback), Anthropic-shaped Go URLs do not.
+    /// (registered before the fallback); Anthropic-shaped Go URLs are claimed by
+    /// the anthropic plugin's path rule (registered before this plugin).
     #[test]
     fn manager_dispatches_go_urls_to_opencode_plugin() {
         let mgr = super::super::ProviderManager::new();
@@ -196,7 +199,7 @@ mod tests {
         assert_eq!(
             mgr.for_url("https://opencode.ai/inference/go/anthropic/v1")
                 .identifier(),
-            "openai_compat"
+            "anthropic"
         );
     }
 }

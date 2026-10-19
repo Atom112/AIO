@@ -97,11 +97,32 @@ impl ProviderPlugin for AnthropicProvider {
 
 // ===== Anthropic Messages API conversion layer =====
 
-/// Returns whether the URL points at the real Anthropic API host (not a compatible proxy).
-/// PROV-5: host-suffix match — the historic whole-string `contains` check let
-/// `api.anthropic.com.evil.io` claim the native plugin and receive x-api-key.
+/// Returns whether the URL points at an Anthropic-protocol surface: the real
+/// Anthropic API host, or ANY vendor endpoint that declares the Anthropic
+/// Messages protocol via an `anthropic` path segment (catalog reality:
+/// `api.minimax.io/anthropic/v1` + coding-plan variants serve Anthropic
+/// Messages at `{base}/messages` — plain OpenAI-shape POSTs to their
+/// `/chat/completions` are undocumented and rejected, while their
+/// Anthropic-compatible `/models` listing works, producing exactly the
+/// "model fetch succeeds, chat fails" failure mode this rule fixes).
+/// PROV-5: host-suffix match + exact path-segment match — the historic
+/// whole-string `contains` check let `api.anthropic.com.evil.io` claim the
+/// native plugin and receive x-api-key.
 pub fn is_anthropic_url(api_url: &str) -> bool {
-    super::url_host_matches(api_url, "api.anthropic.com")
+    if super::url_host_matches(api_url, "api.anthropic.com") {
+        return true;
+    }
+    // Vendor Anthropic-protocol surfaces: an exact `anthropic` path segment.
+    // `evil.io/proxy/api.anthropic.com` (dots inside the segment) and
+    // `not-anthropic`/`anthropic-v2` prefixes stay unclaimed.
+    let parsed = if api_url.contains("://") {
+        url::Url::parse(api_url)
+    } else {
+        url::Url::parse(&format!("https://{api_url}"))
+    };
+    parsed
+        .map(|u| u.path().split('/').any(|seg| seg == "anthropic"))
+        .unwrap_or(false)
 }
 
 /// Converts an OpenAI-compatible request body into an Anthropic Messages API request body.
@@ -804,6 +825,61 @@ mod tests {
         assert!(is_anthropic_url("https://api.anthropic.com/v1/messages"));
         // Schemeless input is parsed against https://.
         assert!(is_anthropic_url("api.anthropic.com/v1"));
+    }
+
+    /// Vendor Anthropic-protocol surfaces (MiniMax family etc.): the `anthropic`
+    /// path segment claims the plugin; look-alike segments do not.
+    #[test]
+    fn detects_vendor_anthropic_protocol_paths() {
+        // The catalog's MiniMax bases (io / cn, plain + coding plans)
+        assert!(is_anthropic_url("https://api.minimax.io/anthropic/v1"));
+        assert!(is_anthropic_url("https://api.minimax.cn/anthropic/v1"));
+        // Same shape on any host (a generic Anthropic-compatible proxy)
+        assert!(is_anthropic_url("https://proxy.example.com/anthropic"));
+        assert!(is_anthropic_url("https://proxy.example.com/anthropic/v1"));
+        // Segment must match exactly: dot-bearing and prefixed segments stay unclaimed
+        assert!(!is_anthropic_url("https://evil.io/proxy/anthropic.com"));
+        assert!(!is_anthropic_url("https://example.com/anthropic-v2/v1"));
+        assert!(!is_anthropic_url("https://example.com/not-anthropic/v1"));
+        // The vendor's own OpenAI-compat surface is NOT claimed
+        assert!(!is_anthropic_url("https://api.minimax.io/v1"));
+    }
+
+    /// The URL builder must produce the documented Anthropic-protocol endpoints
+    /// for a vendor base: `{base}/messages` for chat, `{base}/models` for listing.
+    #[test]
+    fn vendor_anthropic_urls_build_documented_endpoints() {
+        let p = AnthropicProvider;
+        assert_eq!(
+            p.chat_completions_url("https://api.minimax.io/anthropic/v1"),
+            "https://api.minimax.io/anthropic/v1/messages"
+        );
+        assert_eq!(
+            p.chat_completions_url("https://api.minimax.cn/anthropic/v1"),
+            "https://api.minimax.cn/anthropic/v1/messages"
+        );
+        assert_eq!(
+            p.models_url("https://api.minimax.io/anthropic/v1"),
+            "https://api.minimax.io/anthropic/v1/models"
+        );
+    }
+
+    /// Dispatch: vendor Anthropic-protocol URLs reach this plugin (registered
+    /// before the fallback), so the chat path's protocol decision
+    /// (`identifier() == "anthropic"`) converts the body and parses the stream.
+    #[test]
+    fn manager_dispatches_vendor_anthropic_paths_to_anthropic_plugin() {
+        let mgr = super::super::ProviderManager::new();
+        assert_eq!(
+            mgr.for_url("https://api.minimax.io/anthropic/v1")
+                .identifier(),
+            "anthropic"
+        );
+        // The same vendor's OpenAI-compat base stays on the fallback
+        assert_eq!(
+            mgr.for_url("https://api.minimax.io/v1").identifier(),
+            "openai_compat"
+        );
     }
 
     /// PROV-14: temperature/top_p must carry over — the historic conversion

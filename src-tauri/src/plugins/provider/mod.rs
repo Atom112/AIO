@@ -17,6 +17,7 @@ pub mod google;
 pub mod ollama;
 pub mod openai_compat;
 pub mod opencode;
+pub mod perplexity;
 
 use crate::core::models::LiveModel;
 use crate::ierr;
@@ -157,6 +158,7 @@ impl ProviderManager {
         mgr.register(Arc::new(anthropic::AnthropicProvider));
         mgr.register(Arc::new(ollama::OllamaProvider));
         mgr.register(Arc::new(opencode::OpenCodeProvider));
+        mgr.register(Arc::new(perplexity::PerplexityProvider));
         mgr.register(Arc::new(openai_compat::OpenAICompatProvider));
         mgr
     }

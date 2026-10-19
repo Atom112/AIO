@@ -10,13 +10,22 @@ AIO backend matches dedicated Providers in order, falling back to the OpenAI-com
 | Anthropic         | Anthropic Messages API                                             |
 | Ollama            | Local or LAN Ollama service                                        |
 | OpenCode          | OpenCode Go (`opencode.ai`) hosted inference                       |
+| Perplexity        | Perplexity (`api.perplexity.ai`)                                   |
 | OpenAI-compatible | OpenAI and services compatible with `/chat/completions`, `/models` |
 
 Provider list and model metadata come from the adjacent dependency `@aio/models-data`. Provider configuration only stores toggles, API URLs, enabled models, and other runtime information; model capabilities, context windows, and display names are provided by the catalog.
 
 ### OpenCode Go
 
-An OpenCode Go subscription (Go / Go Plus) API key works in AIO as a custom Provider: set the API URL to the OpenAI-compatible endpoint `https://opencode.ai/inference/go/openai/v1` and fetch models via "Fetch models from API". AIO automatically attaches the `x-opencode-session` header to each topic's chat requests (required by the OpenCode Go gateway, which also uses it for routing and prompt-cache optimization). Note that its Anthropic-protocol endpoints (`/inference/go/anthropic/v1`, serving Claude / MiniMax / Qwen models) are not supported yet.
+An OpenCode Go subscription (Go / Go Plus) API key works in AIO as a custom Provider: set the API URL to the OpenAI-compatible endpoint `https://opencode.ai/inference/go/openai/v1` and fetch models via "Fetch models from API". AIO automatically attaches the `x-opencode-session` header to each topic's chat requests (required by the OpenCode Go gateway, which also uses it for routing and prompt-cache optimization). Its Anthropic-protocol endpoints (`/inference/go/anthropic/v1`) follow the "Anthropic-protocol endpoints" rule below; the session requirement on that surface is still being tracked.
+
+### Anthropic-protocol endpoints
+
+Endpoints whose API URL path contains an `anthropic` segment (e.g. the MiniMax family's `https://api.minimax.io/anthropic/v1`) speak the Anthropic Messages protocol: AIO automatically converts the request body, parses the stream, and authenticates with `x-api-key`. Model listing on these endpoints is usually Anthropic-compatible, so no extra configuration is needed.
+
+### Perplexity
+
+Chat requests to `api.perplexity.ai` are automatically mapped to the currently documented `/router/v1/chat/completions` (the legacy Sonar path is gone from the docs). Enter `https://api.perplexity.ai` as the API URL; the model list is served at `/v1/models`.
 
 ## Configuration Workflow
 

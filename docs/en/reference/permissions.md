@@ -38,13 +38,17 @@ Overview of the default rules for each Agent mode:
 - Delete operations (`delete_file`) &rarr; Ask
 - Other tools &rarr; Ask
 
-### Auto Mode
+### Full Permission / Machine Full Trust Mode (Auto / Danger)
+
+Both tiers share the same rule set (matching the `Auto | Danger` arm in `permission.rs`):
 
 - Built-in file operations (read, write, replace, make directory, search) &rarr; Allow
 - Git operations (all) &rarr; Allow
 - Command execution (`execute_command`) &rarr; Allow
 - Delete operations (`delete_file`) &rarr; Allow (aligned with `execute_command`, which can already `del`/`rm`; deletion stays confined to the project sandbox. Normal mode keeps per-call confirmation)
 - Other tools &rarr; Allow
+
+The difference between the tiers is not in permission rules but in **whether commands run inside the OS sandbox**: Full permission (Auto) keeps the AppContainer/bwrap/SBPL sandbox; Machine full trust (Danger) runs commands natively with full user privileges, entirely outside the sandbox (entry shows a dedicated red risk warning).
 
 ### Plan Mode
 

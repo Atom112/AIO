@@ -2,51 +2,54 @@
 
 ## Overview
 
-Agent mode provides 20+ built-in tools across 6 categories. The following table lists all tools and their basic permission characteristics:
+Agent mode provides 30+ built-in tools across 7 categories. The following table lists the **core tools** with their basic permission characteristics (the six memory tools and orchestration tools have full parameter docs in their sections; subagent-management tools like `get_subagent_result` are covered under orchestration):
 
-> **Execution semantics**: read-only tools within the same response block (reads/search/web queries/git read/LSP/memory recall) run concurrently; mutating tools (file writes, command execution, git write) and MCP tools run serially in original order. Can be disabled via `parallelToolExecution` in app config.
->
-> **Main agent tool set**: hybrid by default — read-only built-in tools are called directly, mutating work is delegated to subagents (`mainAgentToolAccess`: hybrid / orchestrator / full).
+> **Execution semantics**: read-only tools within the same response block (reads/search/web queries/git read/LSP/memory recall) run concurrently; mutating tools (file writes, command execution, git write) and MCP tools run serially in original order. Parallel execution is on by default; it can be turned off by setting `parallelToolExecution: false` in `config.json` (no settings UI).
 >
 > **Subject scope**: the table and permission matrix above describe the **main agent**. Subagent tool sets are assembled per role (`SubagentProfile.allowed_tools/denied_tools`) and differ from the main agent — e.g. the read-only roles explorer/architect explicitly deny `git_*` (9 read-only tools, no Git tools); only coder/general and similar hold Git reads. A subagent calling a tool that was not injected gets a fail-closed "tool not available" error.
 >
 > **MCP tools**: tools from MCP servers enabled for the assistant are injected into the agent loop (the `general` subagent profile also gets them); name collisions are auto-renamed to `mcp__<server>__<tool>`. Tools from untrusted servers still prompt for each call in full-permission mode (the "Trusted" toggle in MCP settings, or "Always allow" in the approval bubble, which writes the tool into the project permission config and stops the prompts).
 
-| Tool Name         | Category      | Normal Default | Auto Default | Plan Default |
-| ----------------- | ------------- | -------------- | ------------ | ------------ |
-| `read_file`       | File          | Allow          | Allow        | Allow        |
-| `write_file`      | File          | Ask            | Allow        | Deny         |
-| `list_directory`  | File          | Allow          | Allow        | Allow        |
-| `search_files`    | File          | Allow          | Allow        | Allow        |
-| `search_content`  | File          | Allow          | Allow        | Allow        |
-| `replace_in_file` | File          | Ask            | Allow        | Deny         |
-| `delete_file`     | File          | Ask            | Allow        | Deny         |
-| `make_directory`  | File          | Ask            | Allow        | Deny         |
-| `git_status`      | Git           | Allow          | Allow        | Allow        |
-| `git_diff`        | Git           | Allow          | Allow        | Allow        |
-| `git_log`         | Git           | Allow          | Allow        | Allow        |
-| `git_add`         | Git           | Ask            | Allow        | Deny         |
-| `git_commit`      | Git           | Ask            | Allow        | Deny         |
-| `read_lints`      | LSP           | Ask            | Allow        | Ask          |
-| `lsp_definition`  | LSP           | Ask            | Allow        | Ask          |
-| `lsp_references`  | LSP           | Ask            | Allow        | Ask          |
-| `lsp_hover`       | LSP           | Ask            | Allow        | Ask          |
-| `lsp_symbols`     | LSP           | Ask            | Allow        | Ask          |
-| `web_fetch`       | Web           | Ask            | Allow        | Deny         |
-| `web_search`      | Web           | Ask            | Allow        | Deny         |
-| `execute_command` | Shell         | Ask            | Allow        | Deny         |
-| `think`           | Orchestration | Allow          | Allow        | Allow        |
-| `project_map`     | Orchestration | Allow          | Allow        | Allow        |
-| `delegate_task`   | Orchestration | Ask            | Allow        | Ask          |
-| `delegate_tasks`  | Orchestration | Ask            | Allow        | Ask          |
-| `create_tasks`    | Orchestration | Allow          | Allow        | Allow        |
-| `update_task`     | Orchestration | Allow          | Allow        | Allow        |
-| `list_tasks`      | Orchestration | Allow          | Allow        | Allow        |
-| `ask_user`        | Orchestration | Allow          | Allow        | Allow        |
-| `read_skill`      | Orchestration | Allow          | Allow        | Allow        |
-| `read_artifact`   | Orchestration | Allow          | Allow        | Allow        |
-| `remember`        | Knowledge     | Ask            | Allow        | Ask          |
-| `recall`          | Knowledge     | Ask            | Allow        | Ask          |
+| Tool Name             | Category      | Normal Default | Auto Default | Plan Default |
+| --------------------- | ------------- | -------------- | ------------ | ------------ |
+| `read_file`           | File          | Allow          | Allow        | Allow        |
+| `write_file`          | File          | Ask            | Allow        | Deny         |
+| `list_directory`      | File          | Allow          | Allow        | Allow        |
+| `search_files`        | File          | Allow          | Allow        | Allow        |
+| `search_content`      | File          | Allow          | Allow        | Allow        |
+| `replace_in_file`     | File          | Ask            | Allow        | Deny         |
+| `delete_file`         | File          | Ask            | Allow        | Deny         |
+| `make_directory`      | File          | Ask            | Allow        | Deny         |
+| `git_status`          | Git           | Allow          | Allow        | Allow        |
+| `git_diff`            | Git           | Allow          | Allow        | Allow        |
+| `git_log`             | Git           | Allow          | Allow        | Allow        |
+| `git_add`             | Git           | Ask            | Allow        | Deny         |
+| `git_commit`          | Git           | Ask            | Allow        | Deny         |
+| `read_lints`          | LSP           | Ask            | Allow        | Ask          |
+| `lsp_definition`      | LSP           | Ask            | Allow        | Ask          |
+| `lsp_references`      | LSP           | Ask            | Allow        | Ask          |
+| `lsp_hover`           | LSP           | Ask            | Allow        | Ask          |
+| `lsp_symbols`         | LSP           | Ask            | Allow        | Ask          |
+| `web_fetch`           | Web           | Ask            | Allow        | Deny         |
+| `web_search`          | Web           | Ask            | Allow        | Deny         |
+| `execute_command`     | Shell         | Ask            | Allow        | Deny         |
+| `think`               | Orchestration | Allow          | Allow        | Allow        |
+| `project_map`         | Orchestration | Allow          | Allow        | Allow        |
+| `delegate_task`       | Orchestration | Ask            | Allow        | Ask          |
+| `delegate_tasks`      | Orchestration | Ask            | Allow        | Ask          |
+| `create_tasks`        | Orchestration | Allow          | Allow        | Allow        |
+| `update_task`         | Orchestration | Allow          | Allow        | Allow        |
+| `list_tasks`          | Orchestration | Allow          | Allow        | Allow        |
+| `ask_user`            | Orchestration | Allow          | Allow        | Allow        |
+| `read_skill`          | Orchestration | Allow          | Allow        | Allow        |
+| `read_artifact`       | Orchestration | Allow          | Allow        | Allow        |
+| `get_subagent_result` | Orchestration | Ask            | Allow        | Ask          |
+| `remember`            | Knowledge     | Allow          | Allow        | Deny         |
+| `recall`              | Knowledge     | Allow          | Allow        | Allow        |
+| `search_memory`       | Knowledge     | Allow          | Allow        | Allow        |
+| `update_memory`       | Knowledge     | Allow          | Allow        | Deny         |
+| `forget_memory`       | Knowledge     | Allow          | Allow        | Deny         |
+| `search_code`         | Knowledge     | Ask            | Allow        | Ask          |
 
 > Permissions are affected by project `.aio/permissions.json` custom rules. Deny rules always take precedence over Allow rules. See the [Permission System Reference](../reference/permissions.md) for details.
 

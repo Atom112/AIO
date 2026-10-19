@@ -22,9 +22,9 @@
 ## 新增本地引擎
 
 1. 在 `src-tauri/src/plugins/engine/` 添加实现。
-2. 实现 `LocalEnginePlugin` 的标识、平台、扩展名、安装路径、启动和进度解析。
+2. 实现 `LocalEnginePlugin` 的标识、平台、扩展名、启动和进度解析。
 3. 在 `EngineManager::new()` 注册。
-4. 如需自动安装，接入现有 `EngineInstaller`。
+4. 引擎二进制由用户自行安装（现状约定：不随包分发、不自动下载）；`detect_installation` 负责探测 PATH 与常见安装位置（winget/conda/homebrew/nix 等），`installer.rs` 只提供安装目录与探测辅助。
 5. 在前端引擎选项中显式开放，并提供格式过滤和必要的安全提示。
 
 后端注册后，引擎通过 `EngineManager` 自动发现并加入扫描结果。vLLM 是当前示例：插件注册后即被引擎扫描管线覆盖，不需要单独的前端设置页。三种引擎（llama.cpp、vLLM、Ollama）现在共享统一的引擎卡 UI，状态指示器和启停操作统一在 Provider 详情页处理。

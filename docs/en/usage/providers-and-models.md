@@ -54,7 +54,7 @@ The settings interface currently provides llama.cpp:
 
 - Model format: GGUF;
 - Default service address: `http://127.0.0.1:8080/v1`;
-- First launch: automatically downloads the engine if missing;
+- Bring your own engine: AIO detects a local llama.cpp (the settings page links to the official builds when missing — no auto-download);
 - Process management: stops the old process before starting a new model, cleans up child processes on application exit.
 
 Model files can be selected by the user (they are not copied to the application data directory; after deleting or moving the original file, the path must be re-selected), or downloaded in one click from the built-in model market (see the next section).

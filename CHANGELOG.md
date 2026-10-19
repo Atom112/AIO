@@ -2,6 +2,33 @@
 
 # Changelog
 
+## [v1.0.0-alpha.3]
+
+<sup>Released on **2026-10-19**</sup>
+
+本版本主题：**P0 根修**——安装版供应商目录自首发以来始终为空（bundled resource 路径与打包布局不匹配）；附带两轮文档-代码事实审计清偿（19 处）。
+
+### 🔥 P0：安装版供应商目录加载失败——resource 布局与读取路径不匹配
+
+- **症状（alpha.2 实装报告）**：供应商设置页仅剩三个本地推理引擎卡，目录供应商列表为空
+- **根因**：列表形式 resources 声明使 tauri-bundler 将 `..` 路径段编码为 `_up_` 目录——安装包内文件位于 `{install}/_up_/node_modules/.../models.json`，`catalog.rs` 读 `{resource_dir}/models.json` 永不命中，静默返回空目录
+- **考古（7z 解包 v0.8.3 实证）**：同样布局——**bug 自首个发行版即存在**；未暴露因果链：静默空降级 + 用户日常用已保存的自定义 provider + 本地开发构建走 dev fallback（「只在安装版复现」模式）
+- **修复（双保险）**：resources 改 map 形式平铺到安装根（新布局）+ catalog.rs 候选路径探测（平铺 → `_up_` 旧布局）——存量安装覆盖升级后任一命中即恢复
+- 附注：「拉取最新目录」的网络失败（raw.githubusercontent.com 中国大陆不可达）独立于此 bug——修复后内置快照可用
+
+### 📝 文档-代码事实审计（两轮 19 处，双语同步）
+
+- 引擎安装行为（8 处）：文档宣称「首次启动自动下载 llama.cpp」而代码从不自动下载——改「引擎自备（检测 + 官方链接）」，宣传口径对齐
+- 行为断言审计（11 处）：permissions.md 删已移除的 Workflow 模式段并补 Auto/Danger 共臂说明；agent-tools/architecture 删 0.8.1 已移除的 `mainAgentToolAccess`；总表补 6 个缺失工具（权限按 permission.rs 实测修正）；configuration 的 knowledge.json 改「遗留只读迁移源」、运行字段持久化事实更正；五档模式概述与快捷键循环补「本机全权」；AGENTS.md 三态×五档表述消除歧义 + store 域清单更正
+
+### 验证基线
+
+CI 三平台矩阵 + CodeQL 全绿（PR #226）；`releases/latest` 仍指向 v0.8.3——alpha 用户手动下载升级，覆盖安装即触发目录恢复
+
+<p align="right"><a href="#top"><img src="/public/icons/top.svg"></img></a></p>
+
+[v1.0.0-alpha.3]: https://github.com/Atom112/AIO/releases/tag/v1.0.0-alpha.3
+
 ## [v1.0.0-alpha.2]
 
 <sup>Released on **2026-10-19**</sup>

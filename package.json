@@ -1,6 +1,6 @@
 {
   "name": "aio",
-  "version": "1.0.0-alpha.2",
+  "version": "1.0.0-alpha.3",
   "description": "A lightweight cross-platform AI assistant desktop client",
   "type": "module",
   "scripts": {

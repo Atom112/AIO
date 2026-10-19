@@ -30,7 +30,7 @@ The API Key is preferentially written to the system credential store, not stored
 2. Select a `.gguf` file.
 3. Click "Add to Model List".
 4. Click "Start Local llama.cpp Engine".
-5. On first launch, wait for the app to download and install the engine matching your platform.
+5. If the engine status shows not installed: install llama.cpp yourself first (the link next to the status opens the official release page), then come back here.
 6. Return to the chat page and select the local model.
 
 The local service runs on `127.0.0.1:8080` by default. Only one local engine process is maintained at a time; it is cleaned up when the app exits.

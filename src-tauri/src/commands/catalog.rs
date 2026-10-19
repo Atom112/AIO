@@ -153,17 +153,28 @@ pub fn load_models_catalog_full(app: tauri::AppHandle) -> Result<CatalogResponse
         }
     }
 
+    // Bundled resource. The map-form resource declaration places the file at
+    // `resource_dir()/models.json`, but the historical list-form declaration
+    // (`"../node_modules/..."`) made tauri-bundler encode the leading `..`
+    // segments as `_up_` directories — every installer built before the fix
+    // (<= v1.0.0-alpha.2) carries the file at that nested path, so both
+    // candidates are probed (fixed layout first, legacy layout as fallback).
     if let Ok(resource_dir) = app.path().resource_dir() {
-        let p = resource_dir.join(BUNDLE_FILENAME);
-        if let Some(content) = try_read(&p) {
-            let (v, g, _, _) = parse_catalog_meta(&content);
-            return Ok(CatalogResponse {
-                source: CatalogSource::Bundled,
-                json: content,
-                path: Some(p.display().to_string()),
-                version: v,
-                generated_at: g,
-            });
+        for rel in [
+            BUNDLE_FILENAME,
+            "_up_/node_modules/@aio/models-data/dist/data/models.json",
+        ] {
+            let p = resource_dir.join(rel);
+            if let Some(content) = try_read(&p) {
+                let (v, g, _, _) = parse_catalog_meta(&content);
+                return Ok(CatalogResponse {
+                    source: CatalogSource::Bundled,
+                    json: content,
+                    path: Some(p.display().to_string()),
+                    version: v,
+                    generated_at: g,
+                });
+            }
         }
     }
 

@@ -249,6 +249,15 @@ cargo 424 Rust 测试（6 ignored 真机项）、78 前端测试、gates 全过�
 
 ## [Unreleased]
 
+### 🔍 全目录供应商官方文档审计（145 家）与同类问题修复（alpha.3 反馈后续）
+
+- **背景**：OpenCode Go 会话头 bug 修复后，对目录内 145 家供应商逐一核对其官方 API 文档，专项排查「拉模型正常、对话被拒」同类问题（必需自定义头 / 非 Bearer 鉴权 / 端点路径偏差 / 非 OpenAI 协议）
+- **修复 ① Anthropic 协议路径通配**：`is_anthropic_url` 除 host 匹配外新增精确 `anthropic` 路径段匹配——MiniMax 全系列（io / cn × 常规 + 订阅，共 5 个目录条目）的 `/anthropic/v1` base 只服务 Anthropic Messages 协议（其 `/anthropic/v1/models` 模型列表有文档支持，正是「拉模型正常、对话全挂」），现经 anthropic 插件自动转换协议（URL 构建/鉴权/解析全部对齐文档）；OpenCode 的 anthropic 路径同步被认领（协议修复，会话头要求另立 issue #229 跟踪）
+- **修复 ② Perplexity 对话端点重映射**：现行文档的 chat 端点仅为 `/router/v1/chat/completions`（旧 Sonar 路径已移除），而 models `/v1/models` 正常——新增 `perplexity` 插件把裸 host / 旧 `/v1` base / 旧全路径统一映射到文档端点（docs 形态 base 走默认拼接）
+- **修复 ③ 全路径 base 的拉模型 URL**：`openai_compat.models_url` 对以 `/chat/completions` 结尾的 base（目录内 bailing）先剥后缀再套 /v1 规则——此前拼出 `.../chat/completions/v1/models` 恒 404
+- **审计结论（9 批并行子代理、仅文档研究、无实调）**：其余 130+ 家的 OpenAI 兼容面与 AIO 请求契约完全匹配（含全部 15 家 coding-plan 端点——Alibaba/Qwen、Tencent、Z.ai/Zhipu、Kimi、KUAE、Umans、StepFun、小米，均 plain Bearer 无必需头）；GitHub Copilot 需未文档化 token 交换（独立 issue 跟踪）；约 10 家目录 base URL 过期/失配与 github-models 退役属上游 models.dev 数据层问题（下次目录同步解决，不影响手填配置的用户）；多家供应商无文档化 models 端点属反向问题（拉模型 404 → 目录/手工模型优雅降级，设计内行为）
+- 测试：`plugins::provider` 28 过（新增 8 项）；全量 447 过；clippy/fmt 绿；文档 providers-and-models zh/en 补 Anthropic 协议端点与 Perplexity 小节
+
 ### 🔌 OpenCode Go 对话 400 MissingSessionID 根修（alpha.3 实装反馈）
 
 - **症状**：OpenCode Go（`opencode.ai`）自定义 Provider 测试连接与拉取模型正常，发送对话即报 `LLM API 400 MissingSessionID`——其网关要求聊天请求携带 `x-opencode-session` 会话头（模型列表端点不要求，故配置期一切正常，对话期才暴露）

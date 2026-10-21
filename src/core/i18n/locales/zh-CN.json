@@ -240,6 +240,8 @@
   "chat.renameTopic": "重命名话题",
   "chat.resendMessage": "重新发送",
   "chat.scrollLatest": "滚动到最新消息",
+  "chat.searchHistory": "搜索聊天记录",
+  "chat.searchNoResults": "没有匹配的聊天记录",
   "chat.selectedMessages": "已选 {{count}} 条",
   "chat.send": "发送",
   "chat.session.label": "会话",

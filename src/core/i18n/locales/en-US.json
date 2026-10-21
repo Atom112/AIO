@@ -242,6 +242,8 @@
   "chat.renameTopic": "Rename topic",
   "chat.resendMessage": "Resend",
   "chat.scrollLatest": "Scroll to latest message",
+  "chat.searchHistory": "Search chat history",
+  "chat.searchNoResults": "No matching messages",
   "chat.selectedMessages": "{{count}} selected",
   "chat.send": "Send",
   "chat.session.label": "Session",

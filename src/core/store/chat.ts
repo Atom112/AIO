@@ -49,6 +49,17 @@ export const [datas, setDatas] = createStore<DatasState>({
   activatedModels: [],
 });
 
+// ====== Chat history search jump (sidebar search → ChatInterface) ======
+
+/** Pending search-result jump: set by the topic-sidebar search, consumed by ChatInterface (topic switch + window expand + scroll + highlight). */
+export interface PendingSearchJump {
+  topicId: string;
+  messageId: string;
+}
+export const [pendingSearchJump, setPendingSearchJump] = createSignal<PendingSearchJump | null>(
+  null,
+);
+
 // ====== MCP state ======
 
 /** MCP server config map (id → config) */

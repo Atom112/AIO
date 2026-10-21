@@ -9,10 +9,12 @@ import {
   setCurrentTopicId,
   saveSingleAssistantToBackend,
   requestRenameTopic,
+  setPendingSearchJump,
 } from '../../../core/store/store';
 import { loadTopicFoldState, saveTopicFoldState } from '../../../core/store/layout';
 import Icon from '../../../shared/components/Icon';
 import { formatDateTime, t } from '../../../core/i18n';
+import { searchChatHistory, type ChatSearchMatch } from '../utils/searchHistory';
 
 interface TopicSidebarProps {
   width: number;
@@ -80,6 +82,41 @@ const TopicSidebar: Component<TopicSidebarProps> = (props) => {
     targetTopicId: null as string | null,
   });
 
+  // ---- Chat history search (per-assistant scope = per-project isolation) ----
+  const [searchQuery, setSearchQuery] = createSignal('');
+  /** null = panel closed; [] = open with no hits; non-empty = matches */
+  const [searchResults, setSearchResults] = createSignal<ChatSearchMatch[] | null>(null);
+  let searchDebounce: number | undefined;
+  let searchRootRef: HTMLDivElement | undefined;
+
+  const runSearch = (q: string) => {
+    const asst = props.currentAssistant;
+    if (!q.trim() || !asst) {
+      setSearchResults(null);
+      return;
+    }
+    setSearchResults(searchChatHistory(asst, q));
+  };
+
+  const onSearchInput = (v: string) => {
+    setSearchQuery(v);
+    window.clearTimeout(searchDebounce);
+    if (!v.trim()) {
+      setSearchResults(null);
+      return;
+    }
+    // Debounce fires untracked by design: the assistant scope is read at fire
+    // time so a project switch during the 200ms window already searches the
+    // new scope.
+    // eslint-disable-next-line solid/reactivity
+    searchDebounce = window.setTimeout(() => runSearch(v), 200);
+  };
+
+  const jumpToMatch = (m: ChatSearchMatch) => {
+    setSearchResults(null);
+    setPendingSearchJump({ topicId: m.topicId, messageId: m.messageId });
+  };
+
   // Auto-expand: a folded topic that gains a new child (e.g. branching from a
   // message while the subtree is folded) unfolds so the new branch is visible.
   // Switching assistants restores that assistant's persisted fold state (and
@@ -122,11 +159,18 @@ const TopicSidebar: Component<TopicSidebarProps> = (props) => {
   });
 
   onMount(() => {
-    const h = () => {
+    const h = (e: MouseEvent) => {
       if (topicMenuState().isOpen) closeTopicMenu();
+      // Close the search results on outside clicks; clicks inside the search
+      // container (input + result rows) are contained and handled locally.
+      if (searchResults() !== null) {
+        const root = searchRootRef;
+        if (root && !(e.target instanceof Node && root.contains(e.target))) setSearchResults(null);
+      }
     };
     window.addEventListener('click', h);
     onCleanup(() => window.removeEventListener('click', h));
+    onCleanup(() => window.clearTimeout(searchDebounce));
   });
 
   const saveTopicRename = async (asstId: string, topicId: string, newName: string) => {
@@ -271,6 +315,110 @@ const TopicSidebar: Component<TopicSidebarProps> = (props) => {
         <Show when={props.currentAssistant}>
           {(asst) => (
             <div class="flex flex-col h-full">
+              {/* Chat history search: scoped to the current assistant (per-project
+                  isolation; pure chat = the default assistant as its own scope).
+                  Matches list drops down below the input; clicking a row hands the
+                  jump to ChatInterface via the pendingSearchJump store signal. */}
+              <div ref={searchRootRef} class="relative mb-[15px]">
+                <div
+                  class="w-full flex items-center rounded-2xl"
+                  style={{
+                    background: 'rgba(var(--text-base-rgb),0.04)',
+                    border: '1px solid var(--border-dim)',
+                  }}
+                >
+                  <Icon
+                    name="search"
+                    size={13}
+                    class="w-[13px] h-[13px] shrink-0 ml-3"
+                    style={{ color: 'rgba(var(--text-base-rgb),0.35)' }}
+                  />
+                  <input
+                    class="flex-1 min-w-0 bg-transparent border-none outline-none px-2 h-10 text-[0.82rem]"
+                    style={{ color: 'rgba(var(--text-base-rgb),0.8)' }}
+                    placeholder={t('chat.searchHistory')}
+                    value={searchQuery()}
+                    onInput={(e) => onSearchInput(e.currentTarget.value)}
+                    onFocus={() => {
+                      if (searchQuery().trim()) runSearch(searchQuery());
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Escape') {
+                        onSearchInput('');
+                        e.currentTarget.blur();
+                      }
+                    }}
+                  />
+                  <Show when={searchQuery()}>
+                    <button
+                      type="button"
+                      class="flex items-center justify-center shrink-0 mr-2 w-5 h-5 rounded-md border-none bg-transparent cursor-pointer transition-all duration-150 hover:bg-[rgba(var(--text-base-rgb),0.08)] active:scale-90"
+                      style={{ color: 'rgba(var(--text-base-rgb),0.45)' }}
+                      title={t('common.cancel')}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onSearchInput('');
+                      }}
+                    >
+                      <Icon name="x" size={11} />
+                    </button>
+                  </Show>
+                </div>
+                <Show when={searchResults() !== null}>
+                  <div
+                    class="absolute left-0 right-0 top-full mt-2 z-[1400] rounded-2xl overflow-y-auto py-1 animate-fade-in"
+                    style={{
+                      'max-height': '55vh',
+                      background: 'var(--acrylic-bg)',
+                      'backdrop-filter': 'blur(24px) saturate(150%)',
+                      border: '1px solid var(--acrylic-border)',
+                      'box-shadow': 'var(--shadow-acrylic)',
+                    }}
+                  >
+                    <Show
+                      when={(searchResults()?.length ?? 0) > 0}
+                      fallback={
+                        <div
+                          class="px-3 py-3 text-xs"
+                          style={{ color: 'rgba(var(--text-base-rgb),0.45)' }}
+                        >
+                          {t('chat.searchNoResults')}
+                        </div>
+                      }
+                    >
+                      <For each={searchResults() ?? []}>
+                        {(m) => (
+                          <button
+                            type="button"
+                            class="w-full text-left px-3 py-2 rounded-xl border-none bg-transparent cursor-pointer transition-colors duration-150 hover:bg-pri-10"
+                            onClick={() => jumpToMatch(m)}
+                          >
+                            <div
+                              class="text-[11px] truncate mb-0.5"
+                              style={{ color: 'rgba(var(--text-base-rgb),0.4)' }}
+                            >
+                              {m.topicName}
+                            </div>
+                            <div
+                              class="text-xs leading-relaxed line-clamp-2 break-words"
+                              style={{ color: 'rgba(var(--text-base-rgb),0.75)' }}
+                            >
+                              {m.snippet.before}
+                              <span
+                                class="font-medium"
+                                style={{ color: 'rgb(var(--primary-rgb))' }}
+                              >
+                                {m.snippet.hit}
+                              </span>
+                              {m.snippet.after}
+                            </div>
+                          </button>
+                        )}
+                      </For>
+                    </Show>
+                  </div>
+                </Show>
+              </div>
               <button
                 class="w-full px-3 h-12 inline-flex items-center justify-center rounded-3xl cursor-pointer transition-all duration-300"
                 style={{

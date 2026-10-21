@@ -317,6 +317,29 @@
   }
 }
 
+/* ── Chat history search jump: flash the row the search jumped to ── */
+@keyframes search-jump-flash {
+  0% {
+    background-color: rgba(var(--primary-rgb), 0.2);
+    box-shadow: 0 0 0 0 rgba(var(--primary-rgb), 0.45);
+  }
+  55% {
+    background-color: rgba(var(--primary-rgb), 0.2);
+    box-shadow: 0 0 0 14px rgba(var(--primary-rgb), 0);
+  }
+  100% {
+    background-color: transparent;
+    box-shadow: 0 0 0 14px rgba(var(--primary-rgb), 0);
+  }
+}
+
+/* Applied temporarily by ChatInterface's search-jump handler; animation only
+   (no layout impact), colors go through the theme's primary CSS variable. */
+.search-jump-flash {
+  border-radius: 14px;
+  animation: search-jump-flash 2.4s ease-out 1 both;
+}
+
 /* ── Context menu ── */
 @keyframes contextMenuIn {
   from {

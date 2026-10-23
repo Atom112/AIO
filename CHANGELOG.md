@@ -277,6 +277,20 @@ cargo 424 Rust 测试（6 ignored 真机项）、78 前端测试、gates 全过�
 
 ## [Unreleased]
 
+### 🧰 自迭代 harness 反馈清偿（AIO 开发 AIO 第一轮报告）
+
+AIO 的 agent 自迭代修「调试弹终端窗口」缺陷后留了 harness 体验报告（8 项），本轮逐项清偿。两个 P0 都源自同一根因：**外层 Job 的 UI 限制**——它同时致盲窗口观测 + 阻断嵌套 assign。
+
+- **P0-1 沙箱内窗口枚举致盲（`JOB_OBJECT_UILIMIT_DESKTOP`）**：自迭代中 6 轮窗口实验全部假阴性（EnumWindows 在沙箱内恒为 0），一度得出「Start-Process 不弹窗」的错误结论。修复：`execute_command` 工具描述与 permissions.md（zh/en）写明该限制与逃生门（观测 GUI 窗口的任务走本机全权模式，命令不经沙箱）——不改沙箱安全姿态（信任决策已由模式体系承载）
+- **P0-2 嵌套 Job fail-closed 阻断自举**：AIO 自身在另一个 AIO 的 Job 内时，子命令的 `AssignProcessToJobObject` 被拒（err=50），fail-closed 使 13 个沙箱测试在基线上永久红。修复：err=50 降级为 warn + 降级 guard（`JobGuard` 持 fallback_pid，Drop 时 `taskkill /T /F` 兜底回收）——子进程本就是祖先 Job 成员（子进程自动入 Job），UI 限制/树回收由祖先继续承担；嵌套 fixture 测试（current_exe 重执行 + 自入 UI 限制 Job）真实复现 err=50 路径
+- **P1-1 命令输出固定截「前 50KB」**：编译器/测试器失败详情在尾部，反复拿不到。修复：排水层保留**头 30KB + 尾 20KB**（ring buffer 丢中段），结果体带中段丢弃标记；无缺口时头尾拼接解码（码点不在接缝处劈开）
+- **P1-2 `search_content` 单文件路径头部空文件名**（`📄 :`）：匹配无法归属。修复：回退显示调用方路径（此前 matched 计数也不增加，一并修正）
+- **P1-3 `read_file` 请求中部区段仍回传整文件头尾**（同一 2342 行文件重复进上下文 6 次）：新增 `start_line` 参数——显式窗口返回恰好 `max_lines` 行真实行号，不做头尾兜底；窗口被 max_lines 截断时尾注引导继续读
+- **P2 `ask_user` 超时无回执**：超时错误现在回显问题与选项清单（决策链可审计）
+- **P2 写坏语法无拦截 + CRLF/LF 混杂**：① `write_file`/`replace_in_file` 写后对代码文件（rs/ts/js 家族）做括号配平检查（字符串/注释感知、Rust 生命周期不误报），可疑时在结果中附警告（建议性，不阻断）；② replace 改为 **LF 工作区匹配**（read_file 的行输出已剥 \r，模型 old_string 是 LF——CRLF 文件的精确匹配此前直接失败）+ 写回恢复文件主导换行风格；write_file 覆盖既有文件同样跟随其主导风格
+- **杂项**：`tmp_*` 加入 .gitignore（自迭代一轮堆积 100+ 临时脚本）；根目录遗留的空 `HARNESS_FEEDBACK.md` 清理
+- 测试：file_tools 28 过（新增 5：CRLF 匹配与风格恢复 / write 跟随风格 / 配平告警与零误报 / read_file 窗口 / search 单文件归因）；shell_tools 30 过（新增 2：头尾保留 / 无缺口拼接）；sandbox 17 过（新增嵌套 fixture）；全量 460 过
+
 ### 🪟 后台进程不再弹出终端窗口（前端 / 后端常驻窗口根修）
 
 - **症状**：让 Agent 起前端 / 后端（`Start-Process npm.cmd -ArgumentList run,dev`、`start "" npm.cmd run dev`）时，屏幕上各弹出一个可见控制台窗口，并随进程常驻——退出后也不消失，必须手动关闭

@@ -1057,10 +1057,70 @@ fn resolve_windows_shell(kind: WindowsShell) -> Result<ShellInvocation, String> 
     }
 }
 
+/// PowerShell prelude that keeps every `Start-Process` child off-screen.
+///
+/// AIO runs under the Windows GUI subsystem, so its own process owns no console:
+/// a grandchild created by `Start-Process` (the classic way to launch a dev
+/// server: `Start-Process npm.cmd -ArgumentList run,dev -PassThru`) is created by
+/// powershell.exe with default flags and therefore allocates a brand-new visible
+/// console. `CREATE_NO_WINDOW` on AIO's direct child cannot reach it — that is
+/// exactly the "frontend and backend each pop a terminal window" defect.
+///
+/// The shim shadows the cmdlet for this shell session and defaults it to
+/// `-WindowStyle Hidden` unless the caller already decided (explicit
+/// `-WindowStyle` or `-NoNewWindow`). Forwarding uses **hash splatting of
+/// `$PSBoundParameters`**, which is why the full common parameter set is
+/// declared: array splatting (`@args`) binds entries POSITIONALLY, so appending
+/// `'-WindowStyle' 'Hidden'` would be taken as a positional value and fail with
+/// "no positional parameter accepts -WindowStyle" — every Start-Process call
+/// would then silently do nothing. `start` and `saps` are aliases of the cmdlet
+/// and also resolve to this function (verified on PowerShell 5.1 and 7).
+///
+/// `$Verb`/`-Verb RunAs` still works (the elevation prompt is a separate,
+/// user-initiated consent UI, not an unrequested console).
+///
+/// Review round 1 additions: `[CmdletBinding(SupportsShouldProcess)]` (the real
+/// cmdlet accepts `-WhatIf`/`-Confirm`; without the declaration those fail
+/// binding on the shim) and `[hashtable]$Environment` (pwsh 7.4+; callers on
+/// 5.1 never pass it, so declaring it is harmless there). A missing parameter
+/// declaration is not cosmetic: PowerShell binding rejects unknown parameters,
+/// so every call using it would hard-fail.
+#[cfg(windows)]
+const START_PROCESS_HIDDEN_SHIM: &str = concat!(
+    "function global:Start-Process {",
+    "[CmdletBinding(SupportsShouldProcess)]",
+    "param(",
+    "[Parameter(Position=0)][string]$FilePath,",
+    "[Parameter(Position=1)][string[]]$ArgumentList,",
+    "[pscredential]$Credential,",
+    "[hashtable]$Environment,",
+    "[switch]$LoadUserProfile,",
+    "[switch]$NoNewWindow,",
+    "[switch]$PassThru,",
+    "[string]$RedirectStandardError,",
+    "[string]$RedirectStandardInput,",
+    "[string]$RedirectStandardOutput,",
+    "[switch]$UseNewEnvironment,",
+    "[string]$Verb,",
+    "[switch]$Wait,",
+    "[System.Diagnostics.ProcessWindowStyle]$WindowStyle,",
+    "[string]$WorkingDirectory)",
+    ";",
+    "if (-not $PSBoundParameters.ContainsKey('WindowStyle') -and -not $NoNewWindow) {",
+    "$PSBoundParameters['WindowStyle'] = [System.Diagnostics.ProcessWindowStyle]::Hidden",
+    "};",
+    "Microsoft.PowerShell.Management\\Start-Process @PSBoundParameters",
+    "};"
+);
+
 /// Builds the pwsh script for one command: a leading quoted string needs the `&`
 /// call operator (pwsh treats a bare quoted string as output, not invocation), and
 /// the trailing lines propagate the exit code — `pwsh -Command` otherwise always
 /// exits 0, which would break error detection / the breaker / sandbox expansion.
+///
+/// The script is `UTF-8 prelude` → [`START_PROCESS_HIDDEN_SHIM`] → body → exit
+/// propagation. The shim runs before the body so a `Start-Process` in the very
+/// first pipeline stage is already covered.
 #[cfg(windows)]
 fn pwsh_script(command: &str) -> String {
     let body = if command.trim_start().starts_with('"') {
@@ -1079,8 +1139,68 @@ fn pwsh_script(command: &str) -> String {
     // Best-effort (try/catch) so an exotic console-less host still runs.
     let prelude = "try { [Console]::OutputEncoding=[System.Text.UTF8Encoding]::new($false); $OutputEncoding=[Console]::OutputEncoding } catch { }";
     format!(
-        "{prelude}\n{body}\nif ($null -ne $LASTEXITCODE) {{ exit $LASTEXITCODE }} elseif (-not $?) {{ exit 1 }}"
+        "{prelude}\n{START_PROCESS_HIDDEN_SHIM}\n{body}\nif ($null -ne $LASTEXITCODE) {{ exit $LASTEXITCODE }} elseif (-not $?) {{ exit 1 }}"
     )
+}
+
+/// Rewrites the cmd builtin `start` to `start /b` so the launched program shares
+/// the shell's (hidden) console instead of allocating a brand-new visible one.
+///
+/// `start` is the cmd-native way to launch a long-running program (a dev server)
+/// without blocking the tool call, and it defaults to CREATE_NEW_CONSOLE: under
+/// the GUI-subsystem build — where AIO's own `CREATE_NO_WINDOW` shell owns no
+/// console at all — that window is immediately visible and stays on screen for
+/// the whole session. `/b` starts the program in the same console, so there is
+/// nothing to show; the child still inherits the stdout/stderr pipes, so the
+/// tool call keeps collecting its output.
+///
+/// Only a COMMAND-INITIAL `start` is touched: line start, or right after
+/// `&` `&&` `||` `|` `(`. `net start mysql`, `npm start`, `sc start x` and
+/// `echo start` therefore pass through untouched (they are arguments of another
+/// program, not the builtin). A caller-chosen window mode (/b, /min, /max,
+/// /wait, /i) is preserved as-is — /min is already invisible enough and must not
+/// be silently overridden, and the function is idempotent (a second pass adds
+/// nothing). Pure — unit-tested.
+#[cfg(windows)]
+pub(crate) fn rewrite_cmd_start_hidden(command: &str) -> String {
+    use std::sync::OnceLock;
+    // `start` at a command-initial position, capturing the separating whitespace
+    // so the replacement can put `/b` in exactly the right place.
+    static PATTERN: OnceLock<regex::Regex> = OnceLock::new();
+    let re = PATTERN.get_or_init(|| {
+        // The trailing separator is CAPTURED rather than asserted with `(?=...)`:
+        // the regex crate has no look-around, and an `Err` here would silently
+        // disable the whole rewrite.
+        regex::Regex::new(r"(?i)(^|&&|\|\||[&|()\r\n])(\s*)start(\s|$)")
+            .expect("cmd start pattern is a literal and always compiles")
+    });
+    let mut out = String::with_capacity(command.len() + 8);
+    let mut last = 0usize;
+    for caps in re.captures_iter(command) {
+        let whole = caps.get(0).expect("group 0 always present");
+        if whole.start() < last {
+            continue; // overlapping match from a previous replacement
+        }
+        // Up to and including the `start` token, leaving the trailing separator
+        // out so `/b` can be inserted before it.
+        let trail = caps.get(3).expect("group 3 always present");
+        out.push_str(&command[last..trail.start()]);
+        // The next token decides: if the caller already picked a window mode,
+        // leave the command exactly as written.
+        let rest = &command[whole.end()..];
+        // `split_whitespace` already skips leading whitespace.
+        let already_chosen = rest.split_whitespace().next().is_some_and(|tok| {
+            let t = tok.to_ascii_lowercase();
+            t == "/b" || t == "/min" || t == "/max" || t == "/wait" || t == "/i"
+        });
+        if !already_chosen {
+            out.push_str(" /b");
+        }
+        out.push_str(trail.as_str());
+        last = whole.end();
+    }
+    out.push_str(&command[last..]);
+    out
 }
 
 /// cmd path: flip the hidden console to UTF-8 before the user command. cmd's
@@ -1091,7 +1211,11 @@ fn pwsh_script(command: &str) -> String {
 /// metacharacter/danger scans run, so it never trips them.
 #[cfg(windows)]
 fn cmd_utf8_prelude(command: &str) -> String {
-    format!("chcp 65001 >nul & {command}")
+    // `start /b` first: the rewrite preserves any window mode the caller
+    // already chose, and running it on the user's own command text keeps the
+    // anchors (`&`, `&&`, line start) meaningful — prefixing with `chcp` would
+    // otherwise turn the first `start` into a non-command-initial token.
+    format!("chcp 65001 >nul & {}", rewrite_cmd_start_hidden(command))
 }
 
 /// `-EncodedCommand` payload: UTF-16LE base64 — immune to every quote-escaping
@@ -2338,5 +2462,159 @@ mod tests {
             "取消应秒级生效（实际 {:?}）",
             elapsed
         );
+    }
+
+    /// cmd 的 `start` 内建默认 CREATE_NEW_CONSOLE：在 GUI 子系统的发行版里，AIO 自己
+    /// 的隐藏 shell 没有控制台，`start` 于是新建一个**可见**窗口并常驻——就是"前端和
+    /// 后端各弹一个终端窗口"的成因。重写为 `start /b` 后子进程共享父 shell（不可见）
+    /// 的控制台，控制台一切不可见，而 stdout/stderr 管道照旧继承，输出不丢。
+    #[test]
+    #[cfg(windows)]
+    fn cmd_start_is_rewritten_to_background() {
+        assert_eq!(
+            rewrite_cmd_start_hidden("start \"\" npm.cmd run dev"),
+            "start /b \"\" npm.cmd run dev"
+        );
+        // 命令起始位置由 `&&` / `&` / `||` / `(` / 行首引入，都要覆盖
+        assert_eq!(
+            rewrite_cmd_start_hidden("cd /d D:\\proj && start \"\" npm.cmd run dev"),
+            "cd /d D:\\proj && start /b \"\" npm.cmd run dev"
+        );
+        assert_eq!(
+            rewrite_cmd_start_hidden("echo hi & start \"\" mover-v.exe"),
+            "echo hi & start /b \"\" mover-v.exe"
+        );
+        assert_eq!(rewrite_cmd_start_hidden("a || start b"), "a || start /b b");
+        assert_eq!(rewrite_cmd_start_hidden("(start b)"), "(start /b b)");
+        // 大小写不敏感
+        assert_eq!(rewrite_cmd_start_hidden("START b"), "START /b b");
+    }
+
+    /// 别把 `start` 当参数用的情况改坏：`net start`、`npm start`、`sc start`、
+    /// `echo start` 都是**别的程序**的参数，改了就破坏语义；引号内的文本同理。
+    #[test]
+    #[cfg(windows)]
+    fn cmd_start_rewrite_leaves_non_builtin_untouched() {
+        for keep in [
+            "net start mysql",
+            "npm start",
+            "sc start wuauserv",
+            "echo start here",
+            "echo \"start the server\"",
+            "start /b \"\" npm.cmd run dev",
+            "start /min \"\" app.exe",
+            "start /wait setup.exe",
+            "start /i app.exe",
+        ] {
+            assert_eq!(rewrite_cmd_start_hidden(keep), keep, "不应改写: {keep}");
+        }
+    }
+
+    /// 幂等：重写结果再重写一次必须不变（cmd_utf8_prelude 与其它调用点可能叠加）。
+    #[test]
+    #[cfg(windows)]
+    fn cmd_start_rewrite_is_idempotent() {
+        for c in [
+            "start \"\" npm.cmd run dev",
+            "cd /d D:\\p && start /min app.exe",
+            "npm start",
+            "net start mysql",
+        ] {
+            let once = rewrite_cmd_start_hidden(c);
+            assert_eq!(rewrite_cmd_start_hidden(&once), once, "非幂等: {c}");
+        }
+    }
+
+    /// 端到端：真实 spawn 一个 `cmd /S /C`，`start /b` 起的孙进程输出仍必须经管道
+    /// 回到调用方——`/b` 只改控制台归属，不能把输出弄丢（这是"隐藏窗口"与"拿得到
+    /// 输出"两个目标同时成立的前提）。
+    #[test]
+    #[cfg(windows)]
+    fn cmd_start_rewrite_keeps_child_output() {
+        use std::io::Read as _;
+        use std::os::windows::process::CommandExt as _;
+        let mut cmd = std::process::Command::new("cmd.exe");
+        // Same argv shape as the production cmd path (raw_arg + one outer quote
+        // pair); plain arg() would add a second quoting layer and `start /b ""`
+        // would no longer parse.
+        cmd.raw_arg("/S")
+            .raw_arg("/C")
+            .raw_arg("\"start /b \"\" cmd /c echo aio_start_ok\"")
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .stdin(std::process::Stdio::null());
+        cmd.hidden_console();
+        let mut child = cmd.spawn().expect("spawn cmd");
+        let mut out = String::new();
+        if let Some(mut so) = child.stdout.take() {
+            let _ = so.read_to_string(&mut out);
+        }
+        let _ = child.wait();
+        assert!(
+            out.contains("aio_start_ok"),
+            "start /b 的子进程输出应经管道返回: {out:?}"
+        );
+    }
+
+    /// PowerShell 路径的 shim 必须真的在生成的脚本里，且脚本语法有效：shim 遮蔽的是
+    /// 真实 cmdlet，一处拼错就会让所有 `Start-Process` 静默失效——比弹窗更糟。
+    /// 顺带守住 `-PassThru` 与退出码传播不被 shim 破坏。
+    #[test]
+    #[cfg(windows)]
+    fn pwsh_script_carries_working_start_process_shim() {
+        let script = pwsh_script("Start-Process cmd -ArgumentList '/c','exit 3' -Wait");
+        // 结构性：shim 定义 + 默认隐藏 + 哈希 splatting 转发
+        assert!(
+            script.contains("function global:Start-Process"),
+            "缺少 shim"
+        );
+        assert!(
+            script.contains("ProcessWindowStyle]::Hidden"),
+            "缺少默认隐藏"
+        );
+        assert!(
+            script.contains("@PSBoundParameters"),
+            "必须用 $PSBoundParameters 哈希 splatting（数组 splatting 会按位置绑定而失败）"
+        );
+        // Review round 1: the parameter surface must cover what the real cmdlet
+        // accepts, or calls using those switches fail binding before forwarding.
+        assert!(
+            script.contains("[CmdletBinding(SupportsShouldProcess)]"),
+            "必须声明 SupportsShouldProcess（-WhatIf/-Confirm 否则无法绑定）"
+        );
+        assert!(
+            script.contains("[hashtable]$Environment"),
+            "必须声明 -Environment（pwsh 7.4+ 调用方会用到）"
+        );
+        // shim 必须在 body 之前，否则 body 首个 Start-Process 命中不到
+        let shim_at = script.find("function global:Start-Process").unwrap();
+        let body_at = script.find("Start-Process cmd").unwrap();
+        assert!(shim_at < body_at, "shim 必须先于用户命令");
+
+        // 行为：脚本能被 pwsh 执行且 -PassThru 仍返回进程对象；退出码 3 透传
+        let out = std::process::Command::new("cmd")
+            .args(["/C", "where pwsh >nul 2>nul && echo yes"])
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .unwrap_or_default();
+        if !out.contains("yes") {
+            return; // 无 pwsh（Windows PowerShell 5.1 由其它测试覆盖）
+        }
+        let probe = "Start-Process cmd -ArgumentList '/c','exit 3' -Wait -PassThru | ".to_string()
+            + "ForEach-Object { Write-Output ('pid_' + ($null -ne $_.Id)) }; exit 3";
+        let mut c = std::process::Command::new("pwsh");
+        c.args([
+            "-NoProfile",
+            "-EncodedCommand",
+            &pwsh_encoded(&pwsh_script(&probe)),
+        ]);
+        crate::utils::exec_resolve::HiddenConsole::hidden_console(&mut c);
+        let r = c.output().expect("run pwsh");
+        let text = String::from_utf8_lossy(&r.stdout).to_string();
+        assert!(
+            text.contains("pid_True"),
+            "shim 下 -PassThru 应仍返回进程对象: {text:?} / {r:?}"
+        );
+        assert_eq!(r.status.code(), Some(3), "退出码应透传");
     }
 }

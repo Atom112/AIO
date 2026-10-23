@@ -277,6 +277,19 @@ cargo 424 Rust 测试（6 ignored 真机项）、78 前端测试、gates 全过�
 
 ## [Unreleased]
 
+### 🪟 后台进程不再弹出终端窗口（前端 / 后端常驻窗口根修）
+
+- **症状**：让 Agent 起前端 / 后端（`Start-Process npm.cmd -ArgumentList run,dev`、`start "" npm.cmd run dev`）时，屏幕上各弹出一个可见控制台窗口，并随进程常驻——退出后也不消失，必须手动关闭
+- **根因**：AIO 发行版是 Windows GUI 子系统程序，自身没有控制台；它对直接子进程下了 `CREATE_NO_WINDOW`，但**孙进程不受该标志约束**：
+  - PowerShell 路径 `Start-Process` 默认不带窗口样式 → powershell.exe 为孙进程新建**可见**控制台
+  - cmd 路径 `start` 内建默认 `CREATE_NEW_CONSOLE` → 同样新建可见控制台
+    两者都在「无控制台的父进程」下新建窗口，所以必然可见
+- **修复**：
+  - **PowerShell**：执行前注入 `Start-Process` shim，把窗口样式默认改为 `Hidden`，仅在调用方**未显式**指定 `-WindowStyle` / `-NoNewWindow` 时生效；用 `$PSBoundParameters` 哈希 splatting 转发（数组 splatting 会按位置绑定而报错，导致调用静默失效），`start` / `saps` 别名同样命中，`-Wait` / `-PassThru` / `-Verb` / `-WorkingDirectory` / `-Environment` 行为不变，退出码传播包装保留
+  - **cmd**：把**命令起始位置**的 `start` 重写为 `start /b`（共享父 shell 的隐藏控制台）；`net start mysql`、`npm start`、`sc start x`、`echo start`、引号内文本一律不改写，调用方已给的 `/b` `/min` `/max` `/wait` `/i` 原样保留，重写幂等
+- **不变**：stdout/stderr 仍经管道回收（子进程继承父 shell 的管道）、Job Object 进程树回收与取消能力不变、`check:i18n` 与既有门禁全绿
+- 测试：`shell_tools` 新增 4 项（重写规则 / 非内建命令不误改 / 幂等 / 真实 spawn 下子进程输出仍经管道返回）；cargo 442 过；clippy `-D warnings` 通过
+
 ### 🔎 聊天记录搜索（按项目隔离）
 
 - **范围隔离**：话题栏顶部新增搜索框（新建话题按钮上方），按当前范围搜索聊天记录——每个项目独立（一项目搜不到他项目记录），纯对话作为特殊单范围参与同一机制（实现上按当前 assistant 过滤：每项目对应专属 assistant、纯对话为默认 assistant，隔离天然成立）

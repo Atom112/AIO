@@ -8,6 +8,13 @@
 //!
 //! Note: file reads/writes (needed by tools) and network access (web_tools has its own guard) are not restricted.
 //!
+//! Self-hosting (AIO developing AIO): when the AIO process itself already lives inside
+//! another AIO's UI-limited job, the per-execution assign is rejected (ERROR_NOT_SUPPORTED
+//! — UI-limited jobs cannot be nested). The child is still a member of the ANCESTOR job
+//! (children auto-join), so the ancestor's UI restrictions, kill-on-close, and process
+//! quota keep covering the subtree; the assign degrades to warn + a `taskkill /T /F`
+//! fallback guard instead of failing the command closed.
+//!
 //! On non-Windows platforms this module is an empty implementation (no-op guard).
 
 #[cfg(windows)]
@@ -123,8 +130,19 @@ mod imp {
     /// triggers KILL_ON_JOB_CLOSE and tears down the whole process tree (uniform
     /// backstop for both timeout and normal return, so grandchild processes
     /// never outlive the execution).
+    ///
+    /// Degraded (nested-job) mode: when the assign was rejected because the child
+    /// already lives in an ancestor UI-limited job (self-hosting — AIO developing
+    /// AIO), `fallback_pid` is set and the guard's Drop tears the tree down via
+    /// `taskkill /T /F` instead. Weaker than job membership (a taskkill tree walk
+    /// misses grandchildren re-parented after their parent died) but the ANCESTOR
+    /// job still holds the whole subtree with its own kill-on-close — the fallback
+    /// only covers this execution's own stop path.
     pub struct JobGuard {
         handle: Handle,
+        /// 0 = normal mode (the job owns the teardown); non-zero = degraded mode,
+        /// the pid to taskkill on Drop.
+        fallback_pid: Dword,
     }
 
     impl Drop for JobGuard {
@@ -132,6 +150,21 @@ mod imp {
             unsafe {
                 CloseHandle(self.handle);
             }
+            if self.fallback_pid != 0 {
+                kill_process_tree_fallback(self.fallback_pid);
+            }
+        }
+    }
+
+    /// Degraded-mode Drop teardown: PATH-resolved `taskkill /T /F`, hidden console
+    /// (the console-window gate applies to every spawn). Best-effort by design —
+    /// failure (already exited / stripped PATH) is silently ignored, matching the
+    /// job-close semantics of a process that already terminated.
+    fn kill_process_tree_fallback(pid: Dword) {
+        if let Some(taskkill) = crate::utils::exec_resolve::resolve_executable("taskkill") {
+            let mut cmd = std::process::Command::new(taskkill);
+            cmd.args(["/T", "/F", "/PID"]).arg(pid.to_string());
+            let _ = crate::utils::exec_resolve::HiddenConsole::hidden_console(&mut cmd).status();
         }
     }
 
@@ -212,6 +245,39 @@ mod imp {
         }
     }
 
+    /// Test fixture helper (harness feedback round 1, P0-2): joins the CURRENT
+    /// process to a fresh UI-limited job, reproducing the "AIO already inside
+    /// another AIO's job" self-hosting setup. The job handle is intentionally
+    /// leaked — closing it would tear this process down (kill-on-close).
+    /// Failure is returned (not fatal): in an already-nested host the assign
+    /// fails with the same err=50, which is itself the ambient reproduction.
+    #[cfg(test)]
+    pub(crate) fn join_self_to_ui_limited_job_for_test() -> Result<(), String> {
+        unsafe {
+            let job = configure_job_object()?;
+            let self_handle =
+                OpenProcess(PROCESS_SET_QUOTA | PROCESS_TERMINATE, 0, std::process::id());
+            if self_handle == 0 {
+                CloseHandle(job);
+                return Err(ierr!(
+                    "fixture: OpenProcess(self) 失败",
+                    "fixture: OpenProcess(self) failed"
+                ));
+            }
+            let ok = AssignProcessToJobObject(job, self_handle) != FALSE;
+            CloseHandle(self_handle);
+            if ok {
+                // Handle is a plain isize (Copy): "leaking" it simply means NOT
+                // closing it — closing would tear this fixture process down
+                // (kill-on-close) before the assertion runs.
+                Ok(())
+            } else {
+                CloseHandle(job);
+                Err("fixture: self-assign rejected (already nested)".into())
+            }
+        }
+    }
+
     /// Creates an independent Job Object for a single execution, assigns the child process, and returns the guard.
     ///
     /// # Safety
@@ -238,19 +304,49 @@ mod imp {
 
             // Assign to the Job Object
             let result = AssignProcessToJobObject(job, process_handle);
+            // Capture the error BEFORE any other call may clobber the thread's
+            // last-error value.
+            let assign_err = if result == FALSE {
+                Some(std::io::Error::last_os_error())
+            } else {
+                None
+            };
             CloseHandle(process_handle);
 
-            if result == FALSE {
+            if let Some(err) = assign_err {
+                // Nested-job rejection (self-hosting: AIO running INSIDE another
+                // AIO's UI-limited job — the "AIO develops AIO" scenario): Windows
+                // refuses the second assignment with ERROR_NOT_SUPPORTED. The child
+                // is already a member of the ANCESTOR job (children auto-join), so
+                // the ancestor's UI restrictions, kill-on-close, and process quota
+                // still cover this subtree. Degrade to warn + a taskkill-fallback
+                // guard instead of failing the command — the historic fail-closed
+                // here made every sandbox test red in the self-hosting environment
+                // (harness feedback round 1, P0-2: "tests are永远红").
+                if err.raw_os_error() == Some(50) {
+                    tracing::warn!(
+                        "[sandbox] 嵌套 Job 拒绝 assign（pid={}，已在祖先 Job 内——UI 限制/树回收由祖先 Job 继续承担），本执行降级为 taskkill 兜底回收",
+                        pid
+                    );
+                    return Ok(JobGuard {
+                        handle: job,
+                        fallback_pid: pid,
+                    });
+                }
                 CloseHandle(job);
                 return Err(ierr!(
-                    "AssignProcessToJobObject({}) 失败",
-                    "AssignProcessToJobObject({}) failed",
-                    pid
+                    "AssignProcessToJobObject({}) 失败: {}",
+                    "AssignProcessToJobObject({}) failed: {}",
+                    pid,
+                    err
                 ));
             }
         }
 
-        Ok(JobGuard { handle: job })
+        Ok(JobGuard {
+            handle: job,
+            fallback_pid: 0,
+        })
     }
 
     /// SEC-8: resumes the primary thread of a child spawned with CREATE_SUSPENDED.
@@ -628,6 +724,69 @@ pub fn sandbox_available() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// P0-2 (harness feedback round 1, "AIO develops AIO"): a nested UI-limited
+    /// job must DEGRADE the assign to warn+continue instead of failing closed —
+    /// the historic fail-closed made 13 sandbox tests permanently red whenever
+    /// AIO ran inside another AIO's job.
+    ///
+    /// Fixture pattern: re-execute this test binary with an env gate + `--exact`
+    /// filter; the fixture instance joins a UI-limited job FIRST (standing in for
+    /// the ancestor AIO job), then exercises `create_job_for_child` on a spawned
+    /// child and prints a marker. In an already-nested host (real self-hosting)
+    /// the self-assign fails with the same err=50 — the reproduction is ambient.
+    #[test]
+    #[cfg(windows)]
+    fn nested_job_assignment_degrades_instead_of_failing() {
+        use crate::utils::exec_resolve::HiddenConsole as _;
+        use std::io::Read as _;
+
+        if std::env::var("AIO_NESTED_JOB_FIXTURE").is_ok() {
+            // ---- fixture mode (inside the re-executed binary) ----
+            // Join a UI-limited job first, standing in for the ancestor AIO job.
+            // In an already-nested host this fails with the same err=50 — the
+            // reproduction is ambient either way.
+            let _ = super::imp::join_self_to_ui_limited_job_for_test();
+            let mut child = std::process::Command::new("cmd.exe")
+                .args(["/C", "exit 0"])
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .stdin(std::process::Stdio::null())
+                .hidden_console()
+                .spawn()
+                .expect("fixture: spawn cmd");
+            let guard = crate::utils::sandbox::assign_to_job(&child)
+                .expect("嵌套 assign 必须降级为 Ok（warn+taskkill 兜底），而不是 fail-closed");
+            drop(guard); // degraded Drop: taskkill fallback, best-effort on an exiting child
+            let _ = child.wait();
+            println!("AIO_NESTED_RESULT=DEGRADED_OK");
+            return;
+        }
+
+        // ---- parent mode: drive the fixture and assert on its output ----
+        let exe = std::env::current_exe().expect("current_exe");
+        let mut cmd = std::process::Command::new(exe);
+        cmd.args([
+            "--exact",
+            "utils::sandbox::tests::nested_job_assignment_degrades_instead_of_failing",
+            "--nocapture",
+        ])
+        .env("AIO_NESTED_JOB_FIXTURE", "1")
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .stdin(std::process::Stdio::null());
+        crate::utils::exec_resolve::HiddenConsole::hidden_console(&mut cmd);
+        let mut child = cmd.spawn().expect("spawn fixture");
+        let mut out = String::new();
+        if let Some(mut so) = child.stdout.take() {
+            let _ = so.read_to_string(&mut out);
+        }
+        let _ = child.wait();
+        assert!(
+            out.contains("AIO_NESTED_RESULT=DEGRADED_OK"),
+            "嵌套场景应降级成功，fixture 输出: {out:?}"
+        );
+    }
 
     #[test]
     fn bwrap_argv_shape() {

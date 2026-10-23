@@ -24,7 +24,12 @@ use std::time::Duration;
 
 const DEFAULT_TIMEOUT_MS: u64 = 60_000;
 const MAX_TIMEOUT_MS: u64 = 300_000;
-const MAX_OUTPUT_BYTES: usize = 50_000;
+/// Output budget for one command stream: the drain layer keeps the head AND the
+/// tail (compilers, test runners, and failure stack traces put the signal at the
+/// END; a head-only cap hid `cargo test` failure details for outputs past 50KB —
+/// harness feedback round 1, P1-1). Total per stream stays 50KB.
+const MAX_OUTPUT_HEAD_BYTES: usize = 30_000;
+const MAX_OUTPUT_TAIL_BYTES: usize = 20_000;
 const MAX_COMMAND_LEN: usize = 4096;
 
 // ====== Helpers ======
@@ -763,7 +768,7 @@ pub fn get_command_tool_spec() -> ToolSpec {
         kind: "function".into(),
         function: ToolFunctionSpec {
             name: tool_names::EXECUTE_COMMAND.into(),
-            description: "在项目目录中执行系统命令，返回 stdout/stderr 和退出码。沙箱内默认**无网络**（Linux/macOS OS 级隔离）：命令需要联网（下载依赖、API 调用、访问 localhost 服务）时必须显式设 network=true（审批时向用户标注）。用于运行构建、测试、git 命令等。".into(),
+            description: "在项目目录中执行系统命令，返回 stdout/stderr 和退出码。沙箱内默认**无网络**（Linux/macOS OS 级隔离）：命令需要联网（下载依赖、API 调用、访问 localhost 服务）时必须显式设 network=true（审批时向用户标注）。用于运行构建、测试、git 命令等。注意（Windows）：沙箱的 Job UI 限制使窗口枚举/查找 API（EnumWindows/FindWindow）在本命令的子进程内看不到任何桌面对象——窗口探测恒为空是沙箱所致而非目标无窗口；需要观测/验证 GUI 窗口行为的任务应在本机全权模式下运行（无沙箱）。".into(),
             parameters: json!({
                 "type": "object",
                 "properties": {
@@ -964,29 +969,75 @@ fn check_shell_metacharacters(command: &str) -> Option<&'static str> {
     None
 }
 
-/// Reads a pipe into a bounded buffer: keeps the first cap bytes, **keeps draining**
-/// (discarding the rest) and counts total bytes read. Continuous draining guarantees
-/// the producer never blocks writing to the pipe (paired with reader threads started
-/// before wait(), this avoids the deadlock when output exceeds the ~64KB OS pipe buffer).
+/// One drained pipe stream: the kept head and tail byte slices plus the total
+/// bytes read. `gap()` tells whether a middle section was dropped.
+#[derive(Default)]
+pub(crate) struct DrainedOutput {
+    pub(crate) head: Vec<u8>,
+    pub(crate) tail: Vec<u8>,
+    pub(crate) total: usize,
+}
+
+impl DrainedOutput {
+    /// Bytes kept in total (head + tail).
+    fn kept(&self) -> usize {
+        self.head.len() + self.tail.len()
+    }
+    /// True when a middle section of the stream was discarded while draining.
+    fn gap(&self) -> bool {
+        self.total > self.kept()
+    }
+    /// The full kept stream as one contiguous buffer (only meaningful when the
+    /// stream fit within head+tail — no gap — so no seam splits a code point).
+    fn joined(&self) -> Vec<u8> {
+        let mut all = Vec::with_capacity(self.kept());
+        all.extend_from_slice(&self.head);
+        all.extend_from_slice(&self.tail);
+        all
+    }
+}
+
+/// Reads a pipe into bounded head+tail buffers, **keeps draining** (discarding
+/// the middle) and counts total bytes read. Continuous draining guarantees the
+/// producer never blocks writing to the pipe (paired with reader threads
+/// started before wait(), this avoids the deadlock when output exceeds the
+/// ~64KB OS pipe buffer).
 ///
-/// Returns (kept bytes, total bytes); the total feeds the truncation note in the result.
-fn drain_pipe_capped<R: std::io::Read>(mut pipe: R, cap: usize) -> (Vec<u8>, usize) {
-    let mut kept = Vec::new();
-    let mut total = 0usize;
+/// Tail semantics: the LAST `tail_cap` bytes are retained via a draining ring —
+/// compiler/test-runner failures land at the end of the stream, so the tail
+/// carries the actionable lines (harness feedback round 1, P1-1: a head-only
+/// cap repeatedly hid `cargo test` failure details behind "前 50000B / 共…").
+fn drain_pipe_capped<R: std::io::Read>(
+    mut pipe: R,
+    head_cap: usize,
+    tail_cap: usize,
+) -> DrainedOutput {
+    let mut out = DrainedOutput::default();
+    let mut tail: std::collections::VecDeque<u8> = std::collections::VecDeque::new();
     let mut buf = [0u8; 16384];
     loop {
         match pipe.read(&mut buf) {
             Ok(0) | Err(_) => break,
             Ok(n) => {
-                total += n;
-                if kept.len() < cap {
-                    let take = (cap - kept.len()).min(n);
-                    kept.extend_from_slice(&buf[..take]);
+                out.total += n;
+                if out.head.len() < head_cap {
+                    let take = (head_cap - out.head.len()).min(n);
+                    out.head.extend_from_slice(&buf[..take]);
+                    if take < n {
+                        tail.extend(buf[take..n].iter().copied());
+                    }
+                } else {
+                    tail.extend(buf[..n].iter().copied());
+                }
+                // Trim the ring to the tail cap (amortized O(total)).
+                if tail.len() > tail_cap {
+                    tail.drain(0..tail.len() - tail_cap);
                 }
             }
         }
     }
-    (kept, total)
+    out.tail = tail.into();
+    out
 }
 
 /// Windows shell selection (config `shellWindows`): `"powershell"` (default —
@@ -1458,19 +1509,28 @@ pub fn execute_command(
     // Reader threads must start before wait(): reading only after wait() deadlocks
     // once output exceeds the OS pipe buffer (~64KB) - the child blocks writing to
     // the pipe and never exits, then gets killed by the timeout even if the command
-    // itself would finish in 2 seconds. Readers keep the first MAX_OUTPUT_BYTES bytes
-    // and keep draining the rest so the child never blocks on pipe writes.
+    // itself would finish in 2 seconds. Readers keep the head+tail budget
+    // (MAX_OUTPUT_HEAD/TAIL_BYTES) and keep draining the middle so the child
+    // never blocks on pipe writes.
     use std::sync::mpsc;
     let (stdout_tx, stdout_rx) = mpsc::channel();
     let (stderr_tx, stderr_rx) = mpsc::channel();
     if let Some(pipe) = child.stdout.take() {
         std::thread::spawn(move || {
-            let _ = stdout_tx.send(drain_pipe_capped(pipe, MAX_OUTPUT_BYTES));
+            let _ = stdout_tx.send(drain_pipe_capped(
+                pipe,
+                MAX_OUTPUT_HEAD_BYTES,
+                MAX_OUTPUT_TAIL_BYTES,
+            ));
         });
     }
     if let Some(pipe) = child.stderr.take() {
         std::thread::spawn(move || {
-            let _ = stderr_tx.send(drain_pipe_capped(pipe, MAX_OUTPUT_BYTES));
+            let _ = stderr_tx.send(drain_pipe_capped(
+                pipe,
+                MAX_OUTPUT_HEAD_BYTES,
+                MAX_OUTPUT_TAIL_BYTES,
+            ));
         });
     }
 
@@ -1558,10 +1618,10 @@ pub fn execute_command(
     // collect reader results: the process has exited or been torn down, so the pipes
     // close and the readers finish shortly; in the extreme case (a leftover process
     // still holds the pipe write end) give up after 10s to avoid unbounded waiting.
-    let (stdout, stdout_total) = stdout_rx
+    let stdout = stdout_rx
         .recv_timeout(Duration::from_secs(10))
         .unwrap_or_default();
-    let (stderr, stderr_total) = stderr_rx
+    let stderr = stderr_rx
         .recv_timeout(Duration::from_secs(10))
         .unwrap_or_default();
 
@@ -1572,9 +1632,7 @@ pub fn execute_command(
         timed_out,
         timeout,
         stdout,
-        stdout_total,
         stderr,
-        stderr_total,
     )
 }
 
@@ -1659,12 +1717,20 @@ fn execute_command_in_appcontainer(
     let (stderr_tx, stderr_rx) = mpsc::channel();
     if let Some(pipe) = child.stdout_read.take() {
         std::thread::spawn(move || {
-            let _ = stdout_tx.send(drain_pipe_capped(pipe, MAX_OUTPUT_BYTES));
+            let _ = stdout_tx.send(drain_pipe_capped(
+                pipe,
+                MAX_OUTPUT_HEAD_BYTES,
+                MAX_OUTPUT_TAIL_BYTES,
+            ));
         });
     }
     if let Some(pipe) = child.stderr_read.take() {
         std::thread::spawn(move || {
-            let _ = stderr_tx.send(drain_pipe_capped(pipe, MAX_OUTPUT_BYTES));
+            let _ = stderr_tx.send(drain_pipe_capped(
+                pipe,
+                MAX_OUTPUT_HEAD_BYTES,
+                MAX_OUTPUT_TAIL_BYTES,
+            ));
         });
     }
 
@@ -1699,10 +1765,10 @@ fn execute_command_in_appcontainer(
         return tool_err("命令已被用户停止");
     }
 
-    let (stdout, stdout_total) = stdout_rx
+    let stdout = stdout_rx
         .recv_timeout(Duration::from_secs(10))
         .unwrap_or_default();
-    let (stderr, stderr_total) = stderr_rx
+    let stderr = stderr_rx
         .recv_timeout(Duration::from_secs(10))
         .unwrap_or_default();
     // also clean up potentially leftover grandchildren (daemons etc.) on the normal path
@@ -1715,24 +1781,19 @@ fn execute_command_in_appcontainer(
         timed_out,
         timeout,
         stdout,
-        stdout_total,
         stderr,
-        stderr_total,
     )
 }
 
 /// Shared result construction for the native and AppContainer paths.
-#[allow(clippy::too_many_arguments)]
 fn build_command_result(
     command: &str,
     project_root: &str,
     exit_code: Option<i32>,
     timed_out: bool,
     timeout: u64,
-    stdout: Vec<u8>,
-    stdout_total: usize,
-    stderr: Vec<u8>,
-    stderr_total: usize,
+    stdout: DrainedOutput,
+    stderr: DrainedOutput,
 ) -> ToolResult {
     // A command that could have created/removed a repository invalidates the memoized
     // `is_git_repo` answer, so the git tools appear (or disappear) on the next turn
@@ -1752,36 +1813,32 @@ fn build_command_result(
         result.push_str(&format!("\nexit code: {code}\n"));
     }
 
-    if !stdout.is_empty() || stdout_total > 0 {
-        // Decode BEFORE truncation: GBK/ANSI console messages must reach the
-        // model (and the signature detectors) as readable text (harness round 3).
-        let decoded = decode_console_output(&stdout);
-        result.push_str(&format!(
-            "\n[stdout]:\n{}\n",
-            crate::utils::truncate::truncate_bytes_head(&decoded, MAX_OUTPUT_BYTES)
-        ));
-        if stdout_total > stdout.len() {
-            result.push_str(&format!(
-                "[!] stdout 输出超长，仅保留前 {}B / 共 {}B\n",
-                stdout.len(),
-                stdout_total
-            ));
+    // Decode BEFORE truncation: GBK/ANSI console messages must reach the
+    // model (and the signature detectors) as readable text (harness round 3).
+    // With no gap, head+tail joined first so a code point never splits at the
+    // seam; with a gap, the marker line separates the two lossy decodes.
+    let render_stream = |label: &str, s: &DrainedOutput, out: &mut String| {
+        if s.head.is_empty() && s.total == 0 {
+            return;
         }
-    }
-    if !stderr.is_empty() || stderr_total > 0 {
-        let decoded = decode_console_output(&stderr);
-        result.push_str(&format!(
-            "\n[stderr]:\n{}\n",
-            crate::utils::truncate::truncate_bytes_head(&decoded, MAX_OUTPUT_BYTES)
-        ));
-        if stderr_total > stderr.len() {
-            result.push_str(&format!(
-                "[!] stderr 输出超长，仅保留前 {}B / 共 {}B\n",
-                stderr.len(),
-                stderr_total
+        if s.gap() {
+            let head = decode_console_output(&s.head);
+            let tail = decode_console_output(&s.tail);
+            out.push_str(&format!(
+                "\n[{label}]:\n{}\n\n[!] …中段输出已丢弃（共 {}B，保留头 {}B + 尾 {}B）…\n\n{}\n",
+                head,
+                s.total,
+                s.head.len(),
+                s.tail.len(),
+                tail
             ));
+        } else {
+            let body = decode_console_output(&s.joined());
+            out.push_str(&format!("\n[{label}]:\n{body}\n"));
         }
-    }
+    };
+    render_stream("stdout", &stdout, &mut result);
+    render_stream("stderr", &stderr, &mut result);
 
     if (exit_code != Some(0)) || timed_out {
         tool_err(&result)
@@ -2616,5 +2673,65 @@ mod tests {
             "shim 下 -PassThru 应仍返回进程对象: {text:?} / {r:?}"
         );
         assert_eq!(r.status.code(), Some(3), "退出码应透传");
+    }
+
+    /// P1-1（harness 反馈第一轮）：超长输出必须**头尾都保留**——编译器/测试器的
+    /// 失败详情几乎总在末尾，只留头部会让 `cargo test` 的失败信息反复拿不到。
+    /// 排水环保尾部、结果体在中段丢弃处带标记。
+    #[test]
+    fn long_output_keeps_head_and_tail() {
+        // Markers at both ends of a >head+tail stream so the assertion is unambiguous.
+        let mut data = vec![b'a'; 100_000];
+        data[..4].copy_from_slice(b"HEAD");
+        let tail_len = MAX_OUTPUT_TAIL_BYTES;
+        let tail_marker_at = data.len() - 10;
+        data[tail_marker_at..].copy_from_slice(b"TAILMARKER");
+        let d = drain_pipe_capped(&data[..], MAX_OUTPUT_HEAD_BYTES, tail_len);
+        assert_eq!(d.total, data.len());
+        assert!(d.gap(), "中段应被丢弃");
+        assert_eq!(d.head.len(), MAX_OUTPUT_HEAD_BYTES);
+        assert_eq!(d.tail.len(), MAX_OUTPUT_TAIL_BYTES);
+        assert_eq!(&d.head[..4], b"HEAD");
+        assert_eq!(&d.tail[d.tail.len() - 10..], b"TAILMARKER");
+        let r = build_command_result(
+            "x",
+            "root",
+            Some(0),
+            false,
+            1000,
+            d,
+            DrainedOutput::default(),
+        );
+        let text = text_of(&r);
+        assert!(text.contains("[stdout]:"), "应含 stdout 段: {text}");
+        assert!(text.contains("中段输出已丢弃"), "应含中段丢弃标记: {text}");
+        assert!(text.contains("HEAD"), "头部标记应保留: {text}");
+        assert!(text.contains("TAILMARKER"), "尾部标记应保留: {text}");
+    }
+
+    /// P1-1 companion: a stream that fits the budget stays contiguous (no gap
+    /// marker, no seam — a code point must never split at a head/tail boundary).
+    #[test]
+    fn short_output_stays_contiguous_without_gap_marker() {
+        let data = "短输出 short output".repeat(50); // UTF-8 multi-byte, well under the caps
+        let d = drain_pipe_capped(
+            data.as_bytes(),
+            MAX_OUTPUT_HEAD_BYTES,
+            MAX_OUTPUT_TAIL_BYTES,
+        );
+        assert!(!d.gap());
+        assert_eq!(d.joined(), data.as_bytes());
+        let r = build_command_result(
+            "x",
+            "root",
+            Some(0),
+            false,
+            1000,
+            d,
+            DrainedOutput::default(),
+        );
+        let text = text_of(&r);
+        assert!(!text.contains("中段输出已丢弃"), "无中段不应有标记: {text}");
+        assert!(text.contains("短输出"), "内容应完整: {text}");
     }
 }

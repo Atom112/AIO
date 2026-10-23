@@ -468,6 +468,21 @@ fn format_response(questions: &[QuestionView], response: &QuestionResponse) -> S
     out
 }
 
+/// Timeout echo (harness feedback round 1, P2): the decision trail must show
+/// WHAT was asked even when nobody answered — otherwise "the agent asked, the
+/// user didn't reply" is unauditable.
+fn questions_echo(questions: &[QuestionView]) -> String {
+    let mut out = String::new();
+    for (i, q) in questions.iter().enumerate() {
+        out.push_str(&format!("\n{}. {}", i + 1, q.question));
+        if !q.options.is_empty() {
+            let labels: Vec<&str> = q.options.iter().map(|o| o.label.as_str()).collect();
+            out.push_str(&format!("（选项: {}）", labels.join(" / ")));
+        }
+    }
+    out
+}
+
 /// Core ask_user channel: emit the questions, pause until the user answers
 /// (respond_agent_question), the token cancels, or the timeout fires.
 ///
@@ -493,7 +508,7 @@ pub(crate) async fn ask_user_questions(
             request_id: request_id.clone(),
             assistant_id: assistant_id.to_string(),
             topic_id: topic_id.to_string(),
-            questions,
+            questions: questions.clone(),
         },
     );
 
@@ -514,8 +529,9 @@ pub(crate) async fn ask_user_questions(
             Err(_) => {
                 pending.remove(&request_id);
                 return Err(ierr!(
-                    "等待用户回答超时，请基于现有信息自行决定并继续",
-                    "Timed out waiting for the user's answer; decide on your own and continue"
+                    "等待用户回答超时，请基于现有信息自行决定并继续。超时的问题（未作答）:{}",
+                    "Timed out waiting for the user's answer; decide on your own and continue. Questions asked (unanswered):{}",
+                    questions_echo(&questions)
                 ));
             }
         },

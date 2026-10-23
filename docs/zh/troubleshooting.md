@@ -53,6 +53,18 @@
 - 自建版本请确认每个子进程启动点都带隐藏控制台标志（`npm run check:gates` 的 `console-window` 门禁会拦截遗漏）；
 - 如需确认是否真的是该问题，可用 release 构建与 `npm run tauri dev` 分别复现对比。
 
+## 前后端进程各弹出一个终端窗口且常驻
+
+安装版让 Agent 起前端/后端（`Start-Process npm.cmd -ArgumentList run,dev`、`start "" npm.cmd run dev`）时，屏幕上各弹出一个可见控制台窗口，进程退出后也不关闭，需要手动点掉。
+
+原因：AIO 发行版是 GUI 子系统程序，自身没有控制台。它对**直接子进程**下了 `CREATE_NO_WINDOW`，但 `Start-Process` 和 cmd 的 `start` 会再创建**孙进程**，而孙进程不受父进程标志约束——`Start-Process` 不指定窗口样式、`start` 不带 `/b` 时都默认新建控制台，于是在没有控制台的父进程下必然可见。
+
+处理：
+
+- 这是缺陷不是配置错误，升级到修复版本即可；
+- 修复方式：PowerShell 路径为 `Start-Process` 注入隐藏窗口默认值（调用方显式传 `-WindowStyle` 或 `-NoNewWindow` 时不覆盖）；cmd 路径把命令起始位置的 `start` 重写为 `start /b`（`net start`、`npm start` 等参数位置不受影响，已给的 `/min` `/wait` 等原样保留）；
+- 输出不受影响：孙进程继承父 shell 的管道，工具调用照旧拿到 stdout/stderr；进程树回收与停止按钮行为不变。
+
 ## MCP 工具一直等待确认
 
 - 普通 Agent 模式会对敏感操作请求确认。

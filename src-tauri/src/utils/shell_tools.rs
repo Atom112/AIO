@@ -51,15 +51,57 @@ use crate::core::tool_names;
 
 /// Converts raw command output bytes to text: strict UTF-8 first, then the
 /// Windows ANSI code page (CP_ACP → GBK on zh-CN), then lossy UTF-8 as the
-/// last resort. Pure given the injected decoder — unit-tested.
+/// last resort. Streams that carry PowerShell's CLIXML serialization marker
+/// (`#< CLIXML`, emitted when a redirected pwsh serializes error records —
+/// Windows PowerShell 5.1 ignores `-OutputFormat Text`) get a mechanical
+/// CLIXML→text pass. Pure given the injected decoder — unit-tested.
 pub(crate) fn decode_console_output(bytes: &[u8]) -> String {
-    if std::str::from_utf8(bytes).is_ok() {
-        return String::from_utf8_lossy(bytes).into_owned();
+    let text = if std::str::from_utf8(bytes).is_ok() {
+        String::from_utf8_lossy(bytes).into_owned()
+    } else {
+        match decode_ansi_codepage(bytes) {
+            Some(s) => s,
+            None => String::from_utf8_lossy(bytes).into_owned(),
+        }
+    };
+    if text.trim_start().starts_with("#< CLIXML") {
+        decode_clixml(&text)
+    } else {
+        text
     }
-    match decode_ansi_codepage(bytes) {
-        Some(s) => s,
-        None => String::from_utf8_lossy(bytes).into_owned(),
-    }
+}
+
+/// Mechanical CLIXML → readable text (harness feedback round 2, P0-3): PowerShell
+/// serializes error records as `<Objs><S S="Error">…</S>…</Objs>` when stderr is
+/// redirected and `-OutputFormat Text` is unavailable (Windows PowerShell 5.1
+/// ignores the flag). The wire form is unreadable (`_x001B_[31;1m…_x000D__x000A_`)
+/// and breaks every text-signature detector. Decoding is mechanical:
+/// record boundaries `</S>` → newlines, strip tags, unescape `_xHHHH_` entities,
+/// strip ANSI color sequences, trim empty lines.
+fn decode_clixml(text: &str) -> String {
+    use std::sync::LazyLock;
+    static ENTITY: LazyLock<regex::Regex> = LazyLock::new(|| {
+        regex::Regex::new(r"_x([0-9A-Fa-f]{4})_").expect("固定 CLIXML 实体正则必然编译")
+    });
+    static TAG: LazyLock<regex::Regex> =
+        LazyLock::new(|| regex::Regex::new(r"<[^>]*>").expect("固定标签正则必然编译"));
+    static ANSI: LazyLock<regex::Regex> = LazyLock::new(|| {
+        regex::Regex::new(r"\x1b\[[0-9;]*[A-Za-z]").expect("固定 ANSI 正则必然编译")
+    });
+    // Each <S …> node is one record; drop the "#< CLIXML" preamble line along the way.
+    let newline_separated = text.replace("</S>", "\n");
+    let stripped = TAG.replace_all(&newline_separated, "");
+    let unescaped = ENTITY.replace_all(&stripped, |caps: &regex::Captures| {
+        let code = u32::from_str_radix(&caps[1], 16).unwrap_or(0xFFFD);
+        char::from_u32(code).unwrap_or('\u{FFFD}').to_string()
+    });
+    let no_ansi = ANSI.replace_all(&unescaped, "");
+    no_ansi
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// ANSI-code-page decode via kernel32 `MultiByteToWideChar(CP_ACP)` (Windows
@@ -942,10 +984,20 @@ pub(crate) fn forward_script_interpreter(command: &str) -> (String, Option<std::
 }
 
 /// Checks the command for dangerous shell metacharacter sequences.
+///
+/// Blanket-block on purpose (harness feedback round 2, P1-1 asked to relax `$()`
+/// for read-only commands — declined: `$()` is a genuine command-substitution
+/// vector regardless of the statement's read/write intent, and the scan runs
+/// BEFORE any approval/sandbox trust decision, so it cannot rely on that intent).
+/// The mitigation is the message itself: teach the equivalent PowerShell
+/// rewrites so the caller does not burn turns rediscovering them.
 fn check_shell_metacharacters(command: &str) -> Option<&'static str> {
-    // 1. backtick command substitution
+    // 1. backtick (PowerShell escape / line-continuation — an obfuscation vector;
+    //    not bash command substitution, but the blanket-block rationale is the same)
     if command.contains('`') {
-        return Some("禁止使用反引号 (`) 进行命令替换");
+        return Some(
+            "反引号已被拦截（PowerShell 转义/续行字符，可用于绕过扫描）。改写方式：长命令拆为多语句（';' 或管道）；多行脚本写入临时 .ps1 后以 pwsh -File 执行",
+        );
     }
 
     // 2. $() command substitution (excluding ones inside single quotes)
@@ -957,7 +1009,9 @@ fn check_shell_metacharacters(command: &str) -> Option<&'static str> {
         match (ch, in_single) {
             ('\'', _) => in_single = !in_single,
             ('$', false) if i + 1 < bytes.len() && bytes[i + 1] as char == '(' => {
-                return Some("禁止使用 $() 命令替换");
+                return Some(
+                    "$() 子表达式已被拦截（具命令替换语义，安全扫描一刀切）。改写方式：取字段用管道 Select-Object -ExpandProperty；拼接用属性访问 + '+'；复杂内插写入临时 .ps1 后以 pwsh -File 执行",
+                );
             }
             _ => {}
         }
@@ -1172,6 +1226,29 @@ const START_PROCESS_HIDDEN_SHIM: &str = concat!(
 /// The script is `UTF-8 prelude` → [`START_PROCESS_HIDDEN_SHIM`] → body → exit
 /// propagation. The shim runs before the body so a `Start-Process` in the very
 /// first pipeline stage is already covered.
+///
+/// Exit-tail shape (harness feedback round 2, P0-1/P0-2): the body runs inside a
+/// scriptblock piped through `Out-Default`, and `$?` is captured INSIDE the block
+/// (the pipe resets it outside). Two defects of the historic tail
+/// (`if ($null -ne $LASTEXITCODE) { exit $LASTEXITCODE } elseif (-not $?) { exit 1 }`)
+/// both fix here:
+///
+/// 1. **Formatter output lost on `exit`**: PowerShell's default formatter for
+///    object output (`Get-ChildItem | Select Name`, `Get-Process`, …) commits
+///    lazily at runspace close; a script-level `exit` skips that flush, so the
+///    stdout was literally 2 bytes (one newline) whenever `$LASTEXITCODE` had
+///    been set by ANY earlier native command — "ran git, then printed a table"
+///    dropped the table 100% of the time. `Out-Default` renders the objects
+///    eagerly inside the pipeline, before any exit runs.
+/// 2. **`$LASTEXITCODE=0` masked later cmdlet errors**: the first branch was
+///    already true with value 0, so a PowerShell-level error AFTER a successful
+///    native command exited 0 — every cmdlet failure became "success" for
+///    `tool_ok` and the failure-signature detectors. The new tail only exits on
+///    a NONZERO native code, falling through to the captured `$?` otherwise.
+///
+/// Verified by probe on pwsh 7.6 and 5.1: pure-table (rc0+bytes), git-then-table
+/// (rc0+bytes), cmdlet-error-after-git (rc1), `cmd /c exit 7` + table (rc7 + bytes
+/// preserved), pure-string (rc0).
 #[cfg(windows)]
 fn pwsh_script(command: &str) -> String {
     let body = if command.trim_start().starts_with('"') {
@@ -1187,10 +1264,11 @@ fn pwsh_script(command: &str) -> String {
     // validation and reached us decoded wholly as GBK mojibake. Forcing UTF-8
     // makes the whole stream consistent; decode_console_output keeps its GBK
     // fallback for anything emitted by raw GBK writers (direct git spawns).
+    //
     // Best-effort (try/catch) so an exotic console-less host still runs.
     let prelude = "try { [Console]::OutputEncoding=[System.Text.UTF8Encoding]::new($false); $OutputEncoding=[Console]::OutputEncoding } catch { }";
     format!(
-        "{prelude}\n{START_PROCESS_HIDDEN_SHIM}\n{body}\nif ($null -ne $LASTEXITCODE) {{ exit $LASTEXITCODE }} elseif (-not $?) {{ exit 1 }}"
+        "{prelude}\n{START_PROCESS_HIDDEN_SHIM}\n$global:__aio_ok = $true\n& {{\n{body}\n$global:__aio_ok = $?\n}} | Out-Default\nif ($null -ne $LASTEXITCODE -and $LASTEXITCODE -ne 0) {{ exit $LASTEXITCODE }} elseif (-not $global:__aio_ok) {{ exit 1 }}"
     )
 }
 
@@ -1433,10 +1511,17 @@ pub fn execute_command(
                 // pwsh：-EncodedCommand（UTF-16LE base64）免疫一切引号转义问题；
                 // 脚本尾部传播退出码（pwsh -Command 默认退出 0，不做此层则所有
                 // 失败命令都会被当成成功，错误检测/熔断/扩权全失效）。
+                // -OutputFormat Text（harness 反馈第二轮 P0-3）：stderr 被重定向时
+                // PowerShell 把错误记录序列化成 CLIXML（#< CLIXML <Objs><S …>），
+                // 报错文本完全不可读且打断所有文本签名判定；pwsh 7 认这个参数并
+                // 保持纯文本，5.1 静默忽略它（残留由 decode_console_output 的
+                // CLIXML 解码兜底）。实测：加参数后 stderr 229B CLIXML → 52B 纯文本。
                 c.args([
                     "-NoProfile",
                     "-NonInteractive",
                     "-NoLogo",
+                    "-OutputFormat",
+                    "Text",
                     "-EncodedCommand",
                     &pwsh_encoded(&pwsh_script(command)),
                 ]);
@@ -2733,5 +2818,133 @@ mod tests {
         let text = text_of(&r);
         assert!(!text.contains("中段输出已丢弃"), "无中段不应有标记: {text}");
         assert!(text.contains("短输出"), "内容应完整: {text}");
+    }
+
+    /// P0-3（harness 反馈第二轮）：CLIXML 流（重定向 stderr 下 PowerShell 5.1
+    /// 序列化错误记录）解码回可读文本——记录边界成行、剥标签、还原 `_xHHHH_`
+    /// 实体、去 ANSI 色码。
+    #[test]
+    fn decode_console_output_unwraps_clixml() {
+        let raw = "#< CLIXML\r\n<Objs Version=\"1.1.0.1\" xmlns=\"http://schemas.microsoft.com/powershell/2004/04\"><S S=\"Error\">_x001B_[31;1mGet-Content: _x001B_[0m_x000D__x000A_找不到路径\"nope\"。_x000D__x000A_</S><S S=\"Error\">_x001B_[31;1msecond line_x001B_[0m_x000D__x000A_</S></Objs>";
+        let out = decode_console_output(raw.as_bytes());
+        assert!(out.contains("Get-Content:"), "首条错误应可读: {out}");
+        assert!(out.contains("找不到路径"), "正文应可读: {out}");
+        assert!(out.contains("second line"), "第二条记录独立成行: {out}");
+        assert!(!out.contains("CLIXML"), "外壳标记应剥除: {out}");
+        assert!(!out.contains("_x001B_"), "实体应还原: {out}");
+        assert!(!out.contains('\u{1b}'), "ANSI 色码应清除: {out:?}");
+        // 非 CLIXML 流原样通过
+        assert_eq!(decode_console_output("普通文本".as_bytes()), "普通文本");
+    }
+
+    /// P0-1/P0-2（harness 反馈第二轮）：pwsh 尾部结构——scriptblock + Out-Default
+    /// + 块内捕获 `$?` + 仅非零 native 码才 exit。
+    ///
+    /// 旧尾部（`$null -ne $LASTEXITCODE` 即 exit）会在「跑过一次 git 后输出表格」时
+    /// 100% 丢表格、并把后续 cmdlet 报错上报为成功。
+    #[test]
+    #[cfg(windows)]
+    fn pwsh_script_uses_out_default_tail() {
+        let script = pwsh_script("Write-Output hello");
+        assert!(script.contains("& {"), "body 应在 scriptblock 内: {script}");
+        assert!(
+            script.contains("| Out-Default"),
+            "应经 Out-Default 立即渲染格式化输出: {script}"
+        );
+        assert!(
+            script.contains("$global:__aio_ok = $?"),
+            "应在块内捕获 $（管道外会重置）: {script}"
+        );
+        assert!(
+            script.contains("$LASTEXITCODE -ne 0"),
+            "仅非零 native 码才 exit: {script}"
+        );
+        // body 在 scriptblock 内、在尾部之前
+        let block_at = script.find("& {").unwrap();
+        let body_at = script.find("Write-Output hello").unwrap();
+        let tail_at = script.rfind("Out-Default").unwrap();
+        assert!(block_at < body_at && body_at < tail_at);
+    }
+
+    /// P0-1/P0-2 行为矩阵（真 pwsh，带 -OutputFormat Text 的完整生产形态）。
+    /// 三个用例在旧尾部下全挂：表格丢失（2B stdout）、cmdlet 报错被 exit 0 掩盖。
+    #[test]
+    #[cfg(windows)]
+    fn pwsh_tail_preserves_formatter_output_and_reports_cmdlet_errors() {
+        let has_pwsh = std::process::Command::new("cmd")
+            .args(["/C", "where pwsh >nul 2>nul && echo yes"])
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .unwrap_or_default();
+        if !has_pwsh.contains("yes") {
+            return; // 无 pwsh：5.1 路径的等价行为由结构测试与探针报告覆盖
+        }
+        use crate::utils::exec_resolve::HiddenConsole as _;
+        // cargo test runs the binary with the CRATE root as cwd — use a file that
+        // exists there (Cargo.toml). package.json only exists at the workspace root
+        // (the first version of this test asserted against it and false-failed).
+        let workdir = std::env::current_dir().expect("cwd");
+        let probe_file = if workdir.join("Cargo.toml").exists() {
+            "Cargo.toml"
+        } else {
+            "package.json"
+        };
+        let table_cmd = format!(
+            "git rev-parse --short HEAD | Out-Null; Get-ChildItem -Filter {probe_file} | Select-Object Name"
+        );
+        let run = |cmd: &str| {
+            let mut c = std::process::Command::new("pwsh");
+            c.current_dir(&workdir).args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-NoLogo",
+                "-OutputFormat",
+                "Text",
+                "-EncodedCommand",
+                &pwsh_encoded(&pwsh_script(cmd)),
+            ]);
+            c.hidden_console();
+            let r = c.output().expect("run pwsh");
+            (
+                r.status.code(),
+                String::from_utf8_lossy(&r.stdout).into_owned(),
+                String::from_utf8_lossy(&r.stderr).into_owned(),
+            )
+        };
+
+        // 1) native 成功后输出表格：旧尾部丢表格（延迟格式化器被 exit 跳过）
+        let (rc1, out1, _) = run(&table_cmd);
+        assert!(
+            out1.contains(probe_file),
+            "native 后的表格输出必须保留（P0-1）: {out1:?}"
+        );
+        assert_eq!(rc1, Some(0), "git 成功 + 表格 → rc0");
+
+        // 2) native 成功后 cmdlet 报错：旧尾部 exit 0 掩盖（P0-2）
+        let (rc2, out2, err2) =
+            run("git rev-parse --short HEAD | Out-Null; Get-Content nope_xyz_aio");
+        assert_eq!(
+            rc2,
+            Some(1),
+            "cmdlet 报错必须上报 rc1，而不是被 $LASTEXITCODE=0 掩盖"
+        );
+        assert!(
+            !err2.contains("CLIXML"),
+            "stderr 应为纯文本（-OutputFormat Text）: {err2:?}"
+        );
+        assert!(
+            out2.is_empty() || out2.len() < 8,
+            "该用例无对象输出: {out2:?}"
+        );
+
+        // 3) native 非零 + 表格：退出码与输出双保留
+        let (rc3, out3, _) = run(&format!(
+            "cmd /c exit 7; Get-ChildItem -Filter {probe_file} | Select-Object Name"
+        ));
+        assert_eq!(rc3, Some(7), "native 非零退出码应透传");
+        assert!(
+            out3.contains(probe_file),
+            "native 非零时的表格也应保留: {out3:?}"
+        );
     }
 }

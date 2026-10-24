@@ -114,6 +114,12 @@ pub(crate) fn tool_error_text(e: &str) -> String {
 /// the retry budget allows, appends the standard continuation instruction and bumps
 /// the counter. Returns `true` when the caller should `continue` the loop; the
 /// retry cap (`max_retries`) differs per loop (main: MAX_LENGTH_RETRIES, subagent: 1).
+///
+/// The instruction carries an **anchor** — the tail of the truncated reply
+/// (harness feedback round 2, P2-3): the bare "continue" prompt regularly lost
+/// the thread on multi-section structured output (the continuation restarted a
+/// list, repeated a heading, or dropped the mixed-language sentence mid-way).
+/// With the last ~200 chars quoted back, the model resumes exactly at the seam.
 pub(crate) fn try_length_continuation(
     messages: &mut Vec<Value>,
     finish_reason: Option<&str>,
@@ -123,13 +129,53 @@ pub(crate) fn try_length_continuation(
 ) -> bool {
     if finish_reason == Some("length") && tool_calls_empty && *retries < max_retries {
         *retries += 1;
+        let anchor = last_assistant_text_tail(messages, 200)
+            .map(|tail| format!("上一条回复的结尾是：「{tail}」请从此处无缝继续，不要重复。"))
+            .unwrap_or_default();
         messages.push(json!({
             "role": "system",
-            "content": "[输出被截断] 请直接继续完成上一条回复中未完成的内容，不要重复已经输出的部分。"
+            "content": format!("[输出被截断] 请直接继续完成上一条回复中未完成的内容，不要重复已经输出的部分。{anchor}")
         }));
         return true;
     }
     false
+}
+
+/// Tail of the LAST assistant message's text content (concatenating multimodal
+/// text parts), at most `max_chars` characters on char boundaries. None when the
+/// message is missing or carries no text.
+fn last_assistant_text_tail(messages: &[Value], max_chars: usize) -> Option<String> {
+    let last = messages
+        .iter()
+        .rev()
+        .find(|m| m.get("role") == Some(&json!("assistant")))?;
+    let mut text = String::new();
+    match last.get("content") {
+        Some(Value::String(s)) => text.push_str(s),
+        Some(Value::Array(parts)) => {
+            for p in parts {
+                if p.get("type") == Some(&json!("text")) {
+                    if let Some(t) = p.get("text").and_then(|v| v.as_str()) {
+                        text.push_str(t);
+                    }
+                }
+            }
+        }
+        _ => return None,
+    }
+    let trimmed = text.trim_end();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if trimmed.chars().count() <= max_chars {
+        return Some(trimmed.to_string());
+    }
+    let start = trimmed
+        .char_indices()
+        .nth(trimmed.chars().count() - max_chars)
+        .map(|(i, _)| i)
+        .unwrap_or(0);
+    Some(trimmed[start..].to_string())
 }
 
 // ===== 压缩守卫（agent_loop 切片 4）：两循环的溢出恢复与预算门控 =====
@@ -366,6 +412,82 @@ mod tests {
         ));
         assert!(msgs.is_empty());
         assert_eq!(retries, 0);
+    }
+
+    /// P2-3（harness 反馈第二轮）：续写指令必须带被截断回复的尾部锚点——裸
+    /// 「请继续」在多段结构化输出上常丢线索（列表编号重来 / 段落重启）。
+    #[test]
+    fn length_continuation_carries_tail_anchor() {
+        let mut msgs: Vec<Value> = vec![
+            json!({"role": "user", "content": "写报告"}),
+            json!({"role": "assistant", "content": "## 报告\n\n1. 第一项内容……\n2. 第二项内容进行到一半：正在测"}),
+        ];
+        let mut retries = 0;
+        assert!(try_length_continuation(
+            &mut msgs,
+            Some("length"),
+            true,
+            &mut retries,
+            1
+        ));
+        let instr = msgs.last().unwrap()["content"].as_str().unwrap();
+        assert!(instr.contains("继续完成"), "指令主体应保留: {instr}");
+        assert!(
+            instr.contains("正在测」"),
+            "应带尾部锚点（短内容锚点为全文，以「…正在测」收尾）: {instr}"
+        );
+
+        // 多模态数组内容：拼接 text 部件后取尾
+        let mut msgs2: Vec<Value> = vec![json!({
+            "role": "assistant",
+            "content": [
+                {"type": "text", "text": "前段长文……"},
+                {"type": "text", "text": "结尾锚点句子XYZ"}
+            ]
+        })];
+        let mut retries2 = 0;
+        assert!(try_length_continuation(
+            &mut msgs2,
+            Some("length"),
+            true,
+            &mut retries2,
+            1
+        ));
+        let instr2 = msgs2.last().unwrap()["content"].as_str().unwrap();
+        assert!(instr2.contains("句子XYZ"), "数组内容也应取到锚点: {instr2}");
+
+        // 超长内容截到 200 字符（char 边界安全）
+        let long = "长".repeat(500);
+        let mut msgs3: Vec<Value> = vec![json!({"role": "assistant", "content": long})];
+        let mut retries3 = 0;
+        assert!(try_length_continuation(
+            &mut msgs3,
+            Some("length"),
+            true,
+            &mut retries3,
+            1
+        ));
+        let instr3 = msgs3.last().unwrap()["content"].as_str().unwrap();
+        let anchor_len = instr3.chars().count();
+        assert!(
+            anchor_len < 300,
+            "锚点应截断在 200 字符级别（含指令前缀）: {anchor_len}"
+        );
+
+        // 无 assistant 消息（理论不达路径）：无锚点也照常续写
+        let mut msgs4: Vec<Value> = vec![json!({"role": "user", "content": "x"})];
+        let mut retries4 = 0;
+        assert!(try_length_continuation(
+            &mut msgs4,
+            Some("length"),
+            true,
+            &mut retries4,
+            1
+        ));
+        assert!(msgs4.last().unwrap()["content"]
+            .as_str()
+            .unwrap()
+            .contains("继续完成"));
     }
 
     /// Shared display-triple: text part wins over serialization; error maps to [Error].

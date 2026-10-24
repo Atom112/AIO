@@ -332,6 +332,19 @@ cargo 424 Rust 测试（6 ignored 真机项）、78 前端测试、gates 全过�
 
 ## [Unreleased]
 
+### 🧰 自迭代 harness 反馈清偿·第二轮（pwsh 对象输出三大 P0）
+
+AIO 的 agent 自迭代第二轮（修子代理卡片逐 token 抖动，PR #239）留下实测报告 8 项（`.temp/harness-report-round2.md`，全文存档于跟踪 issue）；三项 P0 均为「pwsh 对象型输出 × 管道捕获」的深坑，本轮全部根修并经真 pwsh 行为矩阵实证：
+
+- **P0-1 `exit` 吞掉格式化输出**：PowerShell 对象输出的默认格式化是**延迟提交**（runspace 关闭时才 flush），脚本级 `exit` 直接跳过 flush——「跑过一次 git 再输出表格」100% 变成 2 字节空输出，自迭代中三次误判「命令无输出」。修复：body 包进 scriptblock 经 `Out-Default` 立即渲染（`$?` 在块内捕获——管道会重置它）
+- **P0-2 `$LASTEXITCODE=0` 掩盖后续 cmdlet 报错**：旧尾部 `$null -ne $LASTEXITCODE` 在 native 命令成功后即成立并 `exit 0`，此后所有 PowerShell 层错误都被上报为成功（tool_ok 判定与失败签名检测全失效）。修复：仅非零 native 码才透传退出，否则落到块内捕获的 `$?`
+- **P0-3 stderr 序列化成 CLIXML**：stderr 被重定向时 PowerShell 把错误记录序列化为 `#< CLIXML <Objs><S …>`（`_x001B_[31;1m…` 完全不可读，文本签名全断）。修复：pwsh 启动参数追加 `-OutputFormat Text`（pwsh 7 生效、5.1 静默忽略）+ `decode_console_output` 新增 CLIXML 机械解码兜底（记录边界成行 / 剥标签 / 还原 `_xHHHH_` 实体 / 去 ANSI 色码）
+- **P1-1 `$()`/反引号一刀切拦截**：拒绝放行（`$()` 与意图无关地是命令替换向量，扫描先于信任决策）但拦截文案现给出等价改写（`-ExpandProperty` / `'+'` 拼接 / 临时 .ps1 经 `pwsh -File`），不再让 agent 烧轮次自行发现
+- **P2-3 续写丢锚点**：`finish_reason=length` 的续写指令现在携带被截断回复的最后 ~200 字符（多段结构化输出的第二段不再丢「说到哪了」）
+- **P2-5 报告落脚处**：报告全文落跟踪 issue（docs-style.md 既有约定「一次性产物归 PR 描述/issue/本地笔记」的执行补强）
+- **P1-2（findstr 多模式）/ P2-1（TSX 编译验证）/ P2-2（read_file 默认头尾）/ P2-4（多行脚本封装）**：评估后不修——环境事实与设计取舍，理由记录于 PR 描述
+- 测试：shell_tools 33 过（新增 3：CLIXML 解码 / 尾部结构 / 真 pwsh 行为矩阵——旧尾部下三用例全挂的回归锚）；round_artifacts +1（尾部锚点四分支）；全量 464 过
+
 ### 🪜 第十二轮：模式阶梯改名 + 完全权限内置化 + 工作流功能移除（PR #131）
 
 - **Agent 模式阶梯改名（wire 值稳定，assistants DB 无迁移）**：`off`=「只读」、`normal`=「工作区内修改」、`auto`=「完全权限」、`plan`=「计划」不变——

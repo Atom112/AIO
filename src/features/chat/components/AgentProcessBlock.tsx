@@ -295,7 +295,12 @@ const StepCard: Component<{
               name={cfg().icon}
               size={12}
               class="w-3 h-3"
-              classList={{ 'is-spinning': props.step.status === 'running' }}
+              classList={{
+                // Tailwind v4 theme utility (index.css --animate-agent-process-spin +
+                // agentProcessIconSpin keyframes); the old 'is-spinning' class had no CSS
+                // definition anywhere, so the running step icon never animated.
+                'animate-agent-process-spin': props.step.status === 'running',
+              }}
               style={
                 props.step.type === 'subagent'
                   ? { color: getSubagentProfileStyle(props.step.subagentProfile).color }

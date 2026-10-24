@@ -42,63 +42,10 @@ use crate::core::tool_names;
 
 // ====== Console output decoding (harness round 3, hidden P0) =====
 //
-// cmd.exe on zh-CN Windows emits localized messages in GBK (code page 936); the
-// previous lossy-UTF-8 conversion rendered "拒绝访问。" as mojibake, which
-// silently KILLED every text-signature feature built on command output:
-// sandbox-expansion detection (is_sandbox_access_denied), not-found detection,
-// and env-class failure classification. Decode UTF-8-first (most modern tools
-// speak UTF-8), falling back to the system ANSI code page.
-
-/// Converts raw command output bytes to text: strict UTF-8 first, then the
-/// Windows ANSI code page (CP_ACP → GBK on zh-CN), then lossy UTF-8 as the
-/// last resort. Pure given the injected decoder — unit-tested.
-pub(crate) fn decode_console_output(bytes: &[u8]) -> String {
-    if std::str::from_utf8(bytes).is_ok() {
-        return String::from_utf8_lossy(bytes).into_owned();
-    }
-    match decode_ansi_codepage(bytes) {
-        Some(s) => s,
-        None => String::from_utf8_lossy(bytes).into_owned(),
-    }
-}
-
-/// ANSI-code-page decode via kernel32 `MultiByteToWideChar(CP_ACP)` (Windows
-/// only). Returns None on conversion failure so the caller can fall back.
-#[cfg(windows)]
-fn decode_ansi_codepage(bytes: &[u8]) -> Option<String> {
-    const CP_ACP: u32 = 0;
-    extern "system" {
-        fn MultiByteToWideChar(
-            code_page: u32,
-            dw_flags: u32,
-            lp_multi_byte_str: *const u8,
-            cb_multi_byte: i32,
-            lp_wide_char_str: *mut u16,
-            cch_wide_char: i32,
-        ) -> i32;
-    }
-    if bytes.is_empty() {
-        return Some(String::new());
-    }
-    let len = bytes.len().min(i32::MAX as usize) as i32;
-    let wide_len =
-        unsafe { MultiByteToWideChar(CP_ACP, 0, bytes.as_ptr(), len, std::ptr::null_mut(), 0) };
-    if wide_len <= 0 {
-        return None;
-    }
-    let mut wide = vec![0u16; wide_len as usize];
-    let written =
-        unsafe { MultiByteToWideChar(CP_ACP, 0, bytes.as_ptr(), len, wide.as_mut_ptr(), wide_len) };
-    if written <= 0 {
-        return None;
-    }
-    String::from_utf16(&wide[..written as usize]).ok()
-}
-
-#[cfg(not(windows))]
-fn decode_ansi_codepage(_bytes: &[u8]) -> Option<String> {
-    None // no ANSI code page outside Windows; lossy UTF-8 is the fallback
-}
+// Moved to `utils::shell_codec` (with the Windows script-shaping family) when
+// harness round 2 grew this file past the file-size gate; re-exported here so
+// every call site and test keeps the historical name.
+pub(crate) use crate::utils::shell_codec::decode_console_output;
 
 // ====== Dangerous-command detection ======
 
@@ -942,10 +889,20 @@ pub(crate) fn forward_script_interpreter(command: &str) -> (String, Option<std::
 }
 
 /// Checks the command for dangerous shell metacharacter sequences.
+///
+/// Blanket-block on purpose (harness feedback round 2, P1-1 asked to relax `$()`
+/// for read-only commands — declined: `$()` is a genuine command-substitution
+/// vector regardless of the statement's read/write intent, and the scan runs
+/// BEFORE any approval/sandbox trust decision, so it cannot rely on that intent).
+/// The mitigation is the message itself: teach the equivalent PowerShell
+/// rewrites so the caller does not burn turns rediscovering them.
 fn check_shell_metacharacters(command: &str) -> Option<&'static str> {
-    // 1. backtick command substitution
+    // 1. backtick (PowerShell escape / line-continuation — an obfuscation vector;
+    //    not bash command substitution, but the blanket-block rationale is the same)
     if command.contains('`') {
-        return Some("禁止使用反引号 (`) 进行命令替换");
+        return Some(
+            "反引号已被拦截（PowerShell 转义/续行字符，可用于绕过扫描）。改写方式：长命令拆为多语句（';' 或管道）；多行脚本写入临时 .ps1 后以 pwsh -File 执行",
+        );
     }
 
     // 2. $() command substitution (excluding ones inside single quotes)
@@ -957,7 +914,9 @@ fn check_shell_metacharacters(command: &str) -> Option<&'static str> {
         match (ch, in_single) {
             ('\'', _) => in_single = !in_single,
             ('$', false) if i + 1 < bytes.len() && bytes[i + 1] as char == '(' => {
-                return Some("禁止使用 $() 命令替换");
+                return Some(
+                    "$() 子表达式已被拦截（具命令替换语义，安全扫描一刀切）。改写方式：取字段用管道 Select-Object -ExpandProperty；拼接用属性访问 + '+'；复杂内插写入临时 .ps1 后以 pwsh -File 执行",
+                );
             }
             _ => {}
         }
@@ -1108,176 +1067,17 @@ fn resolve_windows_shell(kind: WindowsShell) -> Result<ShellInvocation, String> 
     }
 }
 
-/// PowerShell prelude that keeps every `Start-Process` child off-screen.
-///
-/// AIO runs under the Windows GUI subsystem, so its own process owns no console:
-/// a grandchild created by `Start-Process` (the classic way to launch a dev
-/// server: `Start-Process npm.cmd -ArgumentList run,dev -PassThru`) is created by
-/// powershell.exe with default flags and therefore allocates a brand-new visible
-/// console. `CREATE_NO_WINDOW` on AIO's direct child cannot reach it — that is
-/// exactly the "frontend and backend each pop a terminal window" defect.
-///
-/// The shim shadows the cmdlet for this shell session and defaults it to
-/// `-WindowStyle Hidden` unless the caller already decided (explicit
-/// `-WindowStyle` or `-NoNewWindow`). Forwarding uses **hash splatting of
-/// `$PSBoundParameters`**, which is why the full common parameter set is
-/// declared: array splatting (`@args`) binds entries POSITIONALLY, so appending
-/// `'-WindowStyle' 'Hidden'` would be taken as a positional value and fail with
-/// "no positional parameter accepts -WindowStyle" — every Start-Process call
-/// would then silently do nothing. `start` and `saps` are aliases of the cmdlet
-/// and also resolve to this function (verified on PowerShell 5.1 and 7).
-///
-/// `$Verb`/`-Verb RunAs` still works (the elevation prompt is a separate,
-/// user-initiated consent UI, not an unrequested console).
-///
-/// Review round 1 additions: `[CmdletBinding(SupportsShouldProcess)]` (the real
-/// cmdlet accepts `-WhatIf`/`-Confirm`; without the declaration those fail
-/// binding on the shim) and `[hashtable]$Environment` (pwsh 7.4+; callers on
-/// 5.1 never pass it, so declaring it is harmless there). A missing parameter
-/// declaration is not cosmetic: PowerShell binding rejects unknown parameters,
-/// so every call using it would hard-fail.
+// ====== Windows shell script shaping =====
+//
+// Moved to `utils::shell_codec` (with the console-decoding family) when harness
+// round 2 grew this file past the file-size gate; re-exported here so every call
+// site and test keeps the historical names.
 #[cfg(windows)]
-const START_PROCESS_HIDDEN_SHIM: &str = concat!(
-    "function global:Start-Process {",
-    "[CmdletBinding(SupportsShouldProcess)]",
-    "param(",
-    "[Parameter(Position=0)][string]$FilePath,",
-    "[Parameter(Position=1)][string[]]$ArgumentList,",
-    "[pscredential]$Credential,",
-    "[hashtable]$Environment,",
-    "[switch]$LoadUserProfile,",
-    "[switch]$NoNewWindow,",
-    "[switch]$PassThru,",
-    "[string]$RedirectStandardError,",
-    "[string]$RedirectStandardInput,",
-    "[string]$RedirectStandardOutput,",
-    "[switch]$UseNewEnvironment,",
-    "[string]$Verb,",
-    "[switch]$Wait,",
-    "[System.Diagnostics.ProcessWindowStyle]$WindowStyle,",
-    "[string]$WorkingDirectory)",
-    ";",
-    "if (-not $PSBoundParameters.ContainsKey('WindowStyle') -and -not $NoNewWindow) {",
-    "$PSBoundParameters['WindowStyle'] = [System.Diagnostics.ProcessWindowStyle]::Hidden",
-    "};",
-    "Microsoft.PowerShell.Management\\Start-Process @PSBoundParameters",
-    "};"
-);
-
-/// Builds the pwsh script for one command: a leading quoted string needs the `&`
-/// call operator (pwsh treats a bare quoted string as output, not invocation), and
-/// the trailing lines propagate the exit code — `pwsh -Command` otherwise always
-/// exits 0, which would break error detection / the breaker / sandbox expansion.
-///
-/// The script is `UTF-8 prelude` → [`START_PROCESS_HIDDEN_SHIM`] → body → exit
-/// propagation. The shim runs before the body so a `Start-Process` in the very
-/// first pipeline stage is already covered.
-#[cfg(windows)]
-fn pwsh_script(command: &str) -> String {
-    let body = if command.trim_start().starts_with('"') {
-        format!("& {command}")
-    } else {
-        command.to_string()
-    };
-    // UTF-8 console prelude (harness environment report item 3): zh-CN Windows
-    // defaults the console to code page 936, and PowerShell encodes its own
-    // output — as well as what it relays from native children — through
-    // [Console]::OutputEncoding. GBK system messages therefore mixed with
-    // UTF-8 (node/cargo output) into one stream, which failed UTF-8
-    // validation and reached us decoded wholly as GBK mojibake. Forcing UTF-8
-    // makes the whole stream consistent; decode_console_output keeps its GBK
-    // fallback for anything emitted by raw GBK writers (direct git spawns).
-    // Best-effort (try/catch) so an exotic console-less host still runs.
-    let prelude = "try { [Console]::OutputEncoding=[System.Text.UTF8Encoding]::new($false); $OutputEncoding=[Console]::OutputEncoding } catch { }";
-    format!(
-        "{prelude}\n{START_PROCESS_HIDDEN_SHIM}\n{body}\nif ($null -ne $LASTEXITCODE) {{ exit $LASTEXITCODE }} elseif (-not $?) {{ exit 1 }}"
-    )
-}
-
-/// Rewrites the cmd builtin `start` to `start /b` so the launched program shares
-/// the shell's (hidden) console instead of allocating a brand-new visible one.
-///
-/// `start` is the cmd-native way to launch a long-running program (a dev server)
-/// without blocking the tool call, and it defaults to CREATE_NEW_CONSOLE: under
-/// the GUI-subsystem build — where AIO's own `CREATE_NO_WINDOW` shell owns no
-/// console at all — that window is immediately visible and stays on screen for
-/// the whole session. `/b` starts the program in the same console, so there is
-/// nothing to show; the child still inherits the stdout/stderr pipes, so the
-/// tool call keeps collecting its output.
-///
-/// Only a COMMAND-INITIAL `start` is touched: line start, or right after
-/// `&` `&&` `||` `|` `(`. `net start mysql`, `npm start`, `sc start x` and
-/// `echo start` therefore pass through untouched (they are arguments of another
-/// program, not the builtin). A caller-chosen window mode (/b, /min, /max,
-/// /wait, /i) is preserved as-is — /min is already invisible enough and must not
-/// be silently overridden, and the function is idempotent (a second pass adds
-/// nothing). Pure — unit-tested.
-#[cfg(windows)]
-pub(crate) fn rewrite_cmd_start_hidden(command: &str) -> String {
-    use std::sync::OnceLock;
-    // `start` at a command-initial position, capturing the separating whitespace
-    // so the replacement can put `/b` in exactly the right place.
-    static PATTERN: OnceLock<regex::Regex> = OnceLock::new();
-    let re = PATTERN.get_or_init(|| {
-        // The trailing separator is CAPTURED rather than asserted with `(?=...)`:
-        // the regex crate has no look-around, and an `Err` here would silently
-        // disable the whole rewrite.
-        regex::Regex::new(r"(?i)(^|&&|\|\||[&|()\r\n])(\s*)start(\s|$)")
-            .expect("cmd start pattern is a literal and always compiles")
-    });
-    let mut out = String::with_capacity(command.len() + 8);
-    let mut last = 0usize;
-    for caps in re.captures_iter(command) {
-        let whole = caps.get(0).expect("group 0 always present");
-        if whole.start() < last {
-            continue; // overlapping match from a previous replacement
-        }
-        // Up to and including the `start` token, leaving the trailing separator
-        // out so `/b` can be inserted before it.
-        let trail = caps.get(3).expect("group 3 always present");
-        out.push_str(&command[last..trail.start()]);
-        // The next token decides: if the caller already picked a window mode,
-        // leave the command exactly as written.
-        let rest = &command[whole.end()..];
-        // `split_whitespace` already skips leading whitespace.
-        let already_chosen = rest.split_whitespace().next().is_some_and(|tok| {
-            let t = tok.to_ascii_lowercase();
-            t == "/b" || t == "/min" || t == "/max" || t == "/wait" || t == "/i"
-        });
-        if !already_chosen {
-            out.push_str(" /b");
-        }
-        out.push_str(trail.as_str());
-        last = whole.end();
-    }
-    out.push_str(&command[last..]);
-    out
-}
-
-/// cmd path: flip the hidden console to UTF-8 before the user command. cmd's
-/// own messages and console-API-aware children (git, ver, echo) then emit
-/// UTF-8 on the pipes instead of GBK, keeping mixed streams UTF-8-consistent.
-/// The `&` sequence leaves errorlevel handling to the user command; `>nul`
-/// keeps "Active code page: 65001" out of the output. Added AFTER the
-/// metacharacter/danger scans run, so it never trips them.
-#[cfg(windows)]
-fn cmd_utf8_prelude(command: &str) -> String {
-    // `start /b` first: the rewrite preserves any window mode the caller
-    // already chose, and running it on the user's own command text keeps the
-    // anchors (`&`, `&&`, line start) meaningful — prefixing with `chcp` would
-    // otherwise turn the first `start` into a non-command-initial token.
-    format!("chcp 65001 >nul & {}", rewrite_cmd_start_hidden(command))
-}
-
-/// `-EncodedCommand` payload: UTF-16LE base64 — immune to every quote-escaping
-/// problem on both the argv and raw-command-line invocation paths.
-#[cfg(windows)]
-fn pwsh_encoded(script: &str) -> String {
-    use base64::Engine as _;
-    let utf16: Vec<u16> = script.encode_utf16().collect();
-    let bytes: Vec<u8> = utf16.iter().flat_map(|w| w.to_le_bytes()).collect();
-    base64::engine::general_purpose::STANDARD.encode(bytes)
-}
+pub(crate) use crate::utils::shell_codec::{cmd_utf8_prelude, pwsh_encoded, pwsh_script};
+// Test-only re-export: the rewrite is exercised by this module's unit tests;
+// production code reaches it through cmd_utf8_prelude inside shell_codec.
+#[cfg(all(windows, test))]
+pub(crate) use crate::utils::shell_codec::rewrite_cmd_start_hidden;
 
 /// Executes a system command in the project root directory.
 ///
@@ -1433,10 +1233,17 @@ pub fn execute_command(
                 // pwsh：-EncodedCommand（UTF-16LE base64）免疫一切引号转义问题；
                 // 脚本尾部传播退出码（pwsh -Command 默认退出 0，不做此层则所有
                 // 失败命令都会被当成成功，错误检测/熔断/扩权全失效）。
+                // -OutputFormat Text（harness 反馈第二轮 P0-3）：stderr 被重定向时
+                // PowerShell 把错误记录序列化成 CLIXML（#< CLIXML <Objs><S …>），
+                // 报错文本完全不可读且打断所有文本签名判定；pwsh 7 认这个参数并
+                // 保持纯文本，5.1 静默忽略它（残留由 decode_console_output 的
+                // CLIXML 解码兜底）。实测：加参数后 stderr 229B CLIXML → 52B 纯文本。
                 c.args([
                     "-NoProfile",
                     "-NonInteractive",
                     "-NoLogo",
+                    "-OutputFormat",
+                    "Text",
                     "-EncodedCommand",
                     &pwsh_encoded(&pwsh_script(command)),
                 ]);
@@ -2733,5 +2540,133 @@ mod tests {
         let text = text_of(&r);
         assert!(!text.contains("中段输出已丢弃"), "无中段不应有标记: {text}");
         assert!(text.contains("短输出"), "内容应完整: {text}");
+    }
+
+    /// P0-3（harness 反馈第二轮）：CLIXML 流（重定向 stderr 下 PowerShell 5.1
+    /// 序列化错误记录）解码回可读文本——记录边界成行、剥标签、还原 `_xHHHH_`
+    /// 实体、去 ANSI 色码。
+    #[test]
+    fn decode_console_output_unwraps_clixml() {
+        let raw = "#< CLIXML\r\n<Objs Version=\"1.1.0.1\" xmlns=\"http://schemas.microsoft.com/powershell/2004/04\"><S S=\"Error\">_x001B_[31;1mGet-Content: _x001B_[0m_x000D__x000A_找不到路径\"nope\"。_x000D__x000A_</S><S S=\"Error\">_x001B_[31;1msecond line_x001B_[0m_x000D__x000A_</S></Objs>";
+        let out = decode_console_output(raw.as_bytes());
+        assert!(out.contains("Get-Content:"), "首条错误应可读: {out}");
+        assert!(out.contains("找不到路径"), "正文应可读: {out}");
+        assert!(out.contains("second line"), "第二条记录独立成行: {out}");
+        assert!(!out.contains("CLIXML"), "外壳标记应剥除: {out}");
+        assert!(!out.contains("_x001B_"), "实体应还原: {out}");
+        assert!(!out.contains('\u{1b}'), "ANSI 色码应清除: {out:?}");
+        // 非 CLIXML 流原样通过
+        assert_eq!(decode_console_output("普通文本".as_bytes()), "普通文本");
+    }
+
+    /// P0-1/P0-2（harness 反馈第二轮）：pwsh 尾部结构——scriptblock + Out-Default
+    /// + 块内捕获 `$?` + 仅非零 native 码才 exit。
+    ///
+    /// 旧尾部（`$null -ne $LASTEXITCODE` 即 exit）会在「跑过一次 git 后输出表格」时
+    /// 100% 丢表格、并把后续 cmdlet 报错上报为成功。
+    #[test]
+    #[cfg(windows)]
+    fn pwsh_script_uses_out_default_tail() {
+        let script = pwsh_script("Write-Output hello");
+        assert!(script.contains("& {"), "body 应在 scriptblock 内: {script}");
+        assert!(
+            script.contains("| Out-Default"),
+            "应经 Out-Default 立即渲染格式化输出: {script}"
+        );
+        assert!(
+            script.contains("$global:__aio_ok = $?"),
+            "应在块内捕获 $（管道外会重置）: {script}"
+        );
+        assert!(
+            script.contains("$LASTEXITCODE -ne 0"),
+            "仅非零 native 码才 exit: {script}"
+        );
+        // body 在 scriptblock 内、在尾部之前
+        let block_at = script.find("& {").unwrap();
+        let body_at = script.find("Write-Output hello").unwrap();
+        let tail_at = script.rfind("Out-Default").unwrap();
+        assert!(block_at < body_at && body_at < tail_at);
+    }
+
+    /// P0-1/P0-2 行为矩阵（真 pwsh，带 -OutputFormat Text 的完整生产形态）。
+    /// 三个用例在旧尾部下全挂：表格丢失（2B stdout）、cmdlet 报错被 exit 0 掩盖。
+    #[test]
+    #[cfg(windows)]
+    fn pwsh_tail_preserves_formatter_output_and_reports_cmdlet_errors() {
+        let has_pwsh = std::process::Command::new("cmd")
+            .args(["/C", "where pwsh >nul 2>nul && echo yes"])
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .unwrap_or_default();
+        if !has_pwsh.contains("yes") {
+            return; // 无 pwsh：5.1 路径的等价行为由结构测试与探针报告覆盖
+        }
+        use crate::utils::exec_resolve::HiddenConsole as _;
+        // cargo test runs the binary with the CRATE root as cwd — use a file that
+        // exists there (Cargo.toml). package.json only exists at the workspace root
+        // (the first version of this test asserted against it and false-failed).
+        let workdir = std::env::current_dir().expect("cwd");
+        let probe_file = if workdir.join("Cargo.toml").exists() {
+            "Cargo.toml"
+        } else {
+            "package.json"
+        };
+        let table_cmd = format!(
+            "git rev-parse --short HEAD | Out-Null; Get-ChildItem -Filter {probe_file} | Select-Object Name"
+        );
+        let run = |cmd: &str| {
+            let mut c = std::process::Command::new("pwsh");
+            c.current_dir(&workdir).args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-NoLogo",
+                "-OutputFormat",
+                "Text",
+                "-EncodedCommand",
+                &pwsh_encoded(&pwsh_script(cmd)),
+            ]);
+            c.hidden_console();
+            let r = c.output().expect("run pwsh");
+            (
+                r.status.code(),
+                String::from_utf8_lossy(&r.stdout).into_owned(),
+                String::from_utf8_lossy(&r.stderr).into_owned(),
+            )
+        };
+
+        // 1) native 成功后输出表格：旧尾部丢表格（延迟格式化器被 exit 跳过）
+        let (rc1, out1, _) = run(&table_cmd);
+        assert!(
+            out1.contains(probe_file),
+            "native 后的表格输出必须保留（P0-1）: {out1:?}"
+        );
+        assert_eq!(rc1, Some(0), "git 成功 + 表格 → rc0");
+
+        // 2) native 成功后 cmdlet 报错：旧尾部 exit 0 掩盖（P0-2）
+        let (rc2, out2, err2) =
+            run("git rev-parse --short HEAD | Out-Null; Get-Content nope_xyz_aio");
+        assert_eq!(
+            rc2,
+            Some(1),
+            "cmdlet 报错必须上报 rc1，而不是被 $LASTEXITCODE=0 掩盖"
+        );
+        assert!(
+            !err2.contains("CLIXML"),
+            "stderr 应为纯文本（-OutputFormat Text）: {err2:?}"
+        );
+        assert!(
+            out2.is_empty() || out2.len() < 8,
+            "该用例无对象输出: {out2:?}"
+        );
+
+        // 3) native 非零 + 表格：退出码与输出双保留
+        let (rc3, out3, _) = run(&format!(
+            "cmd /c exit 7; Get-ChildItem -Filter {probe_file} | Select-Object Name"
+        ));
+        assert_eq!(rc3, Some(7), "native 非零退出码应透传");
+        assert!(
+            out3.contains(probe_file),
+            "native 非零时的表格也应保留: {out3:?}"
+        );
     }
 }

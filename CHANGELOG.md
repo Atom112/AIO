@@ -2,6 +2,51 @@
 
 # Changelog
 
+## [v1.0.0-alpha.5]
+
+<sup>Released on **2026-10-24**</sup>
+
+本版本主题：**可见性与自迭代**——聊天记录按项目搜索；Agent 调试不再弹出终端窗口（孙进程根修）；AIO 开发 AIO 的自举障碍清偿（首轮 harness 反馈 8 项）。
+
+### 🔎 聊天记录搜索（按项目隔离）
+
+- **范围隔离**：话题栏顶部新增搜索框（新建话题按钮上方），按当前范围搜索聊天记录——每个项目独立（一项目搜不到他项目记录），纯对话作为特殊单范围参与同一机制（实现上按当前 assistant 过滤：每项目对应专属 assistant、纯对话为默认 assistant，隔离天然成立）
+- **匹配列表**：命中后在搜索框下方弹出亚克力下拉（话题名 + 上下文摘录、命中词主色高亮、最多 50 条、空结果显示「没有匹配」）；Esc / 清空按钮 / 点击面板外关闭，输入防抖 200ms
+- **跳转与高亮**：点击条目切换话题、按需展开分页渲染窗口（与「加载更早」同一契约：新展开行预标记已动画，不重放入场动画）、平滑滚动到目标消息并播放主色闪烁高亮（`search-jump-flash`，主题变量取色）
+- **实现要点**：全量历史本就在启动时驻留 store，搜索为纯内存子串匹配（大小写不敏感、跳过 UI 不渲染的 tool 行与无 id 瞬态行、displayText 覆盖优先、摘录边界 UTF-16 代理对安全）——零后端改动、零 IPC；侧栏与消息区经 `pendingSearchJump` store 信号协调跳转
+- 测试：`searchHistory.test.ts` 9 项（范围隔离/大小写与 CJK/tool 与无 id 跳过/displayText 覆盖/多模态数组跳过/摘录省略号/上限 50/emoji 代理对边界）；check:frontend 全绿（87 用例 + 门禁 rgba=173、any=77 棘轮持平）；文档 chat-and-agent zh/en 同步
+
+### 🪟 后台进程不再弹出终端窗口（前端 / 后端常驻窗口根修）
+
+- **症状**：让 Agent 起前端 / 后端（`Start-Process npm.cmd -ArgumentList run,dev`、`start "" npm.cmd run dev`）时，屏幕上各弹出一个可见控制台窗口，并随进程常驻——退出后也不消失，必须手动关闭
+- **根因**：AIO 发行版是 Windows GUI 子系统程序，自身没有控制台；它对直接子进程下了 `CREATE_NO_WINDOW`，但**孙进程不受该标志约束**：
+  - PowerShell 路径 `Start-Process` 默认不带窗口样式 → powershell.exe 为孙进程新建**可见**控制台
+  - cmd 路径 `start` 内建默认 `CREATE_NEW_CONSOLE` → 同样新建可见控制台
+    两者都在「无控制台的父进程」下新建窗口，所以必然可见
+- **修复**：
+  - **PowerShell**：执行前注入 `Start-Process` shim，把窗口样式默认改为 `Hidden`，仅在调用方**未显式**指定 `-WindowStyle` / `-NoNewWindow` 时生效；用 `$PSBoundParameters` 哈希 splatting 转发（数组 splatting 会按位置绑定而报错，导致调用静默失效），`start` / `saps` 别名同样命中，`-Wait` / `-PassThru` / `-Verb` / `-WorkingDirectory` / `-Environment` / `-WhatIf` 行为不变，退出码传播包装保留
+  - **cmd**：把**命令起始位置**的 `start` 重写为 `start /b`（共享父 shell 的隐藏控制台）；`net start mysql`、`npm start`、`sc start x`、`echo start`、引号内文本一律不改写，调用方已给的 `/b` `/min` `/max` `/wait` `/i` 原样保留，重写幂等
+- **不变**：stdout/stderr 仍经管道回收（子进程继承父 shell 的管道）、Job Object 进程树回收与取消能力不变、`check:i18n` 与既有门禁全绿
+- 测试：`shell_tools` 新增 4 项（重写规则 / 非内建命令不误改 / 幂等 / 真实 spawn 下子进程输出仍经管道返回）+ shim 参数面断言与实跑探针
+
+### 🧰 自迭代 harness 反馈清偿（AIO 开发 AIO 第一轮报告）
+
+AIO 的 agent 自迭代修「调试弹终端窗口」缺陷后留了 harness 体验报告（8 项），本轮逐项清偿。两个 P0 都源自同一根因：**外层 Job 的 UI 限制**——它同时致盲窗口观测 + 阻断嵌套 assign。
+
+- **P0-1 沙箱内窗口枚举致盲（`JOB_OBJECT_UILIMIT_DESKTOP`）**：自迭代中 6 轮窗口实验全部假阴性（EnumWindows 在沙箱内恒为 0），一度得出「Start-Process 不弹窗」的错误结论。修复：`execute_command` 工具描述与 permissions.md（zh/en）写明该限制与逃生门（观测 GUI 窗口的任务走本机全权模式，命令不经沙箱）——不改沙箱安全姿态（信任决策已由模式体系承载）
+- **P0-2 嵌套 Job fail-closed 阻断自举**：AIO 自身在另一个 AIO 的 Job 内时，子命令的 `AssignProcessToJobObject` 被拒（err=50），fail-closed 使 13 个沙箱测试在基线上永久红。修复：err=50 降级为 warn + 降级 guard（`JobGuard` 持 fallback_pid，Drop 时 `taskkill /T /F` 兜底回收）——子进程本就是祖先 Job 成员（子进程自动入 Job），UI 限制/树回收由祖先继续承担；嵌套 fixture 测试（current_exe 重执行 + 自入 UI 限制 Job）真实复现 err=50 路径
+- **P1-1 命令输出固定截「前 50KB」**：编译器/测试器失败详情在尾部，反复拿不到。修复：排水层保留**头 30KB + 尾 20KB**（ring buffer 丢中段），结果体带中段丢弃标记；无缺口时头尾拼接解码（码点不在接缝处劈开）
+- **P1-2 `search_content` 单文件路径头部空文件名**（`📄 :`）：匹配无法归属。修复：回退显示调用方路径（此前 matched 计数也不增加，一并修正）
+- **P1-3 `read_file` 请求中部区段仍回传整文件头尾**（同一 2342 行文件重复进上下文 6 次）：新增 `start_line` 参数——显式窗口返回恰好 `max_lines` 行真实行号，不做头尾兜底；窗口被 max_lines 截断时尾注引导继续读
+- **P2 `ask_user` 超时无回执**：超时错误现在回显问题与选项清单（决策链可审计）
+- **P2 写坏语法无拦截 + CRLF/LF 混杂**：① `write_file`/`replace_in_file` 写后对代码文件（rs/ts/js 家族）做括号配平检查（字符串/注释感知、Rust 生命周期不误报），可疑时在结果中附警告（建议性，不阻断）；② replace 改为 **LF 工作区匹配**（read_file 的行输出已剥 \r，模型 old_string 是 LF——CRLF 文件的精确匹配此前直接失败）+ 写回恢复文件主导换行风格；write_file 覆盖既有文件同样跟随其主导风格
+- **杂项**：`tmp_*` 加入 .gitignore（自迭代一轮堆积 100+ 临时脚本）；根目录遗留的空 `HARNESS_FEEDBACK.md` 清理
+- 测试：file_tools 28 过（新增 5）；shell_tools 30 过（新增 2）；sandbox 17 过（新增嵌套 fixture）；全量 460 过；clippy `-D warnings` 干净
+
+<p align="right"><a href="#top"><img src="/public/icons/top.svg"></img></a></p>
+
+[v1.0.0-alpha.5]: https://github.com/Atom112/AIO/releases/tag/v1.0.0-alpha.5
+
 ## [v1.0.0-alpha.4]
 
 <sup>Released on **2026-10-19**</sup>
@@ -276,41 +321,6 @@ cargo 424 Rust 测试（6 ignored 真机项）、78 前端测试、gates 全过�
 [v0.8.1]: https://github.com/Atom112/AIO/releases/tag/v0.8.1
 
 ## [Unreleased]
-
-### 🧰 自迭代 harness 反馈清偿（AIO 开发 AIO 第一轮报告）
-
-AIO 的 agent 自迭代修「调试弹终端窗口」缺陷后留了 harness 体验报告（8 项），本轮逐项清偿。两个 P0 都源自同一根因：**外层 Job 的 UI 限制**——它同时致盲窗口观测 + 阻断嵌套 assign。
-
-- **P0-1 沙箱内窗口枚举致盲（`JOB_OBJECT_UILIMIT_DESKTOP`）**：自迭代中 6 轮窗口实验全部假阴性（EnumWindows 在沙箱内恒为 0），一度得出「Start-Process 不弹窗」的错误结论。修复：`execute_command` 工具描述与 permissions.md（zh/en）写明该限制与逃生门（观测 GUI 窗口的任务走本机全权模式，命令不经沙箱）——不改沙箱安全姿态（信任决策已由模式体系承载）
-- **P0-2 嵌套 Job fail-closed 阻断自举**：AIO 自身在另一个 AIO 的 Job 内时，子命令的 `AssignProcessToJobObject` 被拒（err=50），fail-closed 使 13 个沙箱测试在基线上永久红。修复：err=50 降级为 warn + 降级 guard（`JobGuard` 持 fallback_pid，Drop 时 `taskkill /T /F` 兜底回收）——子进程本就是祖先 Job 成员（子进程自动入 Job），UI 限制/树回收由祖先继续承担；嵌套 fixture 测试（current_exe 重执行 + 自入 UI 限制 Job）真实复现 err=50 路径
-- **P1-1 命令输出固定截「前 50KB」**：编译器/测试器失败详情在尾部，反复拿不到。修复：排水层保留**头 30KB + 尾 20KB**（ring buffer 丢中段），结果体带中段丢弃标记；无缺口时头尾拼接解码（码点不在接缝处劈开）
-- **P1-2 `search_content` 单文件路径头部空文件名**（`📄 :`）：匹配无法归属。修复：回退显示调用方路径（此前 matched 计数也不增加，一并修正）
-- **P1-3 `read_file` 请求中部区段仍回传整文件头尾**（同一 2342 行文件重复进上下文 6 次）：新增 `start_line` 参数——显式窗口返回恰好 `max_lines` 行真实行号，不做头尾兜底；窗口被 max_lines 截断时尾注引导继续读
-- **P2 `ask_user` 超时无回执**：超时错误现在回显问题与选项清单（决策链可审计）
-- **P2 写坏语法无拦截 + CRLF/LF 混杂**：① `write_file`/`replace_in_file` 写后对代码文件（rs/ts/js 家族）做括号配平检查（字符串/注释感知、Rust 生命周期不误报），可疑时在结果中附警告（建议性，不阻断）；② replace 改为 **LF 工作区匹配**（read_file 的行输出已剥 \r，模型 old_string 是 LF——CRLF 文件的精确匹配此前直接失败）+ 写回恢复文件主导换行风格；write_file 覆盖既有文件同样跟随其主导风格
-- **杂项**：`tmp_*` 加入 .gitignore（自迭代一轮堆积 100+ 临时脚本）；根目录遗留的空 `HARNESS_FEEDBACK.md` 清理
-- 测试：file_tools 28 过（新增 5：CRLF 匹配与风格恢复 / write 跟随风格 / 配平告警与零误报 / read_file 窗口 / search 单文件归因）；shell_tools 30 过（新增 2：头尾保留 / 无缺口拼接）；sandbox 17 过（新增嵌套 fixture）；全量 460 过
-
-### 🪟 后台进程不再弹出终端窗口（前端 / 后端常驻窗口根修）
-
-- **症状**：让 Agent 起前端 / 后端（`Start-Process npm.cmd -ArgumentList run,dev`、`start "" npm.cmd run dev`）时，屏幕上各弹出一个可见控制台窗口，并随进程常驻——退出后也不消失，必须手动关闭
-- **根因**：AIO 发行版是 Windows GUI 子系统程序，自身没有控制台；它对直接子进程下了 `CREATE_NO_WINDOW`，但**孙进程不受该标志约束**：
-  - PowerShell 路径 `Start-Process` 默认不带窗口样式 → powershell.exe 为孙进程新建**可见**控制台
-  - cmd 路径 `start` 内建默认 `CREATE_NEW_CONSOLE` → 同样新建可见控制台
-    两者都在「无控制台的父进程」下新建窗口，所以必然可见
-- **修复**：
-  - **PowerShell**：执行前注入 `Start-Process` shim，把窗口样式默认改为 `Hidden`，仅在调用方**未显式**指定 `-WindowStyle` / `-NoNewWindow` 时生效；用 `$PSBoundParameters` 哈希 splatting 转发（数组 splatting 会按位置绑定而报错，导致调用静默失效），`start` / `saps` 别名同样命中，`-Wait` / `-PassThru` / `-Verb` / `-WorkingDirectory` / `-Environment` 行为不变，退出码传播包装保留
-  - **cmd**：把**命令起始位置**的 `start` 重写为 `start /b`（共享父 shell 的隐藏控制台）；`net start mysql`、`npm start`、`sc start x`、`echo start`、引号内文本一律不改写，调用方已给的 `/b` `/min` `/max` `/wait` `/i` 原样保留，重写幂等
-- **不变**：stdout/stderr 仍经管道回收（子进程继承父 shell 的管道）、Job Object 进程树回收与取消能力不变、`check:i18n` 与既有门禁全绿
-- 测试：`shell_tools` 新增 4 项（重写规则 / 非内建命令不误改 / 幂等 / 真实 spawn 下子进程输出仍经管道返回）；cargo 442 过；clippy `-D warnings` 通过
-
-### 🔎 聊天记录搜索（按项目隔离）
-
-- **范围隔离**：话题栏顶部新增搜索框（新建话题按钮上方），按当前范围搜索聊天记录——每个项目独立（一项目搜不到他项目记录），纯对话作为特殊单范围参与同一机制（实现上按当前 assistant 过滤：每项目对应专属 assistant、纯对话为默认 assistant，隔离天然成立）
-- **匹配列表**：命中后在搜索框下方弹出亚克力下拉（话题名 + 上下文摘录、命中词主色高亮、最多 50 条、空结果显示「没有匹配」）；Esc / 清空按钮 / 点击面板外关闭，输入防抖 200ms
-- **跳转与高亮**：点击条目切换话题、按需展开分页渲染窗口（与「加载更早」同一契约：新展开行预标记已动画，不重放入场动画）、平滑滚动到目标消息并播放主色闪烁高亮（`search-jump-flash`，主题变量取色）
-- **实现要点**：全量历史本就在启动时驻留 store，搜索为纯内存子串匹配（大小写不敏感、跳过 UI 不渲染的 tool 行与无 id 瞬态行、displayText 覆盖优先、摘录边界 UTF-16 代理对安全）——零后端改动、零 IPC；侧栏与消息区经 `pendingSearchJump` store 信号协调跳转
-- 测试：`searchHistory.test.ts` 9 项（范围隔离/大小写与 CJK/tool 与无 id 跳过/displayText 覆盖/多模态数组跳过/摘录省略号/上限 50/emoji 代理对边界）；check:frontend 全绿（87 用例 + 门禁 rgba=173、any=77 棘轮持平）；文档 chat-and-agent zh/en 同步
 
 ### 🪜 第十二轮：模式阶梯改名 + 完全权限内置化 + 工作流功能移除（PR #131）
 

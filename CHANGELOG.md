@@ -2,6 +2,16 @@
 
 # Changelog
 
+## Unreleased
+
+### 🎬 子代理运行卡片动画抽搐根修（每 token 重启 stepCardPulse / 图标旋转）
+
+- **症状**：子代理（subagent）流式输出期间，主对话时间线中的子代理步骤卡片每冒一批 token 就「抽搐」一次——`stepCardPulse` 脉冲动画与运行态图标旋转被取消重放，观感为闪烁/跳相位；抽搐频率与流式批次（80ms）一致
+- **根因（store 引用抖动）**：`chatEventListeners.ts` 的 `mutateSubagentSteps`（subagentChunk / subagentReasoning / subagentStep 全部经此入口）在 Solid store 的 `produce` 内以 `steps[subIdx] = { ...subStep, subagentSteps: ... }` **重建槽位对象**——每个流式批次替换一次 `agentSteps` 槽位引用。`AgentProcessBlock` 的 `stepById(id)` 按 id 从数组取对象，引用一变 `StepCard` 的 `props.step` 身份即变，style/classList 等 render effect 全部重跑；`style()` helper 对 animation 简写做逐 key diff，键集合随对象重建抖动时（entrance→running 两段条件展开交替）触发 `animation` 属性重设，浏览器按第 0 帧重放动画——即每 token 一次
+- **修复**：produce 草稿上**就地赋属性**（`subStep.subagentSteps = mutate(...)`）而非重建对象。Solid store 的 produce 是细粒度就地代理写：`steps[subIdx]` 引用在整个流式期间保持稳定，`StepCard` 的 `props.step` 身份不变，运行态动画不再被打断；仅 `subagentSteps` 属性本身的变化通知真正读它的订阅者（实时进度行、子代理会话视图），细粒度更新语义完整保留
+- **伴生修复（运行图标动画从未生效）**：`StepCard` 图标 `classList` 引用的 `'is-spinning'` 类在全仓 CSS 中**无任何定义**（孤儿类），运行中步骤图标一直静止；换成主题内已定义却从未被消费的 Tailwind v4 utility `animate-agent-process-spin`（`@theme` 变量 `--animate-agent-process-spin` + `agentProcessIconSpin` keyframes，2.4s linear infinite）
+- **验证**：编译产物探针确认 `style={{ ...(cond ? {...} : {}) }}` 编译为 `effect(() => style(el, {...}))`（细粒度响应、值不变不重设）；check:frontend 全绿（87 用例、tsc、eslint --max-warnings 0、prettier、gates 棘轮 rgba=173/any=77 持平、vite build）
+
 ## [v1.0.0-alpha.5]
 
 <sup>Released on **2026-10-24**</sup>

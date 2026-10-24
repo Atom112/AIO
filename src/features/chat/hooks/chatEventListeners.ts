@@ -243,10 +243,12 @@ export function registerChatStreamListeners(): Promise<UnlistenFn>[] {
         const subIdx = steps.findIndex((s) => s.subagentId === subagentId);
         if (subIdx < 0) return;
         const subStep = steps[subIdx];
-        steps[subIdx] = {
-          ...subStep,
-          subagentSteps: mutate(subStep.subagentSteps || []),
-        };
+        // Solid-store produce mutates in place. Assign the property directly instead of
+        // rebuilding the slot object ({...subStep}): the store keeps `steps[subIdx]`'s
+        // reference stable across streamed deltas, so StepCard's props.step identity
+        // persists and the running-state animations (stepCardPulse / spinner icon) are
+        // not cancelled and replayed per 80ms token batch (the per-token "twitch").
+        subStep.subagentSteps = mutate(subStep.subagentSteps || []);
       }),
     );
   };

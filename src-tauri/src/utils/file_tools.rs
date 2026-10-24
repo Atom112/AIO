@@ -352,11 +352,12 @@ pub fn get_file_tool_specs() -> Vec<ToolSpec> {
             kind: "function".into(),
             function: ToolFunctionSpec {
                 name: tool_names::READ_FILE.into(),
-                description: "读取项目目录内的文件内容，输出带 1-based 行号（格式 \"    1| 内容\"，可直接用于 replace_in_file 的 start_line/end_line）。默认最多读取 300 行 / 32KB，超出时返回头部+尾部并标注省略的行号区间；如需完整内容请显式传入更大的 max_lines 或 max_bytes。with_hash=true 时返回文件 SHA-256 摘要（hashline 协议：编辑时用 anchor_hash 锚定防漂移，写/替换工具会返回新 hash 供链式使用）".into(),
+                description: "读取项目目录内的文件内容，输出带 1-based 行号（格式 \"    1| 内容\"，可直接用于 replace_in_file 的 start_line/end_line）。默认最多读取 300 行 / 32KB，超出时返回头部+尾部并标注省略的行号区间；如需完整内容请显式传入更大的 max_lines 或 max_bytes。**读文件中部区段请显式传 start_line**：返回恰好 start_line 起的 max_lines 行（真实行号），不做头尾兜底——省 token 且不会把整个大头尾重复塞进上下文。with_hash=true 时返回文件 SHA-256 摘要（hashline 协议：编辑时用 anchor_hash 锚定防漂移，写/替换工具会返回新 hash 供链式使用）".into(),
                 parameters: json!({
                     "type":"object",
                     "properties":{
                         "path":{"type":"string","description":"文件路径"},
+                        "start_line":{"type":"integer","description":"从该行（1-based）开始读——读文件中部区段时必传：返回恰好 max_lines 行的真实窗口，不做头尾截断。不传则从头读，超限时头+尾兜底"},
                         "max_lines":{"type":"integer","description":"最大读取行数（默认 300；-1 = 不限行数——注意行数上限与字节上限相互独立，-1 不解除字节截断，需完整大文件请同时传 max_bytes=-1）"},
                         "max_bytes":{"type":"integer","description":"最大读取字节数（默认 32768；-1 = 不限字节，仍受 1MB 安全上限约束）"},
                         "with_hash":{"type":"boolean","description":"是否返回文件 SHA-256 摘要（默认 false）"}
@@ -426,6 +427,194 @@ pub fn get_file_tool_specs() -> Vec<ToolSpec> {
 
 // ====== Tool execution ======
 
+// ===== Write hygiene (harness feedback round 1, P2) =====
+//
+// The self-iteration round twice wrote structurally broken Rust (a duplicated
+// doc comment + signature, a missing `)`) that only surfaced at `cargo build`,
+// and left a file with mixed CRLF/LF endings (43/2593) from LF-model patches
+// against a CRLF file. Two advisory guards close the gap at the write itself.
+
+/// Code-file extensions whose writes get the delimiter-balance check (Rust/JS
+/// family only: their quote/comment shapes are what the scanner understands;
+/// Python's triple-quoted strings would trip it into false positives).
+const BALANCE_CHECK_EXTENSIONS: &[&str] = &["rs", "ts", "tsx", "js", "jsx", "json"];
+
+fn is_balance_check_target(path: &str) -> bool {
+    path.rsplit('.')
+        .next()
+        .is_some_and(|ext| BALANCE_CHECK_EXTENSIONS.contains(&ext))
+}
+
+/// Dominant line-ending style of an existing text: `Some(true)` = CRLF,
+/// `Some(false)` = LF, `None` = no ≥90% majority (leave mixed files alone —
+/// no surprise rewrites; a clear-majority file gets its patches normalized
+/// to match, so LF patches against a CRLF file stop producing mixed endings).
+fn dominant_crlf(content: &str) -> Option<bool> {
+    let total = content.matches('\n').count();
+    if total == 0 {
+        return None;
+    }
+    let crlf = content.matches("\r\n").count();
+    if crlf * 10 >= total * 9 {
+        Some(true)
+    } else if (total - crlf) * 10 >= total * 9 {
+        Some(false)
+    } else {
+        None
+    }
+}
+
+/// Rewrites line endings to the target style (LF→CRLF collapses CRLF first so
+/// no `\r\r\n` ever lands; CRLF→LF is a plain collapse).
+fn normalize_eol(text: &str, crlf: bool) -> String {
+    if crlf {
+        text.replace("\r\n", "\n").replace('\n', "\r\n")
+    } else {
+        text.replace("\r\n", "\n")
+    }
+}
+
+/// Heuristic delimiter-balance check for freshly written code: counts `()[]{}` OUTSIDE
+/// line/block comments and string literals. Advisory ONLY — a warning appended to the
+/// tool result, never a rejection: regex literals / template strings can trip the
+/// counter, and the model (which sees the warning with a line number) judges.
+///
+/// Rust `'` disambiguation: a char literal is `'x'`/`'\n'` (3–4 chars); anything else
+/// starting with `'` is a lifetime — consume just the quote and keep counting the
+/// line's brackets (skipping to the next `'` would eat the fn signature's brackets
+/// and false-positive at its closing brace).
+fn delimiter_imbalance(content: &str, is_rust: bool) -> Option<String> {
+    let mut stack: Vec<(char, usize)> = Vec::new();
+    let mut line = 1usize;
+    let mut chars = content.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '\n' => line += 1,
+            '/' => {
+                match chars.peek() {
+                    Some('/') => {
+                        // line comment: skip to EOL
+                        for c in chars.by_ref() {
+                            if c == '\n' {
+                                line += 1;
+                                break;
+                            }
+                        }
+                    }
+                    Some('*') => {
+                        // block comment: skip to */
+                        chars.next();
+                        let mut prev = ' ';
+                        for c in chars.by_ref() {
+                            if c == '\n' {
+                                line += 1;
+                            }
+                            if prev == '*' && c == '/' {
+                                break;
+                            }
+                            prev = c;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            '"' => {
+                // string literal: skip to the closing quote (same line — an
+                // unterminated string is its own error the compiler reports)
+                let mut prev = ' ';
+                for c in chars.by_ref() {
+                    if c == '\n' {
+                        break;
+                    }
+                    if prev != '\\' && c == '"' {
+                        break;
+                    }
+                    prev = c;
+                }
+            }
+            '\'' => {
+                if is_rust {
+                    match chars.peek() {
+                        Some('\\') => {
+                            // escape char literal '\n' / '\'' / '\u{1}' — consume past the closing quote
+                            let mut prev = ' ';
+                            for c in chars.by_ref() {
+                                if c == '\n' || (prev != '\\' && c == '\'') {
+                                    break;
+                                }
+                                prev = c;
+                            }
+                        }
+                        Some(next) if *next != '\'' => {
+                            // 'x…: a lone next char followed by ' is a char literal,
+                            // anything longer is a lifetime — consume the peeked char
+                            // and check the one after it.
+                            let second = {
+                                chars.next();
+                                chars.peek().copied()
+                            };
+                            if second == Some('\'') {
+                                chars.next(); // consume the closing quote
+                            }
+                            // else: lifetime — the quote is consumed, counting continues
+                        }
+                        _ => {}
+                    }
+                } else {
+                    // JS-family: single-quoted string — skip to the closing quote
+                    let mut prev = ' ';
+                    for c in chars.by_ref() {
+                        if c == '\n' {
+                            break;
+                        }
+                        if prev != '\\' && c == '\'' {
+                            break;
+                        }
+                        prev = c;
+                    }
+                }
+            }
+            '(' | '[' | '{' => stack.push((c, line)),
+            ')' | ']' | '}' => {
+                let open = match c {
+                    ')' => '(',
+                    ']' => '[',
+                    '}' => '{',
+                    _ => unreachable!(),
+                };
+                match stack.pop() {
+                    Some((o, _)) if o == open => {}
+                    Some((o, at)) => {
+                        return Some(format!("行 {line}: '{c}' 与第 {at} 行的 '{o}' 不配对"))
+                    }
+                    None => return Some(format!("行 {line}: 多余的 '{c}'（无对应开括号）")),
+                }
+            }
+            _ => {}
+        }
+    }
+    if let Some((open, at)) = stack.last() {
+        return Some(format!("文件末尾仍有未闭合的 '{open}'（第 {at} 行开启）"));
+    }
+    None
+}
+
+/// Advisory suffix appended to write-tool results when the just-written code
+/// file's delimiters look unbalanced.
+fn balance_warning(path: &str, written: &str) -> String {
+    if !is_balance_check_target(path) {
+        return String::new();
+    }
+    let is_rust = path.rsplit('.').next() == Some("rs");
+    match delimiter_imbalance(written, is_rust) {
+        Some(detail) => format!(
+            "\n[!] 括号配平检查可疑（{}）——写入已成功，请立即检查该区域；若为字符串/正则内的括号误报可忽略",
+            detail
+        ),
+        None => String::new(),
+    }
+}
+
 /// Executes a single file tool directly and returns a ToolResult.
 ///
 /// `project_root` is the absolute path of the project root; all path operations are confined to that directory.
@@ -471,6 +660,23 @@ pub fn execute_file_tool(name: &str, arguments: &Value, project_root: &str) -> T
             } else {
                 (max_bytes_arg as u64).clamp(1024, MAX_R) as usize
             };
+            // Explicit window (harness feedback round 1, P1-3): with start_line,
+            // return EXACTLY the requested lines — no head+tail fallback. The
+            // default head+tail behavior re-delivered the whole head and tail of
+            // a 2342-line file when the model asked for a middle segment, six
+            // times over one session; the explicit window is both cheaper and
+            // context-friendlier.
+            let start_line_arg = match arguments["start_line"].as_i64() {
+                None => None,
+                Some(sl) if sl < 1 => {
+                    return tool_err(&ierr!(
+                        "start_line 无效（1-based，须 >= 1）: {}",
+                        "Invalid start_line (1-based, must be >= 1): {}",
+                        sl
+                    ))
+                }
+                other => other.map(|v| v as usize),
+            };
             let t = match safe_path(project_root, path, true) {
                 Ok(t) => t,
                 Err(e) => return tool_err(&e),
@@ -509,8 +715,27 @@ pub fn execute_file_tool(name: &str, arguments: &Value, project_root: &str) -> T
                 .enumerate()
                 .map(|(i, l)| format!("{:>5}| {}", i + 1, l))
                 .collect();
-            // Line limit (head + tail, keeping the key leading/trailing content; the omission marker notes the omitted line range)
-            let limited = if total_lines > max_lines {
+            // Line limit: explicit start_line → an exact window; otherwise the
+            // head + tail default (the omission marker notes the omitted range)
+            let limited = if let Some(sl) = start_line_arg {
+                if sl > total_lines {
+                    return tool_err(&ierr!(
+                        "start_line 超出文件末尾（文件共 {} 行，start_line={}）",
+                        "start_line is past the end of the file ({} lines total, start_line={})",
+                        total_lines,
+                        sl
+                    ));
+                }
+                let end = (sl - 1).saturating_add(max_lines).min(total_lines);
+                let mut window = numbered[sl - 1..end].join("\n");
+                if end < total_lines {
+                    window.push_str(&format!(
+                        "\n… [窗口至第 {} 行，文件共 {} 行；继续读请传更大的 start_line 或 max_lines] …",
+                        end, total_lines
+                    ));
+                }
+                window
+            } else if total_lines > max_lines {
                 let head_lines = (max_lines * 6) / 10;
                 let tail_lines = max_lines - head_lines;
                 let head_str = numbered[..head_lines.min(numbered.len())].join("\n");
@@ -657,11 +882,35 @@ pub fn execute_file_tool(name: &str, arguments: &Value, project_root: &str) -> T
             if let Err(e) = revalidate_target_stable(project_root, path, &t) {
                 return tool_err(&e);
             }
-            match atomic_write(&t, content) {
+            // EOL hygiene (harness feedback round 1, P2): an overwrite of an existing
+            // file keeps that file's dominant line-ending style — LF patches against
+            // CRLF files were the source of the mixed-endings file (43 CRLF / 2593 LF).
+            // New files write exactly what the model sent.
+            let eol_target: Option<bool> = if t.is_file() {
+                std::fs::metadata(&t)
+                    .ok()
+                    .filter(|m| m.len() <= MAX_READ_FILE_BYTES)
+                    .and_then(|_| std::fs::read_to_string(&t).ok())
+                    .and_then(|cur| dominant_crlf(&cur))
+            } else {
+                None
+            };
+            let content_final = eol_target
+                .map(|crlf| normalize_eol(content, crlf))
+                .unwrap_or_else(|| content.to_string());
+            if content_final.len() as u64 > MAX_W {
+                return tool_err(&ierr!(
+                    "内容过大（含换行规范化后 >{}B）",
+                    "Content too large (after newline normalization >{}B)",
+                    MAX_W
+                ));
+            }
+            match atomic_write(&t, &content_final) {
                 Ok(_) => tool_ok(format!(
-                    "✓ 写入 {path} ({}B)\n[HASH sha256:{}]",
-                    content.len(),
-                    sha256_hex(content.as_bytes())
+                    "✓ 写入 {path} ({}B)\n[HASH sha256:{}]{}",
+                    content_final.len(),
+                    sha256_hex(content_final.as_bytes()),
+                    balance_warning(path, &content_final)
                 )),
                 Err(e) => tool_err(&e),
             }
@@ -754,6 +1003,10 @@ pub fn execute_file_tool(name: &str, arguments: &Value, project_root: &str) -> T
             };
             let mut v = Vec::new();
             let (mut scanned, mut matched) = (0, 0);
+            // The caller's path text, for the single-file header label (the glob
+            // loop variable shadows `p` with canonicalized paths, whose \\?\-
+            // prefixed absolute form is hostile to read).
+            let user_path_label = p.to_string();
             let g = if t.is_dir() {
                 t.join("**/*")
             } else {
@@ -791,10 +1044,20 @@ pub fn execute_file_tool(name: &str, arguments: &Value, project_root: &str) -> T
                     for (i, line) in c.lines().enumerate() {
                         if re.is_match(line) {
                             if fc == 0 {
-                                if let Ok(rel) = p.strip_prefix(&t) {
-                                    v.push(format!("\n📄 {}:", rel.display()));
-                                    matched += 1;
-                                }
+                                // Header label: relative path under the searched
+                                // directory; when the caller passed a single FILE,
+                                // strip_prefix yields "" and the header rendered as
+                                // a bare "📄:" — use the caller's path instead
+                                // (harness feedback round 1, P1-2: matches from
+                                // single-file scans were unattributable).
+                                let label = p
+                                    .strip_prefix(&t)
+                                    .ok()
+                                    .map(|r| r.display().to_string())
+                                    .filter(|r| !r.is_empty())
+                                    .unwrap_or_else(|| user_path_label.clone());
+                                v.push(format!("\n📄 {}:", label));
+                                matched += 1;
                             }
                             if fc < 10 {
                                 v.push(format!(
@@ -894,6 +1157,7 @@ pub fn execute_file_tool(name: &str, arguments: &Value, project_root: &str) -> T
             };
             // hashline protocol: anchor_hash guards against drift — the file's current digest must match the hash the model holds,
             // otherwise the file was modified (or the model's context is stale) and it must re-run read_file(with_hash=true).
+            // (Checked on the RAW content, before the LF working-copy below.)
             let anchor_hash = arguments["anchor_hash"].as_str().unwrap_or("");
             if !anchor_hash.is_empty() {
                 let current_hash = sha256_hex(content.as_bytes());
@@ -906,6 +1170,17 @@ pub fn execute_file_tool(name: &str, arguments: &Value, project_root: &str) -> T
                     ));
                 }
             }
+            // EOL hygiene (harness feedback round 1, P2): match in LF working space.
+            // read_file strips \r (str::lines), so the model's old_string is LF even
+            // for CRLF files — exact matching against the raw CRLF text failed with
+            // "old_string not found" and line-range patches landed as mixed endings.
+            // The file's dominant style is restored at the write below.
+            let crlf_target = dominant_crlf(&content);
+            let content = if crlf_target == Some(true) {
+                content.replace("\r\n", "\n")
+            } else {
+                content
+            };
             // Line-range anchor mode (token efficiency): with old_string empty + start_line/end_line,
             // the tool builds the text to replace from the current file content, so the model need not echo the whole old block.
             if old_s.is_empty() {
@@ -977,7 +1252,15 @@ pub fn execute_file_tool(name: &str, arguments: &Value, project_root: &str) -> T
                 }
                 1 => {
                     let new_content = content.replacen(old_s.as_str(), new_s, 1);
-                    if new_content.len() as u64 > MAX_W {
+                    // Restore the file's dominant line-ending style at the write
+                    // (LF working space above; the model's new_string may carry
+                    // either style — the normalization heals both directions).
+                    let new_content_out = match crlf_target {
+                        Some(true) => normalize_eol(&new_content, true),
+                        Some(false) => new_content.replace("\r\n", "\n"),
+                        None => new_content,
+                    };
+                    if new_content_out.len() as u64 > MAX_W {
                         return tool_err(&ierr!(
                             "替换后内容过大 (>{}B)",
                             "Content too large after replacement (>{}B)",
@@ -990,12 +1273,13 @@ pub fn execute_file_tool(name: &str, arguments: &Value, project_root: &str) -> T
                     if let Err(e) = revalidate_target_stable(project_root, path, &t) {
                         return tool_err(&e);
                     }
-                    match atomic_write(&t, &new_content) {
+                    match atomic_write(&t, &new_content_out) {
                         Ok(_) => tool_ok(format!(
-                            "✓ 替换 {path}\n第 {} 行: {} 处匹配已替换\n[HASH sha256:{}]",
+                            "✓ 替换 {path}\n第 {} 行: {} 处匹配已替换\n[HASH sha256:{}]{}",
                             matches[0],
                             1,
-                            sha256_hex(new_content.as_bytes())
+                            sha256_hex(new_content_out.as_bytes()),
+                            balance_warning(path, &new_content_out)
                         )),
                         Err(e) => tool_err(&e),
                     }
@@ -1238,6 +1522,90 @@ mod safe_path_tests {
         let _ = fs::remove_dir_all(&base);
     }
 
+    /// P1-2（harness 反馈第一轮）：单文件路径的 search_content 头部此前渲染为
+    /// 空 "📄:"（strip_prefix 自身为空串）——匹配无法归属到文件；且 matched
+    /// 计数器不增加（报「0 文件有匹配」却列出命中行）。
+    #[test]
+    fn search_content_single_file_path_is_attributed() {
+        let base = fresh_base("scsingle");
+        let base_s = base.to_string_lossy().to_string();
+        fs::write(base.join("notes.md"), "alpha\nneedle here\nomega\n").unwrap();
+
+        let args = serde_json::json!({"pattern": "needle", "path": "notes.md"});
+        let r = execute_file_tool(tool_names::SEARCH_CONTENT, &args, &base_s);
+        let text = text_of(&r);
+        assert!(
+            text.contains("📄 notes.md:"),
+            "单文件搜索头部应带文件名: {text}"
+        );
+        assert!(!text.contains("📄 :"), "不应再出现空文件名头部: {text}");
+        assert!(text.contains("needle here"), "命中行应在: {text}");
+        assert!(
+            text.contains("1文件有匹配"),
+            "matched 计数应包含单文件命中: {text}"
+        );
+
+        // 目录路径（既有行为回归）：相对路径头部不受影响
+        let args = serde_json::json!({"pattern": "needle", "path": "."});
+        let r = execute_file_tool(tool_names::SEARCH_CONTENT, &args, &base_s);
+        let text = text_of(&r);
+        assert!(text.contains("notes.md"), "目录扫描应列出文件: {text}");
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    /// P1-3（harness 反馈第一轮）：显式 start_line 返回恰好该窗口（真实行号），
+    /// 不做头尾兜底——此前请求中部区段会把整个文件的头尾再次塞进上下文。
+    #[test]
+    fn read_file_start_line_returns_exact_window() {
+        let base = fresh_base("startline");
+        let base_s = base.to_string_lossy().to_string();
+        let body: String = (1..=100).map(|i| format!("line{i}\n")).collect();
+        fs::write(base.join("big.txt"), body).unwrap();
+
+        // 窗口：第 40 行起的 10 行（默认 max_lines=300 > 剩余，窗口到文件尾）
+        let args = serde_json::json!({"path": "big.txt", "start_line": 40, "max_bytes": -1});
+        let r = execute_file_tool(tool_names::READ_FILE, &args, &base_s);
+        let text = text_of(&r);
+        assert!(text.contains("   40| line40"), "窗口首行: {text}");
+        assert!(text.contains("  100| line100"), "窗口末行(文件尾): {text}");
+        assert!(
+            !text.contains("    1| line1"),
+            "显式窗口不应回传文件头部: {text}"
+        );
+        assert!(
+            !text.contains("已省略"),
+            "显式窗口不应有头尾省略标记: {text}"
+        );
+
+        // max_lines 截断窗口：第 40 行起 5 行，尾注引导继续读
+        let args = serde_json::json!({"path": "big.txt", "start_line": 40, "max_lines": 5, "max_bytes": -1});
+        let r = execute_file_tool(tool_names::READ_FILE, &args, &base_s);
+        let text = text_of(&r);
+        assert!(text.contains("   40| line40"), "截断窗口首行: {text}");
+        assert!(text.contains("   44| line44"), "截断窗口末行: {text}");
+        assert!(
+            !text.contains("   45| line45"),
+            "不应超出 max_lines: {text}"
+        );
+        assert!(
+            text.contains("窗口至第 44 行"),
+            "尾注应标注窗口边界: {text}"
+        );
+
+        // start_line 越界报错（带文件总行数）
+        let args = serde_json::json!({"path": "big.txt", "start_line": 101});
+        let r = execute_file_tool(tool_names::READ_FILE, &args, &base_s);
+        let text = text_of(&r);
+        assert!(text.contains("文件共 100 行"), "越界错误应带总行数: {text}");
+
+        // start_line < 1 拒绝
+        let args = serde_json::json!({"path": "big.txt", "start_line": 0});
+        let r = execute_file_tool(tool_names::READ_FILE, &args, &base_s);
+        assert!(text_of(&r).contains("start_line 无效"));
+
+        let _ = fs::remove_dir_all(&base);
+    }
+
     /// expect_hash guards write_file overwrites: a mismatched digest is rejected and the
     /// file is left untouched.
     #[test]
@@ -1329,6 +1697,106 @@ mod safe_path_tests {
             fs::read_to_string(base.join("r.txt")).unwrap(),
             "alpha\nBETA\ngamma\n"
         );
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    /// P2（harness 反馈第一轮）：CRLF 文件的精确匹配与换行一致性。read_file 输出
+    /// 已剥 \r，模型的 old_string/new_string 是 LF——此前对 CRLF 文件的精确匹配
+    /// 直接失败（"未找到匹配"），行范围补丁则落成 CRLF/LF 混杂。现在：LF 工作区
+    /// 匹配 + 写回恢复文件的主导风格。
+    #[test]
+    fn replace_in_file_matches_crlf_files_and_restores_style() {
+        let base = fresh_base("crlf");
+        let base_s = base.to_string_lossy().to_string();
+        fs::write(base.join("c.txt"), "alpha\r\nbeta\r\ngamma\r\n").unwrap();
+
+        // LF 形态的 old_string 也要能在 CRLF 文件上命中
+        let args = serde_json::json!({
+            "path": "c.txt",
+            "old_string": "beta",
+            "new_string": "BETA\nSIGMA"
+        });
+        let r = execute_file_tool(tool_names::REPLACE_IN_FILE, &args, &base_s);
+        let text = text_of(&r);
+        assert!(
+            text.contains("✓ 替换"),
+            "LF old_string 应命中 CRLF 文件: {text}"
+        );
+        let out = fs::read_to_string(base.join("c.txt")).unwrap();
+        assert!(
+            out.contains("BETA\r\nSIGMA"),
+            "替换体应保持文件的 CRLF 风格: {out:?}"
+        );
+        assert!(!out.contains("BETA\nSIGMA"), "不应混入 LF: {out:?}");
+
+        // LF 主导文件不受影响（回归）
+        fs::write(base.join("l.txt"), "alpha\nbeta\n").unwrap();
+        let args = serde_json::json!({"path": "l.txt", "old_string": "beta", "new_string": "BETA"});
+        let r = execute_file_tool(tool_names::REPLACE_IN_FILE, &args, &base_s);
+        assert!(text_of(&r).contains("✓ 替换"));
+        assert_eq!(
+            fs::read_to_string(base.join("l.txt")).unwrap(),
+            "alpha\nBETA\n"
+        );
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    /// P2：write_file 覆盖既有文件时跟随其主导换行风格；新文件按模型原文。
+    #[test]
+    fn write_file_follows_existing_line_style() {
+        let base = fresh_base("eolwrite");
+        let base_s = base.to_string_lossy().to_string();
+        fs::write(base.join("c.txt"), "one\r\ntwo\r\n").unwrap();
+        // LF 内容覆盖 CRLF 文件 → 落盘 CRLF
+        let args = serde_json::json!({"path": "c.txt", "content": "three\nfour\n"});
+        let r = execute_file_tool(tool_names::WRITE_FILE, &args, &base_s);
+        assert!(text_of(&r).contains("✓ 写入"));
+        let out = fs::read_to_string(base.join("c.txt")).unwrap();
+        assert_eq!(out, "three\r\nfour\r\n", "应规范化为 CRLF: {out:?}");
+        // 新文件保持原文
+        let args = serde_json::json!({"path": "n.txt", "content": "five\nsix\n"});
+        let _ = execute_file_tool(tool_names::WRITE_FILE, &args, &base_s);
+        assert_eq!(
+            fs::read_to_string(base.join("n.txt")).unwrap(),
+            "five\nsix\n"
+        );
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    /// P2：写入后的括号配平警告——未闭合括号在写盘点即暴露（此前要到
+    /// cargo build 才发现）；合法代码（含 Rust 生命周期）不误报。
+    #[test]
+    fn write_tools_flag_unbalanced_delimiters() {
+        let base = fresh_base("balance");
+        let base_s = base.to_string_lossy().to_string();
+
+        // 未闭合（自迭代现场：重复插入 doc comment + 签名导致 unclosed delimiter）
+        let bad = "fn broken(a: usize {\n    let _ = (1;\n}\n";
+        let args = serde_json::json!({"path": "bad.rs", "content": bad});
+        let r = execute_file_tool(tool_names::WRITE_FILE, &args, &base_s);
+        let text = text_of(&r);
+        assert!(
+            text.contains("✓ 写入"),
+            "写入仍应成功（建议性检查不阻断）: {text}"
+        );
+        assert!(text.contains("括号配平"), "应带配平警告: {text}");
+
+        // 合法 Rust 含生命周期与字符串内的括号：零误报
+        let good = "fn ok<'a>(x: &'a str) -> usize {\n    let s = \"])}\";\n    s.len() + (1)\n}\n";
+        let args = serde_json::json!({"path": "good.rs", "content": good});
+        let r = execute_file_tool(tool_names::WRITE_FILE, &args, &base_s);
+        let text = text_of(&r);
+        assert!(!text.contains("括号配平"), "合法代码不应告警: {text}");
+
+        // replace_in_file 同样接入（平衡文件 + 平衡替换 → 无警告）
+        fs::write(base.join("m.rs"), "fn main() {\n    println!(\"hi\");\n}\n").unwrap();
+        let args = serde_json::json!({
+            "path": "m.rs",
+            "old_string": "println!(\"hi\");",
+            "new_string": "println!(\"bye ({})\", 1);"
+        });
+        let r = execute_file_tool(tool_names::REPLACE_IN_FILE, &args, &base_s);
+        assert!(!text_of(&r).contains("括号配平"), "平衡替换不应告警");
         let _ = fs::remove_dir_all(&base);
     }
 

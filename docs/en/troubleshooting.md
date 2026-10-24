@@ -53,6 +53,18 @@ What to do:
 - For a self-built version, confirm every spawn point hides its console (the `console-window` gate in `npm run check:gates` catches missing ones);
 - To confirm the diagnosis, reproduce with a release build and with `npm run tauri dev` and compare.
 
+## Frontend and Backend Each Pop a Terminal Window That Stays Open
+
+In an installed build, when the Agent starts a frontend or backend (`Start-Process npm.cmd -ArgumentList run,dev`, `start "" npm.cmd run dev`), a visible console window appears for each and stays on screen after the process exits, requiring a manual close.
+
+Cause: the AIO release build is a GUI-subsystem application, so the process itself owns no console. It applies `CREATE_NO_WINDOW` to its **direct child**, but `Start-Process` and the cmd builtin `start` create a **grandchild**, and a grandchild does not inherit that flag — `Start-Process` without an explicit window style and `start` without `/b` both allocate a new console by default, which is necessarily visible under a parent that owns none.
+
+What to do:
+
+- This is a defect, not a misconfiguration; upgrade to a fixed version;
+- How it is fixed: on the PowerShell path a `Start-Process` shim defaults the window style to hidden (an explicit `-WindowStyle` or `-NoNewWindow` from the caller is never overridden); on the cmd path a command-initial `start` is rewritten to `start /b` (`net start`, `npm start` and other argument positions are untouched, and an existing `/min` `/wait` is preserved);
+- Output is unaffected: the grandchild inherits the parent shell's pipes, so the tool call still collects stdout/stderr, and process-tree reclamation plus the stop button behave as before.
+
 ## MCP Tool Keeps Waiting for Confirmation
 
 - Normal Agent mode requests confirmation for sensitive operations.

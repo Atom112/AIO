@@ -11,6 +11,9 @@ src-tauri/undefined/
 .temp/
 .aio/
 .shots/
+# Agent self-iteration scratch scripts (harness feedback round 1: 100+ tmp_* files
+# landed at the repo root during one session)
+tmp_*
 # Local research scratch notes (kept out of the repo; reference only)
 .gui-agent-research/
 .vibe-research/

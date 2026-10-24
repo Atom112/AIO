@@ -27,6 +27,10 @@ import {
   gitBranch,
   gitBranches,
   switchBranch,
+  setCurrentTopicId,
+  currentTopicId,
+  pendingSearchJump,
+  setPendingSearchJump,
   type GeneratedImageInfo,
 } from '../../../core/store/store';
 import { open } from '@tauri-apps/plugin-dialog';
@@ -395,6 +399,52 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
       loadingEarlier = false;
     });
   };
+
+  // ---- Chat history search jump (triggered from the topic-sidebar search) ----
+  // The sidebar sets pendingSearchJump({topicId, messageId}); here we switch the
+  // topic, grow the paged window to cover the target, then scroll + flash it.
+  // All steps are poll-retried within a bounded deadline: the topic switch and
+  // the <For> mount happen asynchronously relative to this handler.
+  const jumpToSearchHit = async (topicId: string, messageId: string) => {
+    if (currentTopicId() !== topicId) setCurrentTopicId(topicId);
+    const deadline = Date.now() + 3500;
+    while (Date.now() < deadline) {
+      const topic = props.activeTopic;
+      if (topic && topic.id === topicId) {
+        const idx = topic.history.findIndex((m) => m.id === messageId);
+        if (idx >= 0) {
+          const len = topic.history.length;
+          const start = Math.max(0, len - visibleCount());
+          if (idx < start) {
+            // Same contract as loadEarlier: pre-mark the about-to-reveal rows so
+            // they do not replay entrance animations when the window grows.
+            for (const m of topic.history.slice(idx, start)) {
+              if (m?.id) animatedMessageIds.add(m.id);
+            }
+            setVisibleCount(len - idx);
+          }
+          await new Promise((r) => requestAnimationFrame(() => r(null)));
+          const el = messageEls.get(messageId);
+          if (el) {
+            el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            // Restart the flash when the same row is jumped to twice in a row
+            el.classList.remove('search-jump-flash');
+            void el.offsetWidth;
+            el.classList.add('search-jump-flash');
+            setTimeout(() => el.classList.remove('search-jump-flash'), 2800);
+            return;
+          }
+        }
+      }
+      await new Promise((r) => setTimeout(r, 50));
+    }
+  };
+  createEffect(() => {
+    const jump = pendingSearchJump();
+    if (!jump) return;
+    setPendingSearchJump(null);
+    void jumpToSearchHit(jump.topicId, jump.messageId);
+  });
   onMount(() => {
     const io = new IntersectionObserver(
       (entries) => {

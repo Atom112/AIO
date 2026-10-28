@@ -50,10 +50,19 @@ pub(crate) fn tool_result_display(result: &Result<ToolResult, String>) -> (Strin
 /// Shared by the main loop and the subagent loop. `null_content` selects the main
 /// loop's convention: an empty string content serializes as JSON null (the subagent
 /// loop keeps the empty string as-is).
+///
+/// `roundtrip_reasoning` (DeepSeek's documented tool-call contract): the round's
+/// `reasoning_content` rides the assistant message back — it is the model's
+/// cross-round WORKING MEMORY; dropping it made every round re-think from
+/// scratch and re-read files (harness round 3's "re-reads dozens of files,
+/// never acts" report). The flag comes from the provider plugin
+/// ([`crate::plugins::provider::ProviderPlugin::roundtrip_reasoning_content`]) —
+/// OpenAI's strict schema rejects the field, so it stays provider-scoped.
 pub(crate) fn append_assistant_message(
     messages: &mut Vec<Value>,
     rr: &RoundResult,
     null_content: bool,
+    roundtrip_reasoning: bool,
 ) {
     let mut asst_obj = serde_json::Map::new();
     asst_obj.insert("role".into(), json!("assistant"));
@@ -68,6 +77,9 @@ pub(crate) fn append_assistant_message(
             rr.api_content.clone()
         },
     );
+    if roundtrip_reasoning && !rr.reasoning.is_empty() {
+        asst_obj.insert("reasoning_content".into(), json!(rr.reasoning));
+    }
     if !rr.tool_calls.is_empty() {
         asst_obj.insert("tool_calls".into(), json!(tool_calls_json(&rr.tool_calls)));
     }
@@ -266,9 +278,19 @@ mod tests {
     use crate::commands::llm::streaming::RoundResult;
 
     fn rr(content: &str, api_content: Value, tcs: Vec<ToolCallAccum>) -> RoundResult {
+        rr_with_reasoning(content, "", api_content, tcs)
+    }
+
+    /// Same as [`rr`] with the round's reasoning_content (DeepSeek round-trip tests).
+    fn rr_with_reasoning(
+        content: &str,
+        reasoning: &str,
+        api_content: Value,
+        tcs: Vec<ToolCallAccum>,
+    ) -> RoundResult {
         RoundResult {
             content: content.to_string(),
-            reasoning: String::new(),
+            reasoning: reasoning.to_string(),
             tool_calls: tcs,
             input_tokens: 0,
             output_tokens: 0,
@@ -295,6 +317,7 @@ mod tests {
             &mut msgs,
             &rr("", json!("working"), vec![tc("a1", "read_file", "{}")]),
             false,
+            false,
         );
         let asst = msgs.last().unwrap();
         assert_eq!(asst["role"], "assistant");
@@ -309,7 +332,7 @@ mod tests {
     #[test]
     fn assistant_message_no_tool_calls_omits_the_field() {
         let mut msgs = Vec::new();
-        append_assistant_message(&mut msgs, &rr("hi", json!("hi"), Vec::new()), false);
+        append_assistant_message(&mut msgs, &rr("hi", json!("hi"), Vec::new()), false, false);
         assert!(msgs[0].get("tool_calls").is_none());
     }
 
@@ -317,12 +340,40 @@ mod tests {
     fn main_loop_null_content_convention() {
         let mut msgs = Vec::new();
         // Empty string api_content -> JSON null (main loop convention)
-        append_assistant_message(&mut msgs, &rr("", json!(""), Vec::new()), true);
+        append_assistant_message(&mut msgs, &rr("", json!(""), Vec::new()), true, false);
         assert_eq!(msgs[0]["content"], Value::Null);
         // Non-empty stays a string
         let mut msgs2 = Vec::new();
-        append_assistant_message(&mut msgs2, &rr("x", json!("x"), Vec::new()), true);
+        append_assistant_message(&mut msgs2, &rr("x", json!("x"), Vec::new()), true, false);
         assert_eq!(msgs2[0]["content"], "x");
+    }
+
+    /// DeepSeek tool-call contract (harness round 3): with the roundtrip flag the
+    /// round's reasoning rides the assistant message back as `reasoning_content`
+    /// (cross-round working memory); without it the field never appears (strict
+    /// schemas); empty reasoning stays absent either way.
+    #[test]
+    fn assistant_message_roundtrips_reasoning_when_flagged() {
+        let r_with = rr_with_reasoning(
+            "content",
+            "思考中……结论",
+            json!("content"),
+            vec![tc("a1", "read_file", "{}")],
+        );
+        let mut msgs = Vec::new();
+        append_assistant_message(&mut msgs, &r_with, true, true);
+        assert_eq!(msgs[0]["reasoning_content"], "思考中……结论");
+
+        // Flag off: field absent (OpenAI strict schema never sees it)
+        let mut msgs2 = Vec::new();
+        append_assistant_message(&mut msgs2, &r_with, true, false);
+        assert!(msgs2[0].get("reasoning_content").is_none());
+
+        // Flag on but empty reasoning: absent (DeepSeek treats missing == no thinking)
+        let r_empty = rr("", json!("content"), Vec::new());
+        let mut msgs3 = Vec::new();
+        append_assistant_message(&mut msgs3, &r_empty, true, true);
+        assert!(msgs3[0].get("reasoning_content").is_none());
     }
 
     #[test]

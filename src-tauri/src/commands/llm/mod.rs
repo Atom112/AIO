@@ -222,7 +222,9 @@ pub async fn call_llm_stream(
         let conn = db_state.0.lock();
         messages
             .iter()
-            .map(|message| message_metadata_for_api(&conn, message))
+            // Chat mode (no tools): the reasoning round-trip is a tools-only
+            // contract (DeepSeek ignores the field without tools) — pass false.
+            .map(|message| message_metadata_for_api(&conn, message, false))
             .collect::<Result<Vec<_>, _>>()?
     };
     let messages_for_api = messages_for_api
@@ -1401,11 +1403,16 @@ pub(crate) async fn run_agent_turn_inner(
     // LOOP-10: the lock covers ONLY the SQLite metadata pass — the image disk
     // reads + base64 used to run inside it (every turn re-read the whole history's
     // attachments while every other DB user waited).
+    // Round-trip flag (DeepSeek tool-call contract): the model's reasoning rides
+    // the assistant messages back as working memory — see deepseek.rs.
+    let roundtrip_reasoning = crate::plugins::provider::ProviderManager::new()
+        .for_url(&api_url)
+        .roundtrip_reasoning_content(&model);
     let message_jobs: Vec<MessageApiJob<'_>> = {
         let conn = db_state.0.lock();
         messages
             .iter()
-            .map(|m| message_metadata_for_api(&conn, m))
+            .map(|m| message_metadata_for_api(&conn, m, roundtrip_reasoning))
             .collect::<Result<Vec<_>, _>>()?
     };
     let mut messages_for_api: Vec<serde_json::Value> = message_jobs

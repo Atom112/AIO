@@ -28,6 +28,11 @@ pub(crate) struct AttachmentMeta {
 pub(crate) struct MessageApiJob<'a> {
     message: &'a Message,
     attachments: Vec<AttachmentMeta>,
+    /// DeepSeek tool-call contract (harness round 3): carry the assistant
+    /// message's `reasoning` back as `reasoning_content` — the model's
+    /// cross-round working memory in tool-carrying conversations. Provider
+    /// scoped (the plugin's flag): OpenAI's strict schema rejects the field.
+    roundtrip_reasoning: bool,
 }
 
 /// LOOP-10 phase 1 (lock-held): collect the metadata a message's expansion
@@ -35,6 +40,7 @@ pub(crate) struct MessageApiJob<'a> {
 pub(crate) fn message_metadata_for_api<'a>(
     conn: &rusqlite::Connection,
     message: &'a Message,
+    roundtrip_reasoning: bool,
 ) -> Result<MessageApiJob<'a>, String> {
     let mut attachments = Vec::new();
     if let Some(files) = &message.display_files {
@@ -75,6 +81,7 @@ pub(crate) fn message_metadata_for_api<'a>(
     Ok(MessageApiJob {
         message,
         attachments,
+        roundtrip_reasoning,
     })
 }
 
@@ -165,6 +172,19 @@ pub(crate) fn finish_message_for_api(job: MessageApiJob<'_>) -> Result<serde_jso
     let mut object = serde_json::Map::new();
     object.insert("role".into(), json!(message.role));
     object.insert("content".into(), content);
+    // DeepSeek tool-call contract: the assistant message's reasoning rides back
+    // as `reasoning_content` (cross-round working memory). The DB stores it per
+    // message (v2 migration); without it the model re-thinks and re-reads files
+    // every round. Gated by the provider flag — strict schemas reject the field.
+    if job.roundtrip_reasoning
+        && message.role == "assistant"
+        && message.reasoning.as_deref().is_some_and(|r| !r.is_empty())
+    {
+        object.insert(
+            "reasoning_content".into(),
+            json!(message.reasoning.as_deref().unwrap_or("")),
+        );
+    }
     if let Some(tool_call_id) = &message.tool_call_id {
         object.insert("tool_call_id".into(), json!(tool_call_id));
     }
@@ -179,13 +199,14 @@ pub(crate) fn finish_message_for_api(job: MessageApiJob<'_>) -> Result<serde_jso
 
 /// Convenience single-call form (metadata + finish back to back). Test-only:
 /// the agent-loop call sites use the two phases separately so the global DB
-/// lock never spans a disk read (LOOP-10).
+/// lock never spans a disk read (LOOP-10). Round-trips reasoning (the DeepSeek
+/// contract) so tests exercise the round-trip shape.
 #[cfg(test)]
 pub(crate) fn message_for_api(
     conn: &rusqlite::Connection,
     message: &Message,
 ) -> Result<serde_json::Value, String> {
-    finish_message_for_api(message_metadata_for_api(conn, message)?)
+    finish_message_for_api(message_metadata_for_api(conn, message, true)?)
 }
 
 /// Append one message to a topic (the authoritative write path into storage).
@@ -287,5 +308,57 @@ pub(crate) fn extract_text_content(content: &serde_json::Value) -> String {
             .collect::<Vec<_>>()
             .join(" "),
         _ => String::new(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::models::Message;
+
+    /// DeepSeek tool-call contract (harness round 3): the assistant message's
+    /// stored reasoning rides back as `reasoning_content` when the provider flag
+    /// is set — the model's cross-round working memory; the field stays absent
+    /// for tool results / user messages, and when the flag is off (strict schemas).
+    #[test]
+    fn finish_message_roundtrips_reasoning_when_flagged() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        let asst = Message {
+            role: "assistant".to_string(),
+            content: "答案".into(),
+            reasoning: Some("先读文件再决定".into()),
+            ..Default::default()
+        };
+        let job = message_metadata_for_api(&conn, &asst, true).unwrap();
+        let v = finish_message_for_api(job).unwrap();
+        assert_eq!(v["reasoning_content"], "先读文件再决定");
+
+        // Flag off: the field never appears
+        let job = message_metadata_for_api(&conn, &asst, false).unwrap();
+        let v = finish_message_for_api(job).unwrap();
+        assert!(v.get("reasoning_content").is_none());
+
+        // Tool-result messages never carry it (role-scoped)
+        let tool = Message {
+            role: "tool".to_string(),
+            content: "ok".into(),
+            reasoning: Some("不应出现".into()),
+            tool_call_id: Some("t1".into()),
+            ..Default::default()
+        };
+        let job = message_metadata_for_api(&conn, &tool, true).unwrap();
+        let v = finish_message_for_api(job).unwrap();
+        assert!(v.get("reasoning_content").is_none());
+
+        // Empty reasoning: absent (no-thinking rounds)
+        let quiet = Message {
+            role: "assistant".to_string(),
+            content: "ok".into(),
+            reasoning: Some(String::new()),
+            ..Default::default()
+        };
+        let job = message_metadata_for_api(&conn, &quiet, true).unwrap();
+        let v = finish_message_for_api(job).unwrap();
+        assert!(v.get("reasoning_content").is_none());
     }
 }

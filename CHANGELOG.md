@@ -332,6 +332,18 @@ cargo 424 Rust 测试（6 ignored 真机项）、78 前端测试、gates 全过�
 
 ## [Unreleased]
 
+### 🧠 DeepSeek V4.1 思考/行动比例失衡根修（实测反馈：思考几十分钟、重读几十个文件不动手）
+
+接入 DeepSeek V4.1 Flash 的实装报告：agent 思考占绝对比例、反复重读文件迟迟不操作。诊断 = 模型特质 × harness 两个真实缺陷的放大，本轮修掉 harness 侧：
+
+- **缺陷 ①（主因）`reasoning_content` 不回传——违反 DeepSeek 工具调用契约。** 官方文档：带 `tools` 的请求必须把每条 assistant 消息的 `reasoning_content` 完整回传，它是模型**跨轮工作记忆**（"让模型继续之前的思考"）。AIO 两条路径都把它丢了（轮内 `append_assistant_message` 只拼 role/content/tool_calls；历史 `finish_message_for_api` 同样不插，DB 里明明存着）——每轮思考结论被扔掉 → 下轮从零重想 → 重读文件重建认知 → 循环。修复：
+  - 新增 `deepseek` provider 插件（认领 `api.deepseek.com`；URL/鉴权/模型解析委托 fallback），trait 新增 `roundtrip_reasoning_content`（默认 false——OpenAI 严格 schema 拒绝未知字段，必须 provider 隔离）
+  - 轮内：`append_assistant_message` 在 flag 开启时把轮的 reasoning 以 `reasoning_content` 附回（空则省略）；主循环每回合计算一次，子代理循环同接线
+  - 历史：`finish_message_for_api` 同 flag 插入（仅 assistant 角色 + 非空）；FE `buildApiMessages` 把消息的 reasoning 传给后端（DB 已有该列）；无 tools 的聊天模式按契约不发（服务端会忽略）
+- **缺陷 ② 推理滑杆对 DeepSeek 是摆设。** 文档：思考默认开且 effort 默认 `high`；唯一关闭方式是 `{"thinking":{"type":"disabled"}}`——AIO 从没发过。修复：trait 新增 `adjust_chat_body`（默认空操作），`stream_one_round` 在 body 组装后无条件调用；DeepSeek 实现为——`off` 档发 thinking:disabled（滑杆「关」首次为真；**行为变化**：DeepSeek 用户 off 档不再有思维链输出，需要思考请调 low+）、`medium` 发 low（上游把 medium 折叠成 high，发 low 才能保住三档可区分）、low/high 原样；子代理轮（不继承滑杆）默认 disabled——子代理是执行角色，不吃高档思考
+- 模型侧事实（不修，记录）：V4.1 Flash 默认高档思考是官方行为；社区有专门治其循环的 dsh-repeat-guard。**降思考的正确杠杆现在是：滑杆 low 档**（唯一真实减速档）
+- 测试：provider +4（host 认领/护栏、思考阶梯映射、URL 委托）、round_artifacts +1（回传三分支：flag 开/关/空）、messages +1（历史回传角色限定与 flag 门控）；全量 469 过 + `npm run verify` 全绿（87 FE 测试、门禁 rgba=173 any=77 棘轮持平）
+
 ### 🧰 自迭代 harness 反馈清偿·第二轮（pwsh 对象输出三大 P0）
 
 AIO 的 agent 自迭代第二轮（修子代理卡片逐 token 抖动，PR #239）留下实测报告 8 项（`.temp/harness-report-round2.md`，全文存档于跟踪 issue）；三项 P0 均为「pwsh 对象型输出 × 管道捕获」的深坑，本轮全部根修并经真 pwsh 行为矩阵实证：

@@ -21,7 +21,7 @@
 聊天输入区提供以下开关：
 
 - 模型：选择当前助手使用的远程或本地模型。
-- 推理强度：关闭、低、中、高（滑杆样式）。对支持原生推理参数的模型（依据模型目录的 reasoning 能力标记识别），该档位会作为真实请求参数下发——OpenAI 兼容端点发送 `reasoning_effort`，Anthropic 端点换算为 `thinking` 思考预算；对不支持的模型则退回注入对应提示词。Provider 返回原生 `reasoning_content` 时单独展示。
+- 推理强度：关闭、低、中、高（滑杆样式）。对支持原生推理参数的模型（依据模型目录的 reasoning 能力标记识别），该档位会作为真实请求参数下发——OpenAI 兼容端点发送 `reasoning_effort`，Anthropic 端点换算为 `thinking` 思考预算；对不支持的模型则退回注入对应提示词。Provider 返回原生 `reasoning_content` 时单独展示。DeepSeek 官方 API 的映射：**「关」= 显式关闭思考**（DeepSeek 默认开启且默认高档，不发参数关不掉）；「中」按其真实档位阶梯（低/高/最高）下发为「低」；子代理轮默认关闭思考（执行角色不吃高档推理）。带工具调用的 DeepSeek 会话中，各轮 `reasoning_content` 会按官方契约随消息回传（模型的跨轮工作记忆）。
 - 联网搜索：允许 Agent 使用 `web_search` 和 `web_fetch`；普通聊天只会收到联网提示，不会自动获得项目工具。
 - Agent 模式：在只读、工作区内修改、完全权限、本机全权和 Plan 之间切换。
 

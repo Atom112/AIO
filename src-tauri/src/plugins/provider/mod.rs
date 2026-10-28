@@ -13,6 +13,7 @@
 //! internal I/O is done by the caller within async commands), avoiding an `async_trait` dependency.
 
 pub mod anthropic;
+pub mod deepseek;
 pub mod google;
 pub mod ollama;
 pub mod openai_compat;
@@ -129,6 +130,37 @@ pub trait ProviderPlugin: Send + Sync {
         req
     }
 
+    /// Whether assistant messages in tool-carrying conversations must carry
+    /// their `reasoning_content` back to the API (harness round 3, real-world
+    /// DeepSeek V4.1 Flash report: "thinks for tens of minutes, re-reads dozens
+    /// of files, never acts").
+    ///
+    /// DeepSeek's documented tool-call contract makes the field the model's
+    /// cross-round working memory — dropping it forces every round to re-think
+    /// from scratch and re-read files to re-establish understanding. Default
+    /// false: strict OpenAI schemas reject the unknown message field, so only
+    /// providers documenting the contract opt in.
+    fn roundtrip_reasoning_content(&self, _model: &str) -> bool {
+        false
+    }
+
+    /// Provider-specific chat-body adjustments after the generic fields are set
+    /// (model, messages, stream, tools, reasoning_effort). Runs on the streaming
+    /// chat path only — the aux non-streaming paths stay provider-agnostic.
+    ///
+    /// DeepSeek's override maps the reasoning ladder onto its real one
+    /// (low/high/max; upstream collapses medium→high) and actively disables
+    /// thinking when the caller passes no effort — the documented
+    /// `{"thinking":{"type":"disabled"}}` switch, without which the reasoning
+    /// slider's "off" is a no-op (thinking defaults ON at high effort).
+    /// Default: no-op.
+    fn adjust_chat_body(
+        &self,
+        _body: &mut serde_json::Map<String, serde_json::Value>,
+        _reasoning_effort: Option<&str>,
+    ) {
+    }
+
     /// Parses the JSON response into the unified LiveModel list
     fn parse_models(&self, body: &serde_json::Value) -> Vec<LiveModel>;
 
@@ -156,6 +188,7 @@ impl ProviderManager {
         // Registration order matters: dedicated plugins first; openai_compat must stay last as the fallback
         mgr.register(Arc::new(google::GoogleProvider));
         mgr.register(Arc::new(anthropic::AnthropicProvider));
+        mgr.register(Arc::new(deepseek::DeepSeekProvider));
         mgr.register(Arc::new(ollama::OllamaProvider));
         mgr.register(Arc::new(opencode::OpenCodeProvider));
         mgr.register(Arc::new(perplexity::PerplexityProvider));

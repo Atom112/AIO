@@ -42,6 +42,11 @@ export const truncateToolResult = (content: string): string => {
  */
 export function buildApiMessages(m: any): any[] {
   const obj: any = { role: m.role, content: m.content };
+  // Reasoning (DeepSeek tool-call contract): the backend re-attaches it as
+  // `reasoning_content` on assistant messages when the provider requires the
+  // round-trip (the model's cross-round working memory). Chat-mode calls without
+  // tools drop it server-side per the same contract.
+  if (m.role === 'assistant' && m.reasoning) obj.reasoning = m.reasoning;
   if (m.images?.length) obj.images = m.images; // the backend strips the aio-image marker from this and expands image_url blocks
   if (m.displayFiles?.length) obj.displayFiles = m.displayFiles; // attachments (incl. images); the backend reads these and expands image_url blocks
   if (m.toolCallId) obj.toolCallId = m.toolCallId;

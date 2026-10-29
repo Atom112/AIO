@@ -31,6 +31,11 @@ import { subagentProfileLabel } from './SubagentConversationView';
 import { getSubagentProfileStyle } from '../../../core/utils/subagentProfileStyle';
 import { stopSubagent } from '../../../core/api/chat';
 import { formatNumber, t } from '../../../core/i18n';
+import {
+  hiddenStepCount as hiddenStepCountOf,
+  windowedStepIds,
+  STEP_WINDOW,
+} from '../utils/stepWindow';
 
 interface AgentProcessBlockProps {
   /** Native chain-of-thought text from the model (old mode) */
@@ -261,6 +266,13 @@ const StepCard: Component<{
         '--step-border-color': getStepBorderColor(props.step),
         'border-left': `2px solid var(--step-border-color, var(--border-dim))`,
         transition: 'border-color 0.3s, background 0.2s',
+        // Offscreen cards skip layout/paint entirely: the step list scrolls inside
+        // a 620px box but a revealed round can hold hundreds of cards, and laying
+        // all of them out per frame was the expansion cost. Same pattern as
+        // MessageBubble's rows; `auto <len>` remembers each card's last height so
+        // the scrollbar does not jump while cards are skipped.
+        'content-visibility': 'auto',
+        'contain-intrinsic-size': 'auto 56px',
         ...(props.step.status === 'running'
           ? {
               background: 'rgba(var(--primary-rgb), 0.03)',
@@ -603,15 +615,6 @@ const AgentProcessBlock: Component<AgentProcessBlockProps> = (props) => {
     !!(props.toolCalls && props.toolCalls.length > 0);
   const hasContent = () => hasSteps() || hasOldContent();
 
-  // Timeline steps: exclude the last content step (it is the final reply, already shown in the Markdown bubble below)
-  const timelineSteps = () => {
-    const steps = props.agentSteps;
-    if (!steps || steps.length === 0) return [];
-    const last = steps[steps.length - 1];
-    if (last.type === 'content') return steps.slice(0, -1);
-    return steps;
-  };
-
   // ---- Render buffer: the agent may create 7-8 tool-call steps nearly simultaneously; rendering
   // them directly makes the animations push each other around into visual chaos. New steps enter a
   // queue and are dequeued one by one at a fixed interval for an orderly streaming entrance.
@@ -636,23 +639,37 @@ const AgentProcessBlock: Component<AgentProcessBlockProps> = (props) => {
 
   // ---- Historical-round step window (the chat page's paged-rendering pattern,
   // one level deeper): an inactive giant round can carry hundreds of steps (a
-  // single 5MB round is a real case on the dev machine). The outer collapse
-  // does NOT prevent mounting — max-height:0 still builds every card's DOM —
-  // so switching to a long session mounted all of them at once (the reported
-  // switch wait). Inactive blocks mount only the most recent STEP_WINDOW
-  // steps; the "show earlier" control reveals the rest. Active blocks stream
-  // through the render queue and are unaffected by the window.
-  const STEP_WINDOW = 100;
-  const [showAllSteps, setShowAllSteps] = createSignal(false);
-  const windowedIds = createMemo(() => {
-    const ids = visibleIds();
-    if (props.isActive || showAllSteps() || ids.length <= STEP_WINDOW) return ids;
-    return ids.slice(ids.length - STEP_WINDOW);
-  });
-  const hiddenStepCount = () =>
-    props.isActive || showAllSteps() ? 0 : Math.max(0, visibleIds().length - STEP_WINDOW);
+  // single 8MB / 588-step round is a real case on the dev machine). The outer
+  // collapse does NOT prevent mounting — max-height:0 still builds every card's
+  // DOM — so switching to a long session mounted all of them at once (the
+  // reported switch wait). Inactive blocks mount only the most recent
+  // STEP_WINDOW steps; the "show earlier" control reveals ANOTHER bounded page
+  // per click (the historic one-shot reveal mounted all 588 in a single frame,
+  // collapsing the frame rate). Active blocks stream through the render queue
+  // and are unaffected by the window.
+  const [revealCount, setRevealCount] = createSignal(0);
+  const windowedIds = createMemo(() =>
+    windowedStepIds(visibleIds(), props.isActive, revealCount()),
+  );
+  const hiddenStepCount = () => hiddenStepCountOf(visibleIds(), props.isActive, revealCount());
 
-  const stepById = (id: string): AgentStep | undefined => timelineSteps().find((s) => s.id === id);
+  // Step lookup index: the historic `timelineSteps().find(...)` ran a linear
+  // scan (plus a full array slice per call) for EVERY rendered card on every
+  // recompute — O(n²) with n≈588 (≈345k element copies for a full reveal).
+  // Two memos make it O(n) once per change and O(1) per card.
+  const timeline = createMemo(() => {
+    const steps = props.agentSteps;
+    if (!steps || steps.length === 0) return [] as AgentStep[];
+    const last = steps[steps.length - 1];
+    // Exclude the last content step (the final reply, shown in the Markdown bubble below)
+    return last.type === 'content' ? steps.slice(0, -1) : steps;
+  });
+  const stepIndex = createMemo(() => {
+    const map = new Map<string, AgentStep>();
+    for (const s of timeline()) map.set(s.id, s);
+    return map;
+  });
+  const stepById = (id: string): AgentStep | undefined => stepIndex().get(id);
 
   // Dequeue-render subscriber: after a remount only the newest instance receives dequeue notifications; the old DOM was already destroyed by <For>.
   const subscriber = (id: string) =>
@@ -676,9 +693,19 @@ const AgentProcessBlock: Component<AgentProcessBlockProps> = (props) => {
 
   // Watch source steps: while active, new steps enqueue and render one by one; when inactive, sync the full list directly
   createEffect(() => {
-    const steps = timelineSteps();
+    // Collapsed historical round: nothing is mounted (the body is gated by
+    // <Show when={isExpanded()}>), so the O(n) id sync is pure waste — this is
+    // the topic-switch cost the report measured (max-height:0 used to build
+    // every card anyway). Depends on isExpanded() so expanding populates lazily.
+    if (!props.isActive && !isExpanded()) return;
+    const steps = timeline();
     if (!props.isActive) {
-      // Inactive (historical data / finished): render everything at once, clear the queue and free this round's queue state
+      // Inactive (historical data / finished): render everything at once, clear the queue and free this round's queue state.
+      // Pre-mark every step as animated (same contract as ChatInterface's "load earlier":
+      // history revealed by paging must NOT replay entrance animations) — with lazy
+      // mounting these ids reach the DOM for the first time on expand, and a hundred
+      // concurrent entrance animations would be both busy and a layout cost.
+      steps.forEach((s) => markStepAnimated(s.id));
       if (queue.dequeueTimer) {
         clearTimeout(queue.dequeueTimer);
         queue.dequeueTimer = null;
@@ -735,96 +762,100 @@ const AgentProcessBlock: Component<AgentProcessBlockProps> = (props) => {
           </span>
         </button>
 
-        {/* Body: scrolling lives on the outer wrapper; inner content lays out normally without compression */}
+        {/* Body: scrolling lives on the outer wrapper; inner content lays out normally without compression.
+            The inner <Show> is the LAZY-MOUNT gate: a collapsed historical round mounts ZERO step cards
+            (before it, max-height:0 hid the cards but still built their DOM — the reported switch cost). */}
         <div
           class="overflow-hidden transition-[max-height] duration-300 ease-in-out"
           style={isExpanded() ? 'max-height: 620px' : 'max-height: 0'}
         >
-          <div
-            ref={stepsContainerRef}
-            class="overflow-y-auto"
-            style={{ 'max-height': '620px' }}
-            onScroll={handleStepsScroll}
-            onWheel={handleStepsWheel}
-          >
-            {/* RO-observed content wrapper: grows with the step stack even after the
-                container hits its max-height cap (see stepsContentRef comment above) */}
-            <div ref={stepsContentRef}>
-              {/* === New mode: timeline cards === */}
-              <Show when={hasSteps()}>
-                <div class="flex flex-col gap-2 px-3">
-                  <Show when={hiddenStepCount() > 0}>
-                    <button
-                      type="button"
-                      class="flex justify-center w-full cursor-pointer select-none bg-transparent border-none text-xs text-white/40 transition-colors duration-200 hover:text-white/70 py-1"
-                      onClick={() => setShowAllSteps(true)}
-                    >
-                      {t('agent.step.showEarlier', { count: formatNumber(hiddenStepCount()) })}
-                    </button>
-                  </Show>
-                  <For each={windowedIds()}>
-                    {(id) => {
-                      // Use a memo to fetch the latest step object: status updates (running→complete)
-                      // show live, while <For>'s each is a stable id list so the DOM is not rebuilt
-                      const step = createMemo(() => stepById(id));
-                      return (
-                        <Show when={step()}>
-                          <StepCard
-                            step={step()!}
-                            isActive={props.isActive}
-                            expanded={isStepExpanded(step()!)}
-                            onToggle={() => toggleStep(id)}
-                          />
-                        </Show>
-                      );
-                    }}
-                  </For>
-                </div>
-              </Show>
-
-              {/* === Old mode (fallback): flat three blocks === */}
-              <Show when={!hasSteps() && hasOldContent()}>
-                <Show when={props.reasoning && props.reasoning.trim()}>
-                  <div class="mb-2">
-                    <div class="flex items-center text-[11px] font-medium mb-1 text-white/40">
-                      <Icon name="brain" size={11} class="mr-1.5 opacity-60" />
-                      {t('agent.step.thinking')}
-                    </div>
-                    <div class="text-[12.5px] leading-relaxed italic whitespace-pre-wrap break-words text-white/55 px-2.5 py-2 rounded-md bg-black/15 border-l-2 border-l-white/[0.08] max-h-[360px] overflow-y-auto">
-                      {props.reasoning}
-                    </div>
-                  </div>
-                </Show>
-
-                <Show when={props.interimContent && props.interimContent.trim()}>
-                  <div class="mb-2">
-                    <div class="flex items-center text-[11px] font-medium mb-1 text-white/40">
-                      <Icon name="document" size={11} class="mr-1.5 opacity-60" />
-                      {t('agent.step.interim')}
-                    </div>
-                    <div class="text-[12.5px] leading-relaxed italic whitespace-pre-wrap break-words text-white/55 px-2.5 py-2 rounded-md bg-black/15 border-l-2 border-l-white/[0.08] max-h-[360px] overflow-y-auto">
-                      <Markdown content={props.interimContent!} />
-                    </div>
-                  </div>
-                </Show>
-
-                <Show when={props.toolCalls && props.toolCalls.length > 0}>
-                  <div class="agent-process-toolcalls">
-                    <For each={props.toolCalls}>
-                      {(tc) => (
-                        <ToolCallBubble
-                          toolCall={tc}
-                          state={tc.state ?? 'calling'}
-                          result={tc.result}
-                          error={tc.error}
-                        />
-                      )}
+          <Show when={isExpanded()}>
+            <div
+              ref={stepsContainerRef}
+              class="overflow-y-auto"
+              style={{ 'max-height': '620px' }}
+              onScroll={handleStepsScroll}
+              onWheel={handleStepsWheel}
+            >
+              {/* RO-observed content wrapper: grows with the step stack even after the
+                  container hits its max-height cap (see stepsContentRef comment above) */}
+              <div ref={stepsContentRef}>
+                {/* === New mode: timeline cards === */}
+                <Show when={hasSteps()}>
+                  <div class="flex flex-col gap-2 px-3">
+                    <Show when={hiddenStepCount() > 0}>
+                      <button
+                        type="button"
+                        class="flex justify-center w-full cursor-pointer select-none bg-transparent border-none text-xs text-white/40 transition-colors duration-200 hover:text-white/70 py-1"
+                        onClick={() => setRevealCount((c) => c + STEP_WINDOW)}
+                      >
+                        {t('agent.step.showEarlier', { count: formatNumber(hiddenStepCount()) })}
+                      </button>
+                    </Show>
+                    <For each={windowedIds()}>
+                      {(id) => {
+                        // Use a memo to fetch the latest step object: status updates (running→complete)
+                        // show live, while <For>'s each is a stable id list so the DOM is not rebuilt
+                        const step = createMemo(() => stepById(id));
+                        return (
+                          <Show when={step()}>
+                            <StepCard
+                              step={step()!}
+                              isActive={props.isActive}
+                              expanded={isStepExpanded(step()!)}
+                              onToggle={() => toggleStep(id)}
+                            />
+                          </Show>
+                        );
+                      }}
                     </For>
                   </div>
                 </Show>
-              </Show>
+
+                {/* === Old mode (fallback): flat three blocks === */}
+                <Show when={!hasSteps() && hasOldContent()}>
+                  <Show when={props.reasoning && props.reasoning.trim()}>
+                    <div class="mb-2">
+                      <div class="flex items-center text-[11px] font-medium mb-1 text-white/40">
+                        <Icon name="brain" size={11} class="mr-1.5 opacity-60" />
+                        {t('agent.step.thinking')}
+                      </div>
+                      <div class="text-[12.5px] leading-relaxed italic whitespace-pre-wrap break-words text-white/55 px-2.5 py-2 rounded-md bg-black/15 border-l-2 border-l-white/[0.08] max-h-[360px] overflow-y-auto">
+                        {props.reasoning}
+                      </div>
+                    </div>
+                  </Show>
+
+                  <Show when={props.interimContent && props.interimContent.trim()}>
+                    <div class="mb-2">
+                      <div class="flex items-center text-[11px] font-medium mb-1 text-white/40">
+                        <Icon name="document" size={11} class="mr-1.5 opacity-60" />
+                        {t('agent.step.interim')}
+                      </div>
+                      <div class="text-[12.5px] leading-relaxed italic whitespace-pre-wrap break-words text-white/55 px-2.5 py-2 rounded-md bg-black/15 border-l-2 border-l-white/[0.08] max-h-[360px] overflow-y-auto">
+                        <Markdown content={props.interimContent!} />
+                      </div>
+                    </div>
+                  </Show>
+
+                  <Show when={props.toolCalls && props.toolCalls.length > 0}>
+                    <div class="agent-process-toolcalls">
+                      <For each={props.toolCalls}>
+                        {(tc) => (
+                          <ToolCallBubble
+                            toolCall={tc}
+                            state={tc.state ?? 'calling'}
+                            result={tc.result}
+                            error={tc.error}
+                          />
+                        )}
+                      </For>
+                    </div>
+                  </Show>
+                </Show>
+              </div>
             </div>
-          </div>
+          </Show>
         </div>
       </div>
     </Show>

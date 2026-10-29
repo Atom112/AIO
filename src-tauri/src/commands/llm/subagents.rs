@@ -1310,7 +1310,16 @@ pub(crate) async fn execute_subagent(
             Ok(rr) => {
                 // Append the assistant message to the subagent context
                 // (shared construction with the main loop; null_content=false keeps the empty string)
-                super::round_artifacts::append_assistant_message(&mut sub_msgs, &rr, false);
+                // DeepSeek contract: round-trip the reasoning as cross-round working
+                // memory (same flag the main loop computes once per turn).
+                super::round_artifacts::append_assistant_message(
+                    &mut sub_msgs,
+                    &rr,
+                    false,
+                    crate::plugins::provider::ProviderManager::new()
+                        .for_url(api_url)
+                        .roundtrip_reasoning_content(model_to_use),
+                );
 
                 // Emit the subagent step event (notify the frontend).
                 // Harness round 11: with live delta streaming the narration text already

@@ -138,6 +138,14 @@ pub(crate) async fn stream_one_round(
     if let Some(effort) = reasoning_effort {
         apply_reasoning_effort(&mut body_map, effort);
     }
+    // Provider-specific body shaping (harness round 3, DeepSeek's thinking-mode
+    // contract): runs UNCONDITIONALLY — DeepSeek's "off" must actively send
+    // thinking:disabled (the model otherwise defaults to thinking at HIGH effort
+    // and the slider is a no-op), and its real effort ladder remaps medium→low.
+    // Default no-op for every other provider.
+    crate::plugins::provider::ProviderManager::new()
+        .for_url(api_url.as_str())
+        .adjust_chat_body(&mut body_map, reasoning_effort);
     let body = serde_json::Value::Object(body_map);
 
     // TTFT measurement: the clock starts right before the HTTP request is issued, so

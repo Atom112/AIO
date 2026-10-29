@@ -27,6 +27,7 @@ pub mod lsp_tools;
 pub mod project_index;
 pub mod project_map;
 pub mod sandbox;
+pub mod shell_codec;
 pub mod shell_tools;
 pub mod ssrf;
 pub mod think;

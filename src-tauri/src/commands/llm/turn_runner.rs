@@ -138,6 +138,13 @@ impl AgentTurnRunner {
         let max_concurrent = resolve_subagent_concurrency(app_config.max_concurrent_subagents);
         let subagent_semaphore = Arc::new(Semaphore::new(max_concurrent));
 
+        // DeepSeek tool-call contract (harness round 3): the provider needs the
+        // round's reasoning_content round-tripped as the model's cross-round
+        // working memory — computed once per turn from the provider dispatch.
+        let roundtrip_reasoning = crate::plugins::provider::ProviderManager::new()
+            .for_url(&api_url)
+            .roundtrip_reasoning_content(&model);
+
         // SEC-7: resolve + judge + pin the provider endpoint once per turn (the
         // chat path carries the real API key). A policy violation (metadata /
         // rebinding target) fails the turn outright — the request must not go out.
@@ -519,10 +526,12 @@ impl AgentTurnRunner {
 
             // Append this round's assistant message (incl. tool_calls) to the context.
             // 阶段4 第1项（公共 agent_loop 地基）：与子代理循环共享的构造。
+            // roundtrip_reasoning：DeepSeek 契约——思维链随消息回传（模型跨轮工作记忆）。
             super::round_artifacts::append_assistant_message(
                 &mut messages_for_api,
                 &round_result,
                 true,
+                roundtrip_reasoning,
             );
 
             // Output truncated (finish_reason="length") with no tool calls: append a continuation

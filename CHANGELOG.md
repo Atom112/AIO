@@ -2,7 +2,11 @@
 
 # Changelog
 
-## Unreleased
+## [v1.0.0-alpha.6]
+
+<sup>Released on **2026-10-29**</sup>
+
+本版本主题：**实测驱动根修**——四条来自真实使用的反馈（子代理卡片动画抽搐、长过程话题切换/展开卡顿、DeepSeek 思考/行动失衡、pwsh 对象输出三类坑）全部定位到根因并修复，每条都附实测数据或行为矩阵验证。
 
 ### 🎬 子代理运行卡片动画抽搐根修（每 token 重启 stepCardPulse / 图标旋转）
 
@@ -11,6 +15,47 @@
 - **修复**：produce 草稿上**就地赋属性**（`subStep.subagentSteps = mutate(...)`）而非重建对象。Solid store 的 produce 是细粒度就地代理写：`steps[subIdx]` 引用在整个流式期间保持稳定，`StepCard` 的 `props.step` 身份不变，运行态动画不再被打断；仅 `subagentSteps` 属性本身的变化通知真正读它的订阅者（实时进度行、子代理会话视图），细粒度更新语义完整保留
 - **伴生修复（运行图标动画从未生效）**：`StepCard` 图标 `classList` 引用的 `'is-spinning'` 类在全仓 CSS 中**无任何定义**（孤儿类），运行中步骤图标一直静止；换成主题内已定义却从未被消费的 Tailwind v4 utility `animate-agent-process-spin`（`@theme` 变量 `--animate-agent-process-spin` + `agentProcessIconSpin` keyframes，2.4s linear infinite）
 - **验证**：编译产物探针确认 `style={{ ...(cond ? {...} : {}) }}` 编译为 `effect(() => style(el, {...}))`（细粒度响应、值不变不重设）；check:frontend 全绿（87 用例、tsc、eslint --max-warnings 0、prettier、gates 棘轮 rgba=173/any=77 持平、vite build）
+
+### 🧰 自迭代 harness 反馈清偿·第二轮（pwsh 对象输出三大 P0）
+
+AIO 的 agent 自迭代第二轮（修子代理卡片逐 token 抖动，PR #239）留下实测报告 8 项（`.temp/harness-report-round2.md`，全文存档于跟踪 issue）；三项 P0 均为「pwsh 对象型输出 × 管道捕获」的深坑，本轮全部根修并经真 pwsh 行为矩阵实证：
+
+- **P0-1 `exit` 吞掉格式化输出**：PowerShell 对象输出的默认格式化是**延迟提交**（runspace 关闭时才 flush），脚本级 `exit` 直接跳过 flush——「跑过一次 git 再输出表格」100% 变成 2 字节空输出，自迭代中三次误判「命令无输出」。修复：body 包进 scriptblock 经 `Out-Default` 立即渲染（`$?` 在块内捕获——管道会重置它）
+- **P0-2 `$LASTEXITCODE=0` 掩盖后续 cmdlet 报错**：旧尾部 `$null -ne $LASTEXITCODE` 在 native 命令成功后即成立并 `exit 0`，此后所有 PowerShell 层错误都被上报为成功（tool_ok 判定与失败签名检测全失效）。修复：仅非零 native 码才透传退出，否则落到块内捕获的 `$?`
+- **P0-3 stderr 序列化成 CLIXML**：stderr 被重定向时 PowerShell 把错误记录序列化为 `#< CLIXML <Objs><S …>`（`_x001B_[31;1m…` 完全不可读，文本签名全断）。修复：pwsh 启动参数追加 `-OutputFormat Text`（pwsh 7 生效、5.1 静默忽略）+ `decode_console_output` 新增 CLIXML 机械解码兜底（记录边界成行 / 剥标签 / 还原 `_xHHHH_` 实体 / 去 ANSI 色码）
+- **P1-1 `$()`/反引号一刀切拦截**：拒绝放行（`$()` 与意图无关地是命令替换向量，扫描先于信任决策）但拦截文案现给出等价改写（`-ExpandProperty` / `'+'` 拼接 / 临时 .ps1 经 `pwsh -File`），不再让 agent 烧轮次自行发现
+- **P2-3 续写丢锚点**：`finish_reason=length` 的续写指令现在携带被截断回复的最后 ~200 字符（多段结构化输出的第二段不再丢「说到哪了」）
+- **P2-5 报告落脚处**：报告全文落跟踪 issue（docs-style.md 既有约定「一次性产物归 PR 描述/issue/本地笔记」的执行补强）
+- **P1-2（findstr 多模式）/ P2-1（TSX 编译验证）/ P2-2（read_file 默认头尾）/ P2-4（多行脚本封装）**：评估后不修——环境事实与设计取舍，理由记录于 PR 描述
+- 测试：shell_tools 33 过（新增 3：CLIXML 解码 / 尾部结构 / 真 pwsh 行为矩阵——旧尾部下三用例全挂的回归锚）；round_artifacts +1（尾部锚点四分支）；全量 464 过
+
+### 🧠 DeepSeek V4.1 思考/行动比例失衡根修（实测反馈：思考几十分钟、重读几十个文件不动手）
+
+接入 DeepSeek V4.1 Flash 的实装报告：agent 思考占绝对比例、反复重读文件迟迟不操作。诊断 = 模型特质 × harness 两个真实缺陷的放大，本轮修掉 harness 侧：
+
+- **缺陷 ①（主因）`reasoning_content` 不回传——违反 DeepSeek 工具调用契约。** 官方文档：带 `tools` 的请求必须把每条 assistant 消息的 `reasoning_content` 完整回传，它是模型**跨轮工作记忆**（"让模型继续之前的思考"）。AIO 两条路径都把它丢了（轮内 `append_assistant_message` 只拼 role/content/tool_calls；历史 `finish_message_for_api` 同样不插，DB 里明明存着）——每轮思考结论被扔掉 → 下轮从零重想 → 重读文件重建认知 → 循环。修复：
+  - 新增 `deepseek` provider 插件（认领 `api.deepseek.com`；URL/鉴权/模型解析委托 fallback），trait 新增 `roundtrip_reasoning_content`（默认 false——OpenAI 严格 schema 拒绝未知字段，必须 provider 隔离）
+  - 轮内：`append_assistant_message` 在 flag 开启时把轮的 reasoning 以 `reasoning_content` 附回（空则省略）；主循环每回合计算一次，子代理循环同接线
+  - 历史：`finish_message_for_api` 同 flag 插入（仅 assistant 角色 + 非空）；FE `buildApiMessages` 把消息的 reasoning 传给后端（DB 已有该列）；无 tools 的聊天模式按契约不发（服务端会忽略）
+- **缺陷 ② 推理滑杆对 DeepSeek 是摆设。** 文档：思考默认开且 effort 默认 `high`；唯一关闭方式是 `{"thinking":{"type":"disabled"}}`——AIO 从没发过。修复：trait 新增 `adjust_chat_body`（默认空操作），`stream_one_round` 在 body 组装后无条件调用；DeepSeek 实现为——`off` 档发 thinking:disabled（滑杆「关」首次为真；**行为变化**：DeepSeek 用户 off 档不再有思维链输出，需要思考请调 low+）、`medium` 发 low（上游把 medium 折叠成 high，发 low 才能保住三档可区分）、low/high 原样；子代理轮（不继承滑杆）默认 disabled——子代理是执行角色，不吃高档思考
+- 模型侧事实（不修，记录）：V4.1 Flash 默认高档思考是官方行为；社区有专门治其循环的 dsh-repeat-guard。**降思考的正确杠杆现在是：滑杆 low 档**（唯一真实减速档）
+- 测试：provider +4（host 认领/护栏、思考阶梯映射、URL 委托）、round_artifacts +1（回传三分支：flag 开/关/空）、messages +1（历史回传角色限定与 flag 门控）；全量 469 过 + `npm run verify` 全绿（87 FE 测试、门禁 rgba=173 any=77 棘轮持平）
+
+### ⚡ 长过程话题切换/展开卡顿根修（实测：单话题 18 条但 1674 张步骤卡）
+
+实装反馈：切到 AIO 自身工作的话题（9 轮 18 条）加载明显慢于其他话题，展开其中数百个中间过程时帧率直降。查库实测该话题 `agent_steps_json` 合计 **16.53MB / ~1674 张步骤卡**（单条消息最高 588 步 / 381 次工具调用 / 8.01MB），定位到三个叠加成本：
+
+- **① 折叠的历史回合仍然全量挂载**（主因）：外层 `max-height:0` 只隐藏、不阻止挂载——切话题时为每个历史回合建满 100 张窗口卡的 DOM（5 个大回合 ≈ 500 张卡，每张带 effect/信号/920ms 入场定时器），加上每张卡一次 `timelineSteps().find()` 线性扫描。修复：body 加 **`<Show when={isExpanded()}>` 惰性挂载闸**——折叠的历史回合挂载 **0 张卡**（Solid `Show` 的 false 分支不建任何 DOM/组件/effect）；折叠时同步 effect 也直接短路，展开时才结算 id 列表
+- **② 「展开更早」一次性挂载全部**（展开卡顿主因）：原 `showAllSteps` 布尔一次揭示剩下全部（588 张一帧内建完）。改为**分页揭示**：每次点击多揭示一页（`STEP_WINDOW`=100），按钮文案实时显示剩余数——单帧 DOM 增量有界
+- **③ 每张卡逐次线性查找**：`stepById` 原为 `timelineSteps().find(...)`，且 `timelineSteps()` 每次都 `slice` 复制整个数组——渲染 588 张卡即 ~345k 次元素拷贝（O(n²)）。改为一对 memo（`timeline` + `stepIndex` 的 Map），O(n) 一次、每卡 O(1)
+- **配套**：StepCard 根节点加 `content-visibility: auto` + `contain-intrinsic-size: auto 56px`（视口外卡片跳过布局/绘制，与 MessageBubble 同款成熟模式）；分页揭示的历史步骤**预标记为已动画**（与 ChatInterface「加载更早」同一契约）——避免展开时上百个入场动画同时播放
+- **窗口逻辑抽为纯函数** `utils/stepWindow.ts`（`windowedStepIds` / `hiddenStepCount`）+ 6 项单测（活跃回合直通、尾部窗口边界、分页递增、短列表/空列表/负数揭示、剩余计数递减）
+- **未改动**：活跃回合的流式渲染队列、自动跟随、DiffView（实测该话题去重文件仅 1 个，非瓶颈）、旧版无 agentSteps 的 ToolCallBubble 回退路径（旧数据，未在本例触发）
+- 验证：新增 6 项单测 + 全量 `npm run verify` 全绿（gates 全过、lint 0 warning、tsc）；**真机帧率与切换耗时需你在实装版确认**（本机无你的 profile 数据与真实 WebView 计时）
+
+<p align="right"><a href="#top"><img src="/public/icons/top.svg"></img></a></p>
+
+[v1.0.0-alpha.6]: https://github.com/Atom112/AIO/releases/tag/v1.0.0-alpha.6
 
 ## [v1.0.0-alpha.5]
 
@@ -331,43 +376,6 @@ cargo 424 Rust 测试（6 ignored 真机项）、78 前端测试、gates 全过�
 [v0.8.1]: https://github.com/Atom112/AIO/releases/tag/v0.8.1
 
 ## [Unreleased]
-
-### ⚡ 长过程话题切换/展开卡顿根修（实测：单话题 18 条但 1674 张步骤卡）
-
-实装反馈：切到 AIO 自身工作的话题（9 轮 18 条）加载明显慢于其他话题，展开其中数百个中间过程时帧率直降。查库实测该话题 `agent_steps_json` 合计 **16.53MB / ~1674 张步骤卡**（单条消息最高 588 步 / 381 次工具调用 / 8.01MB），定位到三个叠加成本：
-
-- **① 折叠的历史回合仍然全量挂载**（主因）：外层 `max-height:0` 只隐藏、不阻止挂载——切话题时为每个历史回合建满 100 张窗口卡的 DOM（5 个大回合 ≈ 500 张卡，每张带 effect/信号/920ms 入场定时器），加上每张卡一次 `timelineSteps().find()` 线性扫描。修复：body 加 **`<Show when={isExpanded()}>` 惰性挂载闸**——折叠的历史回合挂载 **0 张卡**（Solid `Show` 的 false 分支不建任何 DOM/组件/effect）；折叠时同步 effect 也直接短路，展开时才结算 id 列表
-- **② 「展开更早」一次性挂载全部**（展开卡顿主因）：原 `showAllSteps` 布尔一次揭示剩下全部（588 张一帧内建完）。改为**分页揭示**：每次点击多揭示一页（`STEP_WINDOW`=100），按钮文案实时显示剩余数——单帧 DOM 增量有界
-- **③ 每张卡逐次线性查找**：`stepById` 原为 `timelineSteps().find(...)`，且 `timelineSteps()` 每次都 `slice` 复制整个数组——渲染 588 张卡即 ~345k 次元素拷贝（O(n²)）。改为一对 memo（`timeline` + `stepIndex` 的 Map），O(n) 一次、每卡 O(1)
-- **配套**：StepCard 根节点加 `content-visibility: auto` + `contain-intrinsic-size: auto 56px`（视口外卡片跳过布局/绘制，与 MessageBubble 同款成熟模式）；分页揭示的历史步骤**预标记为已动画**（与 ChatInterface「加载更早」同一契约）——避免展开时上百个入场动画同时播放
-- **窗口逻辑抽为纯函数** `utils/stepWindow.ts`（`windowedStepIds` / `hiddenStepCount`）+ 6 项单测（活跃回合直通、尾部窗口边界、分页递增、短列表/空列表/负数揭示、剩余计数递减）
-- **未改动**：活跃回合的流式渲染队列、自动跟随、DiffView（实测该话题去重文件仅 1 个，非瓶颈）、旧版无 agentSteps 的 ToolCallBubble 回退路径（旧数据，未在本例触发）
-- 验证：新增 6 项单测 + 全量 `npm run verify` 全绿（gates 全过、lint 0 warning、tsc）；**真机帧率与切换耗时需你在实装版确认**（本机无你的 profile 数据与真实 WebView 计时）
-
-### 🧠 DeepSeek V4.1 思考/行动比例失衡根修（实测反馈：思考几十分钟、重读几十个文件不动手）
-
-接入 DeepSeek V4.1 Flash 的实装报告：agent 思考占绝对比例、反复重读文件迟迟不操作。诊断 = 模型特质 × harness 两个真实缺陷的放大，本轮修掉 harness 侧：
-
-- **缺陷 ①（主因）`reasoning_content` 不回传——违反 DeepSeek 工具调用契约。** 官方文档：带 `tools` 的请求必须把每条 assistant 消息的 `reasoning_content` 完整回传，它是模型**跨轮工作记忆**（"让模型继续之前的思考"）。AIO 两条路径都把它丢了（轮内 `append_assistant_message` 只拼 role/content/tool_calls；历史 `finish_message_for_api` 同样不插，DB 里明明存着）——每轮思考结论被扔掉 → 下轮从零重想 → 重读文件重建认知 → 循环。修复：
-  - 新增 `deepseek` provider 插件（认领 `api.deepseek.com`；URL/鉴权/模型解析委托 fallback），trait 新增 `roundtrip_reasoning_content`（默认 false——OpenAI 严格 schema 拒绝未知字段，必须 provider 隔离）
-  - 轮内：`append_assistant_message` 在 flag 开启时把轮的 reasoning 以 `reasoning_content` 附回（空则省略）；主循环每回合计算一次，子代理循环同接线
-  - 历史：`finish_message_for_api` 同 flag 插入（仅 assistant 角色 + 非空）；FE `buildApiMessages` 把消息的 reasoning 传给后端（DB 已有该列）；无 tools 的聊天模式按契约不发（服务端会忽略）
-- **缺陷 ② 推理滑杆对 DeepSeek 是摆设。** 文档：思考默认开且 effort 默认 `high`；唯一关闭方式是 `{"thinking":{"type":"disabled"}}`——AIO 从没发过。修复：trait 新增 `adjust_chat_body`（默认空操作），`stream_one_round` 在 body 组装后无条件调用；DeepSeek 实现为——`off` 档发 thinking:disabled（滑杆「关」首次为真；**行为变化**：DeepSeek 用户 off 档不再有思维链输出，需要思考请调 low+）、`medium` 发 low（上游把 medium 折叠成 high，发 low 才能保住三档可区分）、low/high 原样；子代理轮（不继承滑杆）默认 disabled——子代理是执行角色，不吃高档思考
-- 模型侧事实（不修，记录）：V4.1 Flash 默认高档思考是官方行为；社区有专门治其循环的 dsh-repeat-guard。**降思考的正确杠杆现在是：滑杆 low 档**（唯一真实减速档）
-- 测试：provider +4（host 认领/护栏、思考阶梯映射、URL 委托）、round_artifacts +1（回传三分支：flag 开/关/空）、messages +1（历史回传角色限定与 flag 门控）；全量 469 过 + `npm run verify` 全绿（87 FE 测试、门禁 rgba=173 any=77 棘轮持平）
-
-### 🧰 自迭代 harness 反馈清偿·第二轮（pwsh 对象输出三大 P0）
-
-AIO 的 agent 自迭代第二轮（修子代理卡片逐 token 抖动，PR #239）留下实测报告 8 项（`.temp/harness-report-round2.md`，全文存档于跟踪 issue）；三项 P0 均为「pwsh 对象型输出 × 管道捕获」的深坑，本轮全部根修并经真 pwsh 行为矩阵实证：
-
-- **P0-1 `exit` 吞掉格式化输出**：PowerShell 对象输出的默认格式化是**延迟提交**（runspace 关闭时才 flush），脚本级 `exit` 直接跳过 flush——「跑过一次 git 再输出表格」100% 变成 2 字节空输出，自迭代中三次误判「命令无输出」。修复：body 包进 scriptblock 经 `Out-Default` 立即渲染（`$?` 在块内捕获——管道会重置它）
-- **P0-2 `$LASTEXITCODE=0` 掩盖后续 cmdlet 报错**：旧尾部 `$null -ne $LASTEXITCODE` 在 native 命令成功后即成立并 `exit 0`，此后所有 PowerShell 层错误都被上报为成功（tool_ok 判定与失败签名检测全失效）。修复：仅非零 native 码才透传退出，否则落到块内捕获的 `$?`
-- **P0-3 stderr 序列化成 CLIXML**：stderr 被重定向时 PowerShell 把错误记录序列化为 `#< CLIXML <Objs><S …>`（`_x001B_[31;1m…` 完全不可读，文本签名全断）。修复：pwsh 启动参数追加 `-OutputFormat Text`（pwsh 7 生效、5.1 静默忽略）+ `decode_console_output` 新增 CLIXML 机械解码兜底（记录边界成行 / 剥标签 / 还原 `_xHHHH_` 实体 / 去 ANSI 色码）
-- **P1-1 `$()`/反引号一刀切拦截**：拒绝放行（`$()` 与意图无关地是命令替换向量，扫描先于信任决策）但拦截文案现给出等价改写（`-ExpandProperty` / `'+'` 拼接 / 临时 .ps1 经 `pwsh -File`），不再让 agent 烧轮次自行发现
-- **P2-3 续写丢锚点**：`finish_reason=length` 的续写指令现在携带被截断回复的最后 ~200 字符（多段结构化输出的第二段不再丢「说到哪了」）
-- **P2-5 报告落脚处**：报告全文落跟踪 issue（docs-style.md 既有约定「一次性产物归 PR 描述/issue/本地笔记」的执行补强）
-- **P1-2（findstr 多模式）/ P2-1（TSX 编译验证）/ P2-2（read_file 默认头尾）/ P2-4（多行脚本封装）**：评估后不修——环境事实与设计取舍，理由记录于 PR 描述
-- 测试：shell_tools 33 过（新增 3：CLIXML 解码 / 尾部结构 / 真 pwsh 行为矩阵——旧尾部下三用例全挂的回归锚）；round_artifacts +1（尾部锚点四分支）；全量 464 过
 
 ### 🪜 第十二轮：模式阶梯改名 + 完全权限内置化 + 工作流功能移除（PR #131）
 

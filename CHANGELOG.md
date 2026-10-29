@@ -332,6 +332,18 @@ cargo 424 Rust 测试（6 ignored 真机项）、78 前端测试、gates 全过�
 
 ## [Unreleased]
 
+### ⚡ 长过程话题切换/展开卡顿根修（实测：单话题 18 条但 1674 张步骤卡）
+
+实装反馈：切到 AIO 自身工作的话题（9 轮 18 条）加载明显慢于其他话题，展开其中数百个中间过程时帧率直降。查库实测该话题 `agent_steps_json` 合计 **16.53MB / ~1674 张步骤卡**（单条消息最高 588 步 / 381 次工具调用 / 8.01MB），定位到三个叠加成本：
+
+- **① 折叠的历史回合仍然全量挂载**（主因）：外层 `max-height:0` 只隐藏、不阻止挂载——切话题时为每个历史回合建满 100 张窗口卡的 DOM（5 个大回合 ≈ 500 张卡，每张带 effect/信号/920ms 入场定时器），加上每张卡一次 `timelineSteps().find()` 线性扫描。修复：body 加 **`<Show when={isExpanded()}>` 惰性挂载闸**——折叠的历史回合挂载 **0 张卡**（Solid `Show` 的 false 分支不建任何 DOM/组件/effect）；折叠时同步 effect 也直接短路，展开时才结算 id 列表
+- **② 「展开更早」一次性挂载全部**（展开卡顿主因）：原 `showAllSteps` 布尔一次揭示剩下全部（588 张一帧内建完）。改为**分页揭示**：每次点击多揭示一页（`STEP_WINDOW`=100），按钮文案实时显示剩余数——单帧 DOM 增量有界
+- **③ 每张卡逐次线性查找**：`stepById` 原为 `timelineSteps().find(...)`，且 `timelineSteps()` 每次都 `slice` 复制整个数组——渲染 588 张卡即 ~345k 次元素拷贝（O(n²)）。改为一对 memo（`timeline` + `stepIndex` 的 Map），O(n) 一次、每卡 O(1)
+- **配套**：StepCard 根节点加 `content-visibility: auto` + `contain-intrinsic-size: auto 56px`（视口外卡片跳过布局/绘制，与 MessageBubble 同款成熟模式）；分页揭示的历史步骤**预标记为已动画**（与 ChatInterface「加载更早」同一契约）——避免展开时上百个入场动画同时播放
+- **窗口逻辑抽为纯函数** `utils/stepWindow.ts`（`windowedStepIds` / `hiddenStepCount`）+ 6 项单测（活跃回合直通、尾部窗口边界、分页递增、短列表/空列表/负数揭示、剩余计数递减）
+- **未改动**：活跃回合的流式渲染队列、自动跟随、DiffView（实测该话题去重文件仅 1 个，非瓶颈）、旧版无 agentSteps 的 ToolCallBubble 回退路径（旧数据，未在本例触发）
+- 验证：新增 6 项单测 + 全量 `npm run verify` 全绿（gates 全过、lint 0 warning、tsc）；**真机帧率与切换耗时需你在实装版确认**（本机无你的 profile 数据与真实 WebView 计时）
+
 ### 🧠 DeepSeek V4.1 思考/行动比例失衡根修（实测反馈：思考几十分钟、重读几十个文件不动手）
 
 接入 DeepSeek V4.1 Flash 的实装报告：agent 思考占绝对比例、反复重读文件迟迟不操作。诊断 = 模型特质 × harness 两个真实缺陷的放大，本轮修掉 harness 侧：

@@ -58,9 +58,14 @@ const BARE_LEVELS: Readonly<Record<string, number>> = {
  * Trailing quant token of a family id, allowing `-`, `_` and `.` before it and the
  * unsloth `UD-` prefix inside it (`…-UD-Q4_K_XL`, `…-Q4_K_M`, `…_q4_k_m`, `….Q4_K_M`).
  * Anchored at the end so a bigger family name never swallows the token.
+ *
+ * The continuation class excludes `-` and `_` on purpose: an id comes from a remote repo
+ * listing, and letting the separator characters also match inside the repetition makes
+ * `q0_0_0_0_…` ambiguous (two ways to split it) → exponential backtracking. CodeQL's
+ * js/polynomial-redos flags exactly that, and unbounded repo names are untrusted input.
  */
 const QUANT_TAIL_RE =
-  /(?:^|[-_.])((?:ud[-_])?(?:iq|tq|q)\d{1,2}(?:[-_][a-z0-9_]+)*|bf16|f16|f32|fp16|fp32|fp8|int8|int4|mxfp4)$/i;
+  /(?:^|[-_.])((?:ud[-_])?(?:iq|tq|q)\d{1,2}(?:[-_][a-z0-9]+)*|bf16|f16|f32|fp16|fp32|fp8|int8|int4|mxfp4)$/i;
 
 /** Target tier of the one-click default: the size/quality sweet spot. */
 const TARGET_LEVEL = 4;

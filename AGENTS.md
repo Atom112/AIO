@@ -64,6 +64,7 @@ src-tauri/src/
 │   ├── events.rs        # 后端→前端事件名常量注册表（kebab-case 守门测试；新事件须登记）
 │   ├── file_locks.rs    # 多智能体写协调：per-file 互斥锁 + last-writer 追踪 + 跨写者 hashline 门控
 │   ├── fs_util.rs       # 原子写（temp+rename）公共工具——所有 JSON/配置持久化必须走这里
+│   ├── http.rs          # 出站 HTTP 公共约定：默认 User-Agent（reqwest 默认不发 UA → ModelScope CDN 403）与 client_builder 起手式
 │   ├── ids.rs           # 内置 ID 常量（BUILTIN_SERVER_ID / BUILTIN_FS_SERVER_ID）
 │   ├── mcp_trust.rs     # 项目级 .aio/mcp-servers.json 信任存储（指纹键控，仓库之外）
 │   ├── migrate.rs       # 版本化 SQLite 迁移运行器（PRAGMA user_version；chat 库与记忆库共用）

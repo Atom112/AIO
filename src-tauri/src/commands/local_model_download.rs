@@ -110,8 +110,13 @@ pub fn local_models_dir(app: &AppHandle) -> PathBuf {
 
 /// Builds a download client (streaming downloads: no total timeout, 30s connect timeout,
 /// optional proxy).
+///
+/// ENG-20: 必须带 User-Agent——reqwest 默认不发 UA，而 ModelScope 的取流 CDN
+/// (`cdn-lfs-cn-1.modelscope.cn`) 前置 WAF 对无 UA 请求直接回 403（其 JSON API
+/// 不校验，所以市场能搜到、能列文件，只有下载全灭）。修复前所有 ModelScope
+/// 下载都是 `HTTP 403 Forbidden`，浏览器网页下载却正常——差别就在 UA。
 fn download_client(proxy_url: Option<&str>) -> Result<reqwest::Client, String> {
-    let mut builder = reqwest::Client::builder().connect_timeout(Duration::from_secs(30));
+    let mut builder = crate::core::http::client_builder().connect_timeout(Duration::from_secs(30));
     if let Some(p) = proxy_url.filter(|s| !s.trim().is_empty()) {
         let proxy = reqwest::Proxy::all(p.trim())
             .map_err(|e| ierr!("代理 URL 非法: {}", "Invalid proxy URL: {}", e))?;
@@ -175,6 +180,18 @@ fn source_candidates(
         }
     }
     out
+}
+
+/// Records one candidate source's failure for the final error message.
+///
+/// ENG-20: keeps every source's reason (one line each) instead of only the last one, so a
+/// failure report names the refusing source. Consecutive identical messages collapse —
+/// the master/main branch probes of the same source normally fail identically.
+fn push_failure(failures: &mut Vec<String>, msg: String) {
+    if failures.last() == Some(&msg) {
+        return;
+    }
+    failures.push(msg);
 }
 
 /// Available space (bytes) on the filesystem containing `dir` (None = unknown).
@@ -372,7 +389,10 @@ async fn local_model_download_inner(
 
         // Source fallback: try every candidate; connect errors / 404 / 5xx move to the next.
         let mut response: Option<(String, reqwest::Response)> = None;
-        let mut last_err = String::new();
+        // ENG-20: 保留**每个**候选源的失败原因。此前只留最后一条，用户反馈的
+        // “下载失败（已尝试所有来源）: HTTP 403 Forbidden” 无法判断是哪个源在拒、
+        // 也无法和“源缺失”区分开（真正的根因是无 UA 被 ModelScope CDN 403）。
+        let mut failures: Vec<String> = Vec::new();
         for cand in source_candidates(&request, &file.name, hf_token.clone()) {
             let mut attempt_from = resume_from;
             let mut tries = 0;
@@ -406,23 +426,43 @@ async fn local_model_download_inner(
                             continue; // retry this source from scratch
                         }
                         if status == reqwest::StatusCode::UNAUTHORIZED {
-                            last_err = ierr!(
-                                "{} 需要授权：受限仓库需先在网页上同意协议并在设置中填入 HuggingFace Token",
-                                "{} requires authorization: accept the license on the website and configure a HuggingFace token for gated repos",
-                                cand.name
+                            push_failure(
+                                &mut failures,
+                                ierr!(
+                                    "{} 需要授权：受限仓库需先在网页上同意协议并在设置中填入 HuggingFace Token",
+                                    "{} requires authorization: accept the license on the website and configure a HuggingFace token for gated repos",
+                                    cand.name
+                                ),
                             );
                             break;
                         }
                         if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
-                            last_err = ierr!(
-                                "{} 触发限流，请稍后重试或更换下载源",
-                                "{} rate-limited the request, retry later or switch the source",
-                                cand.name
+                            push_failure(
+                                &mut failures,
+                                ierr!(
+                                    "{} 触发限流，请稍后重试或更换下载源",
+                                    "{} rate-limited the request, retry later or switch the source",
+                                    cand.name
+                                ),
                             );
                             break;
                         }
+                        if status == reqwest::StatusCode::FORBIDDEN {
+                            // ENG-20: 403 在下载链路上几乎总是「请求被 CDN/WAF 拒绝」
+                            // 而非权限问题（受限仓库给 401）。给出可操作的提示，
+                            // 而不是让用户面对一个光秃秃的 HTTP 403。
+                            push_failure(
+                                &mut failures,
+                                ierr!(
+                                    "{} 拒绝访问（HTTP 403，通常是 CDN/WAF 拦截或仓库受限）",
+                                    "{} denied access (HTTP 403, usually a CDN/WAF block or a restricted repo)",
+                                    cand.name
+                                ),
+                            );
+                            break; // next candidate
+                        }
                         if !status.is_success() {
-                            last_err = format!("HTTP {status}");
+                            push_failure(&mut failures, format!("{}: HTTP {status}", cand.name));
                             break; // next candidate
                         }
                         // ENG-04: 206 的 Content-Range 起点必须与续传起点一致——
@@ -458,7 +498,7 @@ async fn local_model_download_inner(
                         break;
                     }
                     Err(e) => {
-                        last_err = e.to_string();
+                        push_failure(&mut failures, format!("{}: {}", cand.name, e));
                         break; // next candidate
                     }
                 }
@@ -468,11 +508,20 @@ async fn local_model_download_inner(
             }
         }
         let (source, resp) = response.ok_or_else(|| {
+            // 无候选源 ≠ 全部失败：请求里既没有 msRepo 也没有 hfRepo 时错误列表为空，
+            // 之前会抛出 “已尝试所有来源: ”（冒号后为空的怪消息）
+            if failures.is_empty() {
+                return ierr!(
+                    "下载 {} 失败：没有可用的下载源（该模型缺少仓库信息，或所选来源不可用）",
+                    "Failed to download {}: no usable source (this model has no repo info for the selected source)",
+                    file.name
+                );
+            }
             ierr!(
                 "下载 {} 失败（已尝试所有来源）: {}",
                 "Failed to download {} (all sources tried): {}",
                 file.name,
-                last_err
+                failures.join("; ")
             )
         })?;
 
@@ -1129,5 +1178,73 @@ mod tests {
         let marker = read_model_marker(&tmp).unwrap();
         assert_eq!(marker.entry_file, "nested/entry-00001-of-00002.gguf");
         std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    /// ENG-20 回归（现场：ModelScope 全部模型下载 403）：
+    /// 下载客户端必须真的把 User-Agent 发出去。reqwest 默认不带 UA，而 ModelScope
+    /// 的取流 CDN 对无 UA 请求回 403——本地起一个最小 HTTP 服务器抓请求头即可复现/
+    /// 守住这个不变量，不需要外网。
+    #[test]
+    fn download_client_sends_user_agent() {
+        use std::io::{Read, Write};
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("绑定本地端口失败");
+        let addr = listener.local_addr().expect("读取本地端口失败");
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("接受连接失败");
+            let mut buf = [0u8; 4096];
+            let n = stream.read(&mut buf).expect("读取请求失败");
+            let head = String::from_utf8_lossy(&buf[..n]).to_string();
+            let _ = stream
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok");
+            head
+        });
+
+        let client = download_client(None).expect("构建下载客户端失败");
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("构建运行时失败");
+        rt.block_on(async {
+            let resp = client
+                .get(format!("http://{addr}/model.gguf"))
+                .send()
+                .await
+                .expect("请求失败");
+            assert_eq!(resp.status(), 200);
+            let _ = resp.bytes().await;
+        });
+
+        let head = server.join().expect("服务器线程失败").to_lowercase();
+        let expected = format!(
+            "user-agent: {}",
+            crate::core::http::user_agent().to_lowercase()
+        );
+        assert!(
+            head.contains(&expected),
+            "下载请求缺少 {expected}（ModelScope CDN 会因此回 403）；实际请求头：{head}"
+        );
+    }
+
+    /// ENG-20：失败原因按来源保留，相邻重复合并（master/main 两个分支探测同源同错）。
+    #[test]
+    fn failure_list_keeps_each_source_once() {
+        let mut failures = Vec::new();
+        push_failure(&mut failures, "modelscope: HTTP 403 Forbidden".into());
+        push_failure(&mut failures, "modelscope: HTTP 403 Forbidden".into());
+        push_failure(&mut failures, "hf-mirror: HTTP 404 Not Found".into());
+        push_failure(&mut failures, "hf-mirror: HTTP 404 Not Found".into());
+        push_failure(&mut failures, "huggingface: connection refused".into());
+        assert_eq!(
+            failures,
+            vec![
+                "modelscope: HTTP 403 Forbidden",
+                "hf-mirror: HTTP 404 Not Found",
+                "huggingface: connection refused",
+            ]
+        );
+        // 同一来源再次出现（非相邻）时保留，便于看清重试分支的差异
+        push_failure(&mut failures, "modelscope: HTTP 403 Forbidden".into());
+        assert_eq!(failures.len(), 4);
     }
 }

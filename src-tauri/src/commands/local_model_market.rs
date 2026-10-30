@@ -131,8 +131,11 @@ fn params_from_name(name: &str) -> Option<f64> {
 }
 
 /// Builds a short-lived HTTP client for metadata queries.
+///
+/// ENG-20: 带默认 User-Agent（HuggingFace Hub 使用条款要求可识别 UA；hf-mirror
+/// 与 ModelScope 的 WAF 也可能拒绝无 UA 请求——与下载器同源问题，见 `core::http`）。
 fn market_client() -> Result<reqwest::Client, String> {
-    reqwest::Client::builder()
+    crate::core::http::client_builder()
         .timeout(Duration::from_secs(20))
         .connect_timeout(Duration::from_secs(8))
         .build()

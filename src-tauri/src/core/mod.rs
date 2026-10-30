@@ -3,6 +3,7 @@ pub mod db;
 pub mod events;
 pub mod file_locks;
 pub mod fs_util;
+pub mod http;
 pub mod i18n;
 pub mod ids;
 pub mod mcp_trust;

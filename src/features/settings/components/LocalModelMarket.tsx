@@ -34,6 +34,7 @@ import { t, formatNumber } from '../../../core/i18n';
 import { formatSize } from '../../../core/utils/format';
 import { openSafeUrl } from '../../../core/utils/safeUrl';
 import { getLogo } from '../../../core/utils/modelLogo';
+import { compareQuant, pickDefaultQuant, quantLabel } from '../utils/quantPick';
 import { LOCAL_ENGINE_PROVIDERS, type ProviderConfig } from '../../../core/utils/models';
 import { providerConfigs, setProviderConfigs } from '../../../core/store/store';
 import { saveProviderConfigs } from '../../../core/api/providers';
@@ -123,12 +124,10 @@ interface FileGroup {
   display: string;
   files: MarketFile[];
   totalSize: number;
-  recommended: boolean;
   complete: boolean;
 }
 
 const SHARD_RE = /^(.*)-(\d{5})-of-(\d{5})\.gguf$/i;
-const RECOMMENDED_QUANT_RE = /(^|[-_])(ud-)?(q4_k_m|q4_k_s|q5_k_m|iq4_xs|ud-q4_k_xl)$/i;
 
 function buildFileGroups(files: MarketFile[]): FileGroup[] {
   const families = new Map<string, MarketFile[]>();
@@ -159,13 +158,14 @@ function buildFileGroups(files: MarketFile[]): FileGroup[] {
       display: m ? `${id}.gguf` : base,
       files: list,
       totalSize: list.reduce((s, f) => s + f.size, 0),
-      recommended: RECOMMENDED_QUANT_RE.test(id),
       complete,
     });
   }
+  // Complete families first, then by quant preference: the top row of the expanded list is
+  // exactly the family the collapsed one-click button downloads (utils/quantPick).
   groups.sort((a, b) => {
-    if (a.recommended !== b.recommended) return a.recommended ? -1 : 1;
-    return a.id.localeCompare(b.id);
+    if (a.complete !== b.complete) return a.complete ? -1 : 1;
+    return compareQuant(a.id, b.id);
   });
   return groups;
 }
@@ -517,6 +517,41 @@ const LocalModelMarket: Component = () => {
     await ensureGroups(m);
   };
 
+  // The collapsed row shows WHICH quant the one-click button will fetch, which needs the
+  // repo's file list. Prefetch it when a row scrolls into view (concurrency 2: one
+  // prefetch hits both platforms' listing endpoints) instead of firing all ~50 rows at
+  // once — the list is small and the click path would request the same thing anyway.
+  const PREFETCH_LIMIT = 2;
+  let prefetchRunning = 0;
+  const prefetchWaiters: Array<() => void> = [];
+  const acquirePrefetchSlot = () =>
+    new Promise<void>((resolve) => {
+      const take = () => {
+        if (prefetchRunning < PREFETCH_LIMIT) {
+          prefetchRunning += 1;
+          resolve();
+        } else {
+          prefetchWaiters.push(take);
+        }
+      };
+      take();
+    });
+  const releasePrefetchSlot = () => {
+    prefetchRunning -= 1;
+    prefetchWaiters.shift()?.();
+  };
+  const prefetchGroups = async (m: MarketModel) => {
+    if (fileGroups()[m.id] || filesLoading()[m.id]) return;
+    await acquirePrefetchSlot();
+    try {
+      if (!fileGroups()[m.id] && !filesLoading()[m.id]) await ensureGroups(m);
+    } catch {
+      /* prefetch is best-effort: the click path retries */
+    } finally {
+      releasePrefetchSlot();
+    }
+  };
+
   const pct = (id: string) => {
     const p = progress()[id];
     if (!p || p.total <= 0) return 0;
@@ -592,15 +627,20 @@ const LocalModelMarket: Component = () => {
   };
 
   /** Row-level one-click download: fetches the file list if needed and downloads the
-   *  recommended quant-family (first complete recommended group, else the first group). */
+   *  preferred quant-family (utils/quantPick — the same family the row's chip shows). */
   const downloadDefault = async (m: MarketModel) => {
     const groups = await ensureGroups(m);
     if (!groups) {
       setNotice(filesError()[m.id] || t('provider.localModelMarket.noFiles'));
       return;
     }
-    const g = groups.find((x) => x.recommended && x.complete) ?? groups.find((x) => x.complete);
-    if (g) await downloadGroup(m, g);
+    const g = pickDefaultQuant(groups);
+    if (!g) {
+      // Every family is missing shards (broken upstream repo): say so instead of no-op
+      setNotice(t('provider.localModelMarket.noFiles'));
+      return;
+    }
+    await downloadGroup(m, g);
   };
 
   const pauseDownload = (id: string) => {
@@ -684,6 +724,8 @@ const LocalModelMarket: Component = () => {
 
   const renderModelRow = (m: MarketModel, index: () => number) => {
     const groups = () => fileGroups()[m.id] ?? [];
+    /** The family the collapsed one-click button will download (null until the list loads) */
+    const defaultGroup = createMemo(() => pickDefaultQuant(groups()));
     const isExpanded = () => expandedId() === m.id;
     const filesErr = () => filesError()[m.id];
     // Row-level download state: the active quant-family download of this model
@@ -699,8 +741,30 @@ const LocalModelMarket: Component = () => {
       if (g) await downloadGroup(m, g);
       else await downloadDefault(m);
     };
+    // Load the quant list once the row is near the viewport, so the chip below shows the
+    // real default without the user having to expand the row first.
+    let rowEl: HTMLDivElement | undefined;
+    onMount(() => {
+      const el = rowEl;
+      if (!el) return;
+      if (typeof IntersectionObserver === 'undefined') {
+        void prefetchGroups(m);
+        return;
+      }
+      const io = new IntersectionObserver(
+        (entries) => {
+          if (!entries.some((e) => e.isIntersecting)) return;
+          io.disconnect();
+          void prefetchGroups(m);
+        },
+        { rootMargin: '400px 0px' },
+      );
+      io.observe(el);
+      onCleanup(() => io.disconnect());
+    });
     return (
       <div
+        ref={rowEl}
         class="rounded-[10px] border border-white/[0.05] bg-white/[0.02] animate-row-in"
         style={{ 'animation-delay': (index() + 1) * 30 + 'ms' }}
       >
@@ -782,10 +846,32 @@ const LocalModelMarket: Component = () => {
             <Show when={filesLoading()[m.id]}>
               <Icon name="spinner" size={12} class="animate-spin shrink-0" />
             </Show>
+            {/* Affordance for the inline quant list (the row body is the expand toggle) */}
+            <Icon
+              name="chevron-down"
+              size={13}
+              class="shrink-0 transition-transform duration-200"
+              classList={{ 'rotate-180': isExpanded() }}
+            />
           </button>
           {/* Right: download controls (one download per row at a time); status outcomes are
               expressed as one-second button flashes instead of status text lines */}
           <div class="flex items-center gap-1.5 shrink-0">
+            {/* Shows WHICH quant the one-click button fetches (one family, never all of
+                them) as soon as the file list is known — no expand needed */}
+            <Show when={!isDownloading() && defaultGroup()}>
+              <span
+                class="text-[10px] font-mono shrink-0 whitespace-nowrap"
+                style={{ color: 'rgba(var(--text-base-rgb),0.45)' }}
+                title={defaultGroup()!
+                  .files.map((f) => f.name)
+                  .join('\n')}
+              >
+                {quantLabel(defaultGroup()!.id)}
+                <span class="mx-1 opacity-60">·</span>
+                {formatSize(defaultGroup()!.totalSize)}
+              </span>
+            </Show>
             <Show
               when={!isDownloading()}
               fallback={
@@ -866,7 +952,7 @@ const LocalModelMarket: Component = () => {
                         </span>
                       </Show>
                     </span>
-                    <Show when={g.recommended}>
+                    <Show when={defaultGroup()?.id === g.id}>
                       <span class="px-1 py-0.5 rounded bg-pri-20 text-pri text-[10px] shrink-0">
                         {t('provider.localModelMarket.recommendedQuant')}
                       </span>

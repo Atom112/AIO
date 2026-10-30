@@ -377,6 +377,15 @@ cargo 424 Rust 测试（6 ignored 真机项）、78 前端测试、gates 全过�
 
 ## [Unreleased]
 
+### 🐞 本地模型下载 ModelScope 全灭根修（reqwest 默认不带 User-Agent → CDN 403）
+
+- **症状**：本地模型下载页对 ModelScope 模型一律失败，报 `下载失败：下载 DeepCoder-14B-Preview-Q4_K_M.gguf 失败（已尝试所有来源）: HTTP 403 Forbidden`；同一台机器网络正常，浏览器从 modelscope.cn 网页下载同一文件毫无问题
+- **根因**：`/models/<repo>/resolve/<rev>/<file>` 返回 302 跳到对象存储 CDN `cdn-lfs-cn-1.modelscope.cn`，该 CDN 前置的阿里云 WAF（响应带 `acw_tc` cookie）**对缺失 `User-Agent` 的取流请求直接回 403**——而 `reqwest` 默认根本不发 UA（curl、浏览器都发，所以网页下载正常）。ModelScope 自身的 JSON API（`/api/v1/dolphin/models`、`/repo/files`）不校验 UA，因此市场能搜到、能列出文件，只有真正取文件那一跳全灭
+- **实测对证**：同一 URL 同一 Range 请求——裸 `reqwest::Client`（无 UA）→ `403 Forbidden`；经新客户端（UA `AIO-Desktop/1.0.0-alpha.6`）→ `206 Partial Content`，`Content-Range: bytes 0-1023/8988111168`
+- **修复**：新增 `core/http.rs` 统一出站身份（`user_agent()` = `AIO-Desktop/<包版本>`、`client_builder()` 起手式已带 UA），接入三处此前裸起的客户端——本地 GGUF 下载器（`local_model_download`）、市场元数据客户端（HF 镜像 / ModelScope 列表）、嵌入/重排模型清单下载器；模块头注释记录了坑与「新增出站客户端必须带 UA」的约定
+- **错误可见性**：下载失败原因改为**按来源逐条保留**（此前只留最后一个来源的错误，「已尝试所有来源: HTTP 403 Forbidden」无法判断是哪个源在拒）；403 单独给出「该来源拒绝访问（通常是 CDN/WAF 拦截或仓库受限）」的双语文案；请求里既无 hfRepo 也无 msRepo 时给出「没有可用的下载源」而不是空原因
+- **测试**：`core::http` +2（UA 自报产品名与版本；`client_builder` 起手的客户端确实发出 UA——本地最小 HTTP 服务器抓请求头，不外网）；`local_model_download` +1（失败原因按来源保留、相邻重复合并）；全量 `npm run verify` 全绿
+
 ### 🪜 第十二轮：模式阶梯改名 + 完全权限内置化 + 工作流功能移除（PR #131）
 
 - **Agent 模式阶梯改名（wire 值稳定，assistants DB 无迁移）**：`off`=「只读」、`normal`=「工作区内修改」、`auto`=「完全权限」、`plan`=「计划」不变——

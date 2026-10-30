@@ -248,7 +248,11 @@ async fn embedding_model_download_inner(
             e
         )
     })?;
-    let client = reqwest::Client::new();
+    // ENG-20: 带默认 User-Agent（HF 的 CDN/WAF 与 Hub 条款都要求可识别 UA；
+    // reqwest 默认不发 UA——与本地 GGUF 下载器的 ModelScope 403 同源）
+    let client = crate::core::http::client_builder()
+        .build()
+        .map_err(|e| e.to_string())?;
     for file in entry.files {
         let dest = dir.join(file.name);
         if dest.exists() {

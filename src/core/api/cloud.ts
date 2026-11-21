@@ -154,17 +154,25 @@ export interface CloudInvitation {
   createdAt: string;
 }
 
-/** Pending invitations for the linked account (empty array when signed out). */
-export const cloudListInvitations = (): Promise<CloudInvitation[]> =>
-  invoke<CloudInvitation[]>('cloud_list_invitations');
+/**
+ * Pending invitations for the signed-in account.
+ *
+ * `serverUrl` is explicit because an invited member has no bound workspace yet,
+ * so the backend has no persisted account to read the URL from.
+ */
+export const cloudListInvitations = (serverUrl: string): Promise<CloudInvitation[]> =>
+  invoke<CloudInvitation[]>('cloud_list_invitations', { serverUrl });
 
 /** Joins the workspace behind an invitation. */
-export const cloudAcceptInvitation = (invitationId: string) =>
-  invoke<{ organizationId: string; role: string }>('cloud_accept_invitation', { invitationId });
+export const cloudAcceptInvitation = (serverUrl: string, invitationId: string) =>
+  invoke<{ organizationId: string; role: string }>('cloud_accept_invitation', {
+    serverUrl,
+    invitationId,
+  });
 
 /** Declines an invitation for this account. */
-export const cloudRejectInvitation = (invitationId: string) =>
-  invoke<void>('cloud_reject_invitation', { invitationId });
+export const cloudRejectInvitation = (serverUrl: string, invitationId: string) =>
+  invoke<void>('cloud_reject_invitation', { serverUrl, invitationId });
 
 /** Active announcements for the linked account (empty array when signed out). */
 export const cloudListAnnouncements = (): Promise<CloudAnnouncement[]> =>

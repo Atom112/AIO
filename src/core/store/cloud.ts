@@ -89,6 +89,39 @@ export const [cloudAnnouncementDismissed, setCloudAnnouncementDismissed] = creat
 /** Pending workspace invitations for the signed-in account. */
 export const [cloudInvitations, setCloudInvitations] = createSignal<CloudInvitation[]>([]);
 
+/** Server URL saved at sign-in, so the card survives a reload before binding. */
+const SERVER_URL_KEY = 'cloud-server-url';
+
+function rememberedServerUrl(): string | null {
+  try {
+    const value = localStorage.getItem(SERVER_URL_KEY)?.trim();
+    return value ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+function rememberServerUrl(url: string): void {
+  try {
+    localStorage.setItem(SERVER_URL_KEY, url);
+  } catch {
+    // A blocked storage backend only costs the reload fallback.
+  }
+}
+
+function forgetServerUrl(): void {
+  try {
+    localStorage.removeItem(SERVER_URL_KEY);
+  } catch {
+    // Ignore: signing out must never fail because of storage.
+  }
+}
+
+/** Server this installation talks to: the bound account's, else the sign-in URL. */
+export function cloudServerUrl(): string | null {
+  return cloudSession().serverUrl ?? rememberedServerUrl();
+}
+
 /** Interval between announcement refreshes; notices are not latency-sensitive. */
 const ANNOUNCEMENT_REFRESH_MS = 15 * 60 * 1000;
 
@@ -157,6 +190,9 @@ export async function refreshCloudSession(): Promise<void> {
 /** Starts GitHub device sign-in and returns the prompt to display. */
 export async function startCloudSignIn(serverUrl: string): Promise<CloudDevicePrompt> {
   const start = await cloudDeviceStart(serverUrl.trim());
+  // Remembered before the grant settles: invitations and notices are readable
+  // with just a session token, before any workspace is bound.
+  rememberServerUrl(serverUrl.trim());
   const prompt: CloudDevicePrompt = {
     userCode: start.userCode,
     verificationUri: start.verificationUriComplete ?? start.verificationUri,
@@ -197,6 +233,7 @@ function pollDeviceGrant(serverUrl: string, deviceCode: string, intervalMs: numb
         if (status === 'approved') {
           await refreshCloudSession();
           await loadCloudWorkspaces(serverUrl);
+          await refreshCloudInvitations();
           setCloudStatus('idle');
           setCloudLastError(null);
           return;
@@ -238,6 +275,7 @@ export async function loadCloudWorkspaces(serverUrl: string): Promise<CloudMe | 
 /** Binds this installation to a workspace and starts syncing. */
 export async function bindCloudWorkspace(serverUrl: string, workspaceId: string): Promise<void> {
   const session = await cloudBindWorkspace(serverUrl.trim(), workspaceId);
+  rememberServerUrl(serverUrl.trim());
   setCloudSession(session);
   setCloudStatus('idle');
   void refreshCloudAnnouncements();
@@ -252,6 +290,7 @@ export async function signOutCloud(): Promise<void> {
   stopLoop();
   stopDevicePoll();
   stopAnnouncementRefresh();
+  forgetServerUrl();
   setCloudAnnouncements([]);
   setCloudInvitations([]);
   clearDevicePrompt();
@@ -306,12 +345,13 @@ function stopAnnouncementRefresh(): void {
 
 /** Reloads pending invitations; a failure keeps the previous list. */
 export async function refreshCloudInvitations(): Promise<void> {
-  if (!cloudSession().signedIn) {
+  const serverUrl = cloudServerUrl();
+  if (!cloudSession().signedIn || !serverUrl) {
     setCloudInvitations([]);
     return;
   }
   try {
-    setCloudInvitations(await cloudListInvitations());
+    setCloudInvitations(await cloudListInvitations(serverUrl));
   } catch {
     // Invitations are advisory until accepted; the settings card stays usable.
   }
@@ -319,15 +359,18 @@ export async function refreshCloudInvitations(): Promise<void> {
 
 /** Joins the workspace behind an invitation and refreshes the workspace list. */
 export async function acceptCloudInvitation(invitationId: string): Promise<void> {
-  await cloudAcceptInvitation(invitationId);
+  const serverUrl = cloudServerUrl();
+  if (!serverUrl) return;
+  await cloudAcceptInvitation(serverUrl, invitationId);
   await refreshCloudInvitations();
-  const serverUrl = cloudSession().serverUrl;
-  if (serverUrl) await loadCloudWorkspaces(serverUrl);
+  await loadCloudWorkspaces(serverUrl);
 }
 
 /** Declines an invitation; the row disappears from the pending list. */
 export async function rejectCloudInvitation(invitationId: string): Promise<void> {
-  await cloudRejectInvitation(invitationId);
+  const serverUrl = cloudServerUrl();
+  if (!serverUrl) return;
+  await cloudRejectInvitation(serverUrl, invitationId);
   await refreshCloudInvitations();
 }
 

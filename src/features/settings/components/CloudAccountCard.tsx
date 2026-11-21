@@ -8,6 +8,7 @@ import {
   bindCloudWorkspace,
   cloudDevicePrompt,
   cloudInvitations,
+  cloudServerUrl,
   invitationExpiresLabel,
   rejectCloudInvitation,
   cloudLastError,
@@ -34,7 +35,9 @@ type BusyKind = 'signin' | 'bind' | 'sync' | 'signout' | 'invitation';
 
 /** Settings card for the optional team cloud account and conversation sync. */
 export const CloudAccountCard: Component = () => {
-  const [serverUrl, setServerUrl] = createSignal(cloudSession().serverUrl ?? '');
+  const [serverUrl, setServerUrl] = createSignal(
+    cloudSession().serverUrl ?? cloudServerUrl() ?? '',
+  );
   const [workspaceId, setWorkspaceId] = createSignal(cloudSession().workspaceId ?? '');
   const [busy, setBusy] = createSignal<
     'signin' | 'bind' | 'sync' | 'signout' | 'invitation' | null

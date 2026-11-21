@@ -9,6 +9,7 @@ import { createSignal } from 'solid-js';
 import type { Message, AgentStep } from './types';
 import type {
   HarnessApprovalRequest,
+  HarnessCommandInfo,
   HarnessConfigOption,
   HarnessPlanEntry,
   HarnessToolStatus,
@@ -19,6 +20,7 @@ import type {
 
 export type {
   HarnessApprovalRequest,
+  HarnessCommandInfo,
   HarnessConfigOption,
   HarnessPlanEntry,
   HarnessToolStatus,
@@ -65,6 +67,15 @@ const [harnessDrafts, setHarnessDrafts] = createSignal<Record<string, HarnessDra
 const [harnessApprovals, setHarnessApprovals] = createSignal<PendingHarnessApproval[]>([]);
 const [harnessPlan, setHarnessPlan] = createSignal<Record<string, HarnessPlanEntry[]>>({});
 const [harnessConfig, setHarnessConfig] = createSignal<Record<string, HarnessConfigOption[]>>({});
+/** Slash commands advertised by the agent, keyed by topic (session state). */
+const [harnessCommands, setHarnessCommands] = createSignal<Record<string, HarnessCommandInfo[]>>(
+  {},
+);
+/** Increments when a topic's history is replaced by a session/load replay —
+ * an in-flight DB load that started before the replay must not overwrite it. */
+const [harnessHistoryRevisions, setHarnessHistoryRevisions] = createSignal<Record<string, number>>(
+  {},
+);
 
 // ===== Native-adapter preferences (model / thinking level per tool, persisted) =====
 
@@ -250,6 +261,20 @@ const currentHarnessApprovals = () => {
 /** Config options reported by the agent for the current topic. */
 const currentHarnessConfigOptions = () => harnessConfig()[currentHarnessTopicId() ?? ''] ?? [];
 
+/** Slash commands advertised by the agent for the current topic. */
+const currentHarnessCommands = () => harnessCommands()[currentHarnessTopicId() ?? ''] ?? [];
+
+/** Current history replacement epoch for a topic (guards in-flight DB loads). */
+const harnessHistoryRevision = (sessionRowId: string) =>
+  harnessHistoryRevisions()[sessionRowId] ?? 0;
+
+/** Mark that a topic's history was replaced by a session/load replay. */
+const bumpHarnessHistoryRevision = (sessionRowId: string) =>
+  setHarnessHistoryRevisions((prev) => ({
+    ...prev,
+    [sessionRowId]: (prev[sessionRowId] ?? 0) + 1,
+  }));
+
 /** Persisted model preference for a tool. */
 const harnessNativeModel = (toolId: string) => harnessNativePrefs()[toolId]?.model;
 
@@ -300,6 +325,8 @@ export {
   setHarnessPlan,
   harnessConfig,
   setHarnessConfig,
+  harnessCommands,
+  setHarnessCommands,
   currentHarnessToolId,
   selectHarnessTool,
   currentHarnessWorkspaceId,
@@ -312,6 +339,9 @@ export {
   currentHarnessTurnError,
   currentHarnessApprovals,
   currentHarnessConfigOptions,
+  currentHarnessCommands,
+  harnessHistoryRevision,
+  bumpHarnessHistoryRevision,
   harnessNativePrefs,
   saveHarnessNativePref,
   harnessConfigCache,

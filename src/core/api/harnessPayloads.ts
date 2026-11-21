@@ -7,6 +7,8 @@
  * as the backend serializes them). Types-only — no runtime behavior.
  */
 
+import type { Message } from '../store/types';
+
 /** One file change reported by a harness tool call (camelCase, mirrors FileChangeInfo). */
 export interface HarnessFileChange {
   filePath: string;
@@ -54,11 +56,41 @@ export interface HarnessConfigOption {
   booleanValue?: boolean;
 }
 
+/** One slash command advertised by the agent (executed by sending `/name` as the next prompt). */
+export interface HarnessCommandInfo {
+  name: string;
+  description: string;
+  inputHint?: string;
+}
+
+/** One subagent reported by a structured tool call (omp `task` / `wait`). */
+export interface HarnessSubagentInfo {
+  id: string;
+  toolCallId: string;
+  agent?: string;
+  title?: string;
+  task?: string;
+  /** pending | running | completed | failed | aborted | cancelled (raw) */
+  status: string;
+  model?: string;
+  thinkingLevel?: string;
+  durationMs?: number;
+  tokens?: number;
+  costUsd?: number;
+  recentTools: string[];
+  recentOutput: string[];
+  result?: string;
+}
+
 /** Normalized harness event (`harness-event` payload `event` field). */
 export interface HarnessEvent {
   kind:
     | 'session_info'
     | 'config_options'
+    | 'commands_update'
+    | 'user_text_delta'
+    | 'subagent_update'
+    | 'history'
     | 'turn_started'
     | 'text_delta'
     | 'thinking_delta'
@@ -91,6 +123,12 @@ export interface HarnessEvent {
   message?: string;
   /** config_options: the agent's full current option set */
   options?: HarnessConfigOption[];
+  /** commands_update: the agent's full current slash-command menu */
+  commands?: HarnessCommandInfo[];
+  /** subagent_update: current state of every subagent reported by this update */
+  subagents?: HarnessSubagentInfo[];
+  /** history: complete replayed display history from session/load */
+  messages?: Message[];
 }
 
 /** `harness-event` payload. */
@@ -167,6 +205,23 @@ export interface HarnessWorkspace {
   path: string;
   name: string;
   createdAt: string;
+}
+
+/** One existing agent-side session that can be imported as a topic. */
+export interface HarnessAgentSessionInfo {
+  sessionId: string;
+  title?: string;
+  updatedAt?: string;
+  /** Agent-reported message count, when available. */
+  messageCount?: number;
+  /** Already bound to an AIO topic under this tool/workspace. */
+  imported: boolean;
+}
+
+/** `session/list` probe result. `supported: false` for native adapters or agents without the list capability. */
+export interface HarnessAgentSessionList {
+  supported: boolean;
+  sessions: HarnessAgentSessionInfo[];
 }
 
 /** Topic ("session") row. */

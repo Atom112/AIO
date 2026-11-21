@@ -5,6 +5,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import type { Message } from '../store/types';
 import type {
+  HarnessAgentSessionList,
   HarnessConfigOption,
   HarnessCustomAgent,
   HarnessToolStatus,
@@ -46,6 +47,27 @@ export const harnessNewSession = (
   title: string,
 ): Promise<HarnessTopic> =>
   invoke<HarnessTopic>('harness_new_session', { toolId, workspacePath, title });
+
+/** List existing agent-side sessions for a workspace (`session/list`). */
+export const harnessListAgentSessions = (
+  toolId: string,
+  workspacePath: string,
+): Promise<HarnessAgentSessionList> =>
+  invoke<HarnessAgentSessionList>('harness_list_agent_sessions', { toolId, workspacePath });
+
+/** Adopt an existing agent session as an AIO topic (idempotent). */
+export const harnessAdoptAgentSession = (
+  toolId: string,
+  workspacePath: string,
+  agentSessionId: string,
+  title: string,
+): Promise<HarnessTopic> =>
+  invoke<HarnessTopic>('harness_adopt_agent_session', {
+    toolId,
+    workspacePath,
+    agentSessionId,
+    title,
+  });
 
 /** Rename a topic. */
 export const harnessRenameSession = (sessionRowId: string, title: string): Promise<void> =>

@@ -39,6 +39,7 @@ import {
   currentHarnessWorkspace,
   currentHarnessWorkspaceId,
   harnessClaudeMode,
+  harnessHistoryRevision,
   harnessMessages,
   harnessRunStates,
   harnessTopics,
@@ -59,6 +60,7 @@ import {
   setHarnessTurnErrors,
   setHarnessWorkspaces,
   type HarnessRunInfo,
+  type HarnessTopic,
 } from '../../core/store/harness';
 import { t } from '../../core/i18n';
 import { harnessNewSession } from '../../core/api/harness';
@@ -67,6 +69,7 @@ import HarnessTopicSidebar from './components/HarnessTopicSidebar';
 import HarnessChatInterface from './components/HarnessChatInterface';
 import HarnessAddWorkspaceModal from './components/HarnessAddWorkspaceModal';
 import HarnessCustomAgentModal from './components/HarnessCustomAgentModal';
+import HarnessImportSessionModal from './components/HarnessImportSessionModal';
 import HarnessInstructionModal from './components/HarnessInstructionModal';
 
 const HarnessPage: Component = () => {
@@ -80,6 +83,7 @@ const HarnessPage: Component = () => {
   const [sending, setSending] = createSignal(false);
   const [showAddWorkspace, setShowAddWorkspace] = createSignal(false);
   const [showCustomAgent, setShowCustomAgent] = createSignal(false);
+  const [showImportSession, setShowImportSession] = createSignal(false);
 
   const [instructionTarget, setInstructionTarget] = createSignal<{
     toolId: string;
@@ -125,8 +129,14 @@ const HarnessPage: Component = () => {
 
   // ===== Initial load + selection restore + running reconciliation =====
   const loadMessages = async (topicId: string) => {
+    const revision = harnessHistoryRevision(topicId);
     try {
-      setHarnessMessages(await harnessLoadMessages(topicId));
+      const messages = await harnessLoadMessages(topicId);
+      // A session/load replay may have replaced the history while this read was
+      // in flight; the replay is authoritative and the topic may also have changed.
+      if (harnessHistoryRevision(topicId) !== revision) return;
+      if (currentHarnessTopicId() !== topicId) return;
+      setHarnessMessages(messages);
     } catch (e) {
       console.error('[harness] load messages failed:', e);
     }
@@ -291,6 +301,14 @@ const HarnessPage: Component = () => {
     if (topicId) void harnessStopSession(topicId).catch(console.error);
   };
 
+  const handleImportedTopic = (topic: HarnessTopic) => {
+    if (!harnessTopics().some((t) => t.id === topic.id)) {
+      setHarnessTopics([topic, ...harnessTopics()]);
+    }
+    selectHarnessTopic(topic.id);
+    setShowImportSession(false);
+  };
+
   const handleAddTopic = async () => {
     const toolId = currentHarnessToolId();
     const ws = currentHarnessWorkspace();
@@ -427,6 +445,11 @@ const HarnessPage: Component = () => {
         }}
         onResize={(e) => !isRightCollapsed() && startResizeRight(e)}
         onAddTopic={() => void handleAddTopic()}
+        onImportSession={() => {
+          const toolId = currentHarnessToolId();
+          const ws = currentHarnessWorkspace();
+          if (toolId && ws) setShowImportSession(true);
+        }}
         onRenameTopic={(id, title) => void handleRenameTopic(id, title)}
         onDeleteTopic={(id) => void handleDeleteTopic(id)}
         isResizing={isResizing()}
@@ -451,6 +474,17 @@ const HarnessPage: Component = () => {
             workspacePath={instructionTarget()!.workspacePath}
             workspaceName={instructionTarget()!.workspaceName}
             onClose={() => setInstructionTarget(null)}
+          />
+        </Portal>
+      </Show>
+
+      <Show when={showImportSession()}>
+        <Portal>
+          <HarnessImportSessionModal
+            toolId={currentHarnessToolId()!}
+            workspacePath={currentHarnessWorkspace()!.path}
+            onClose={() => setShowImportSession(false)}
+            onImported={handleImportedTopic}
           />
         </Portal>
       </Show>

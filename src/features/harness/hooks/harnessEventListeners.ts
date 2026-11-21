@@ -17,11 +17,13 @@ import type {
   HarnessApprovalRequestedPayload,
   HarnessEventPayload,
   HarnessStatePayload,
+  HarnessSubagentInfo,
 } from '../../../core/api/harnessPayloads';
 import { harnessAppendMessage } from '../../../core/api/harness';
-import type { AgentStep, Message, ToolCallDisplay } from '../../../core/store/types';
+import type { AgentStep, Message, SubagentStep, ToolCallDisplay } from '../../../core/store/types';
 import type { HarnessDraft } from '../../../core/store/harness';
 import {
+  bumpHarnessHistoryRevision,
   currentHarnessTopicId,
   harnessApprovals,
   harnessDrafts,
@@ -33,6 +35,7 @@ import {
   harnessTurnErrors,
   setHarnessApprovals,
   saveHarnessConfigCacheEntry,
+  setHarnessCommands,
   setHarnessConfig,
   setHarnessDrafts,
   setHarnessMessages,
@@ -125,6 +128,67 @@ const pushContentStep = (draft: HarnessDraft, text: string) => {
       timestamp: Date.now(),
       status: 'complete',
       contentText: text,
+    },
+  ];
+};
+
+/** Map a harness subagent status onto the chat step status. */
+const subagentStepStatus = (raw: string): AgentStep['status'] =>
+  raw === 'completed'
+    ? 'complete'
+    : ['failed', 'cancelled', 'aborted', 'error'].includes(raw)
+      ? 'error'
+      : 'running';
+
+/** Upsert a subagent card by the harness-assigned id (omp `task` / `wait`). */
+const upsertSubagentStep = (draft: HarnessDraft, info: HarnessSubagentInfo) => {
+  const now = Date.now();
+  const inner: SubagentStep[] = [
+    ...info.recentTools.slice(-8).map((tool) => ({
+      id: crypto.randomUUID(),
+      type: 'tool_call' as const,
+      timestamp: now,
+      status: 'complete' as const,
+      toolName: tool,
+    })),
+    ...info.recentOutput.slice(-8).map((text) => ({
+      id: crypto.randomUUID(),
+      type: 'content' as const,
+      timestamp: now,
+      status: 'complete' as const,
+      summary: text,
+    })),
+  ];
+  const status = subagentStepStatus(info.status);
+  const idx = draft.agentSteps.findIndex((s) => s.type === 'subagent' && s.subagentId === info.id);
+  if (idx >= 0) {
+    const steps = [...draft.agentSteps];
+    const step = { ...steps[idx] };
+    step.status = status;
+    step.subagentProfile = info.agent ?? step.subagentProfile;
+    step.subagentName = info.title ?? info.id;
+    if (info.task) step.subagentTask = info.task;
+    if (info.durationMs !== undefined) step.duration = info.durationMs;
+    if (inner.length > 0) step.subagentSteps = inner;
+    if (info.result) step.subagentResult = info.result;
+    steps[idx] = step;
+    draft.agentSteps = steps;
+    return;
+  }
+  draft.agentSteps = [
+    ...draft.agentSteps,
+    {
+      id: crypto.randomUUID(),
+      type: 'subagent',
+      timestamp: now,
+      status,
+      subagentId: info.id,
+      subagentProfile: info.agent,
+      subagentName: info.title ?? info.id,
+      subagentTask: info.task,
+      subagentSteps: inner.length > 0 ? inner : undefined,
+      subagentResult: info.result,
+      duration: info.durationMs,
     },
   ];
 };
@@ -268,7 +332,8 @@ const finalizeTurn = async (sessionRowId: string, error?: string) => {
   }
 };
 
-const handleHarnessEvent = (payload: HarnessEventPayload) => {
+/** Apply one normalized harness event to the store (exported for unit tests). */
+export const handleHarnessEvent = (payload: HarnessEventPayload) => {
   const { session_row_id: sid, event } = payload;
   switch (event.kind) {
     case 'session_info': {
@@ -290,6 +355,34 @@ const handleHarnessEvent = (payload: HarnessEventPayload) => {
       saveHarnessConfigCacheEntry(payload.tool_id, event.options ?? []);
       break;
     }
+    case 'commands_update': {
+      // Replace the topic's slash-command menu (ACP sends the full set after
+      // session setup / history load; it may change as the agent's state does).
+      setHarnessCommands((prev) => ({ ...prev, [sid]: event.commands ?? [] }));
+      break;
+    }
+    case 'history': {
+      // session/load replay: the agent's transcript replaced the display copy
+      // (backend already persisted it). Drop any stale draft for the topic.
+      bumpHarnessHistoryRevision(sid);
+      const drafts = { ...harnessDrafts() };
+      delete drafts[sid];
+      setHarnessDrafts(drafts);
+      if (sid === currentHarnessTopicId()) {
+        setHarnessMessages(event.messages ?? []);
+      }
+      break;
+    }
+    case 'user_text_delta':
+      // Replay-only event: live turns render the user's own input already.
+      break;
+    case 'subagent_update':
+      if (event.subagents && event.subagents.length > 0) {
+        upsertDraft(sid, (draft) => {
+          for (const info of event.subagents!) upsertSubagentStep(draft, info);
+        });
+      }
+      break;
     case 'turn_started':
       startDraft(sid);
       break;

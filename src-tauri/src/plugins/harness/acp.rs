@@ -13,13 +13,20 @@
 //! never kill the session — unknown notifications are debug-logged, unknown
 //! requests get a `-32601` reply so the agent cannot hang waiting on us.
 
+use crate::ierr;
+use crate::plugins::harness::acp_history::build_history;
+use crate::plugins::harness::acp_subagents::{
+    apply_patch_str, apply_subagent_update, content_text_of, ingest_subagent_events,
+    legacy_subagent_meta, push_recent, subagent_info, SubagentRuntime,
+};
 use crate::plugins::harness::adapter::{
     resolve_acp_command, spawn_harness_child_env, DriverCtx, DriverHandle, DriverSpawn,
     HarnessAdapter, HarnessCommand,
 };
 use crate::plugins::harness::model::{
-    HarnessApprovalOption, HarnessApprovalRequest, HarnessConfigOption, HarnessConfigValue,
-    HarnessEvent, HarnessFileChange, HarnessPlanEntry, HarnessUsage,
+    HarnessApprovalOption, HarnessApprovalRequest, HarnessCommandInfo, HarnessConfigOption,
+    HarnessConfigValue, HarnessEvent, HarnessFileChange, HarnessPlanEntry, HarnessSubagentInfo,
+    HarnessUsage,
 };
 use crate::plugins::harness::registry::{SpawnOptionInject, SpawnOptionSpec};
 use crate::utils::jsonrpc::{PendingMap, WaitError};
@@ -73,6 +80,14 @@ pub(super) struct AcpDriver {
     /// Last agent-reported config-option set (merged with the synthesized
     /// spawn options on every emission).
     agent_config_options: Arc<parking_lot::Mutex<Vec<HarnessConfigOption>>>,
+    /// While `session/load` is in flight, session updates are the historical
+    /// replay: buffer them here instead of emitting deltas (the driver converts
+    /// the buffer into one history snapshot when the response arrives).
+    replay_buffer: Arc<parking_lot::Mutex<Option<Vec<HarnessEvent>>>>,
+    /// ACP subagent RFD children (client capability `subagents`): child session
+    /// id → current display state. Child-addressed updates are aggregated here
+    /// instead of leaking into the parent transcript.
+    subagents: Arc<parking_lot::Mutex<HashMap<String, SubagentRuntime>>>,
 }
 
 impl AcpDriver {
@@ -119,6 +134,8 @@ impl AcpDriver {
                 spawn.spawn_option_values.clone(),
             )),
             agent_config_options: Arc::new(parking_lot::Mutex::new(Vec::new())),
+            replay_buffer: Arc::new(parking_lot::Mutex::new(None)),
+            subagents: Arc::new(parking_lot::Mutex::new(HashMap::new())),
         });
         // Tools with declared spawn options show them immediately (the
         // agent-reported options merge in once session/new completes).
@@ -155,7 +172,11 @@ impl AcpDriver {
                 "initialize",
                 json!({
                     "protocolVersion": 1,
-                    "clientCapabilities": {},
+                    // `subagents` opts into the ACP subagent-session RFD:
+                    // agents (Claude Code ACP, Codex ACP, ...) then expose each
+                    // child as its own session id instead of flattening it into
+                    // a Task tool call. Unknown capabilities are ignored.
+                    "clientCapabilities": { "subagents": {} },
                     "clientInfo": { "name": "AIO", "title": "AIO", "version": version }
                 }),
             )
@@ -169,38 +190,86 @@ impl AcpDriver {
             .and_then(Value::as_str)
             .unwrap_or("?");
         tracing::info!("[harness:{tool_label}] ACP 握手完成（agent {agent_version}）");
+        // Advertised lifecycle capabilities. `loadSession` replays the agent's
+        // whole transcript (the only way to recover history and context for an
+        // agent that cannot resume); `sessionCapabilities.resume` reattaches
+        // silently. Capability blocks are optional — when neither is advertised
+        // we keep the legacy "try resume, fall back to new" behavior.
+        let load_supported = init_resp
+            .pointer("/result/agentCapabilities/loadSession")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let resume_supported = init_resp
+            .pointer("/result/agentCapabilities/sessionCapabilities/resume")
+            .map(|v| !v.is_null())
+            .unwrap_or(false);
 
-        // session/resume (reattach without replay — AIO's own DB is the display
-        // history) with fallback to a fresh session/new when the agent never saw
-        // the id or lacks the resume capability.
+        // Reattach an existing session. Preference order:
+        // - no AIO display history yet → session/load (replay becomes history);
+        // - otherwise → session/resume (fast, silent; DB is the display copy);
+        // - first choice fails → the other method (both restore agent context);
+        // - both fail → fresh session/new (the old id is gone).
         let mut harness_sid: Option<String> = None;
         let mut session_resp: Option<Value> = None;
+        let mut replayed: Vec<HarnessEvent> = Vec::new();
         if let Some(rid) = spawn.harness_session_id.clone() {
-            let Ok((resume_id, resume_rx)) = driver
-                .send_request(
-                    "session/resume",
-                    json!({ "sessionId": rid, "cwd": spawn.workspace_path, "mcpServers": [] }),
-                )
-                .await
-            else {
-                return Err(format!(
-                    "[{tool_label}] 发送 session/resume 失败：agent 进程已退出"
-                ));
-            };
-            match driver
-                .wait_request(resume_id, resume_rx, SESSION_SETUP_TIMEOUT_SECS)
-                .await
-            {
-                Ok(v) => {
-                    harness_sid = Some(rid);
-                    session_resp = Some(v);
+            // Child-addressed subagent updates are routed by comparing the
+            // update's sessionId with this root; install it before replay.
+            *driver.session_id.lock() = Some(rid.clone());
+            let prefer_load = load_supported && (spawn.replay_history || !resume_supported);
+            let mut failure = String::new();
+
+            if prefer_load {
+                match driver.load_session(&rid, &spawn.workspace_path).await {
+                    Ok((resp, replay)) => {
+                        harness_sid = Some(rid.clone());
+                        session_resp = Some(resp);
+                        replayed = replay;
+                    }
+                    Err(e) => failure = format!("load: {e}"),
                 }
-                Err(e) => {
-                    tracing::info!("[harness:{tool_label}] resume {rid} 失败（回退新会话）: {e}");
+            }
+            if harness_sid.is_none() {
+                match driver.resume_session(&rid, &spawn.workspace_path).await {
+                    Ok(resp) => {
+                        harness_sid = Some(rid.clone());
+                        session_resp = Some(resp);
+                    }
+                    Err(e) => {
+                        failure = if failure.is_empty() {
+                            format!("resume: {e}")
+                        } else {
+                            format!("{failure}; resume: {e}")
+                        };
+                    }
                 }
+            }
+            if harness_sid.is_none() && !prefer_load && load_supported {
+                match driver.load_session(&rid, &spawn.workspace_path).await {
+                    Ok((resp, replay)) => {
+                        harness_sid = Some(rid.clone());
+                        session_resp = Some(resp);
+                        replayed = replay;
+                    }
+                    Err(e) => failure = format!("{failure}; load: {e}"),
+                }
+            }
+            if harness_sid.is_none() {
+                tracing::info!(
+                    "[harness:{tool_label}] 恢复会话 {rid} 失败（回退新会话）: {failure}"
+                );
+                ctx.emit_event(HarnessEvent::Notice {
+                    message: ierr!(
+                        "原工具会话无法恢复，已新建会话；AIO 中的历史记录仍保留。",
+                        "The tool session could not be restored; a new session was started. AIO's recorded history is still kept."
+                    ),
+                });
             }
         }
         if harness_sid.is_none() {
+            // The old root is gone; a fresh session id replaces it after the
+            // response, and any stray child traffic must not be attributed to it.
+            *driver.session_id.lock() = None;
             // mcpServers must be sent EXPLICITLY empty: DSH's validator marks the
             // field required and rejects its omission (verified against the live
             // agent during bring-up — an empty array is valid for every agent).
@@ -234,6 +303,16 @@ impl AcpDriver {
             harness_session_id: harness_sid,
             model: None,
         });
+        // session/load replay → one history snapshot (already converted to the
+        // chat Message model). Persist first so a webview crash after the event
+        // still recovers the transcript.
+        if !replayed.is_empty() {
+            let messages = build_history(&replayed);
+            if !messages.is_empty() {
+                ctx.replace_history(&messages);
+                ctx.emit_event(HarnessEvent::History { messages });
+            }
+        }
         // Config options (model / thought-level selectors): the session/new (or
         // resume) result carries the agent's full option set; store it and emit
         // the merged set (agent options + synthesized spawn options).
@@ -334,6 +413,47 @@ impl AcpDriver {
         Ok(waited)
     }
 
+    /// Send one session-lifecycle request (`session/resume` / `session/load`).
+    async fn session_lifecycle(
+        &self,
+        method: &str,
+        session_id: &str,
+        cwd: &str,
+    ) -> Result<Value, String> {
+        let (id, rx) = self
+            .send_request(
+                method,
+                json!({ "sessionId": session_id, "cwd": cwd, "mcpServers": [] }),
+            )
+            .await?;
+        self.wait_request(id, rx, SESSION_SETUP_TIMEOUT_SECS).await
+    }
+
+    /// Reattach without replay (fast path when AIO already has the display copy).
+    async fn resume_session(&self, session_id: &str, cwd: &str) -> Result<Value, String> {
+        self.session_lifecycle("session/resume", session_id, cwd)
+            .await
+    }
+
+    /// Load an existing session and capture its replayed `session/update`s.
+    /// The replay buffer is installed before the request so no notification can
+    /// race past it; it is always cleared even on failure.
+    async fn load_session(
+        &self,
+        session_id: &str,
+        cwd: &str,
+    ) -> Result<(Value, Vec<HarnessEvent>), String> {
+        *self.replay_buffer.lock() = Some(Vec::new());
+        let result = self
+            .session_lifecycle("session/load", session_id, cwd)
+            .await;
+        let replay = self.replay_buffer.lock().take();
+        match result {
+            Ok(resp) => Ok((resp, replay.unwrap_or_default())),
+            Err(e) => Err(e),
+        }
+    }
+
     /// The stdout reader: dispatches JSON-RPC messages until the transport dies.
     async fn read_loop(self: Arc<Self>, stdout: ChildStdout) {
         let mut lines = BufReader::new(stdout).lines();
@@ -403,21 +523,75 @@ impl AcpDriver {
     }
 
     /// `session/update` → normalized events (typed parse, wire-pointer reads).
+    /// Updates are addressed by `params.sessionId`: the root session maps to the
+    /// normal GUI stream, any other id is a subagent child from the ACP
+    /// subagent RFD and is aggregated into its card instead.
     fn handle_session_update(&self, params: Option<&Value>) {
         let Some(params) = params else { return };
+        let outer = params
+            .get("sessionId")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        let root = self.session_id.lock().clone();
+        let mut child =
+            (!outer.is_empty() && root.as_deref() != Some(outer)).then(|| outer.to_string());
+        // Some ACP agents (Qwen Code today) flatten subagent traffic into the
+        // parent session and tag it with `_meta.parentToolCallId/subagentType`
+        // instead of the RFD's child session ids.
+        if child.is_none() {
+            if let Some((parent_tool_call, agent)) = legacy_subagent_meta(params) {
+                if let Some(agent) = agent {
+                    let mut subagents = self.subagents.lock();
+                    let runtime = subagents.entry(parent_tool_call.clone()).or_default();
+                    runtime.agent = Some(agent.clone());
+                    if runtime.title.is_none() {
+                        runtime.title = Some(agent);
+                    }
+                }
+                child = Some(parent_tool_call);
+            }
+        }
+
+        if let Some(update) = params.get("update") {
+            let kind = update
+                .get("sessionUpdate")
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            if self.handle_rfd_update(child.as_deref(), kind, update) {
+                return;
+            }
+            if child.is_some()
+                && !matches!(
+                    kind,
+                    "agent_message_chunk"
+                        | "agent_thought_chunk"
+                        | "tool_call"
+                        | "tool_call_update"
+                        | "plan"
+                        | "usage_update"
+                        | "notice"
+                        | "config_option_update"
+                        | "current_mode_update"
+                        | "session_info_update"
+                        | "available_commands_update"
+                )
+            {
+                tracing::debug!("[harness:{}] 忽略子会话更新 {kind}", self.tool_label);
+                return;
+            }
+        } else {
+            return;
+        }
+
         match serde_json::from_value::<SessionNotification>(params.clone()) {
             Ok(note) => {
-                for event in map_session_update(&self.tool_label, note.update) {
-                    // Agent-reported config options: store the set and emit the
-                    // merged view (agent options + synthesized spawn options).
-                    if let HarnessEvent::ConfigOptions { options } = event {
-                        *self.agent_config_options.lock() = options;
-                        self.ctx.emit_event(HarnessEvent::ConfigOptions {
-                            options: self.merged_config_options(),
-                        });
-                        continue;
+                let events = map_session_update(&self.tool_label, note.update);
+                if let Some(child) = &child {
+                    self.ingest_child_events(child, events);
+                } else {
+                    for event in events {
+                        self.dispatch_root_event(event);
                     }
-                    self.ctx.emit_event(event);
                 }
             }
             Err(e) => {
@@ -428,6 +602,141 @@ impl AcpDriver {
                 );
             }
         }
+    }
+
+    /// Route one root-session event: config/command state is driver-local,
+    /// everything else is buffered during history replay or emitted live.
+    fn dispatch_root_event(&self, event: HarnessEvent) {
+        match event {
+            HarnessEvent::ConfigOptions { options } => {
+                *self.agent_config_options.lock() = options;
+                if self.replay_buffer.lock().is_none() {
+                    self.ctx.emit_event(HarnessEvent::ConfigOptions {
+                        options: self.merged_config_options(),
+                    });
+                }
+            }
+            // Command menus are useful immediately (the user can queue a slash
+            // command while a long transcript replays); they are not history.
+            HarnessEvent::CommandsUpdate { .. } => self.ctx.emit_event(event),
+            other => self.emit_or_buffer(other),
+        }
+    }
+
+    fn emit_or_buffer(&self, event: HarnessEvent) {
+        let mut replay = self.replay_buffer.lock();
+        if let Some(buffer) = replay.as_mut() {
+            buffer.push(event);
+        } else {
+            drop(replay);
+            self.ctx.emit_event(event);
+        }
+    }
+
+    /// Aggregate one child-session event into its subagent card. Child text and
+    /// tool calls never become parent transcript content.
+    fn ingest_child_events(&self, child: &str, events: Vec<HarnessEvent>) {
+        let changed = {
+            let mut subagents = self.subagents.lock();
+            let runtime = subagents.entry(child.to_string()).or_default();
+            ingest_subagent_events(runtime, events)
+        };
+        if changed {
+            self.emit_subagent_snapshot(child);
+        }
+    }
+
+    /// Parse the subagent-session RFD notifications that the stable ACP schema
+    /// does not type yet. Returns true when the update was handled here.
+    fn handle_rfd_update(&self, child: Option<&str>, kind: &str, update: &Value) -> bool {
+        match kind {
+            "subagent_update" => {
+                let Some(child_id) = update.get("sessionId").and_then(Value::as_str) else {
+                    return true;
+                };
+                {
+                    let mut subagents = self.subagents.lock();
+                    let runtime = subagents.entry(child_id.to_string()).or_default();
+                    apply_subagent_update(runtime, update);
+                }
+                self.emit_subagent_snapshot(child_id);
+                true
+            }
+            "session_message" | "session_message_chunk" => {
+                let text = content_text_of(update.get("content"));
+                if let Some(text) = text {
+                    let target = child.map(str::to_string).or_else(|| {
+                        // The parent transcript's incoming view names the child
+                        // as its sender; attribute it to that child's card.
+                        update
+                            .get("senderSessionId")
+                            .and_then(Value::as_str)
+                            .filter(|sid| self.subagents.lock().contains_key(*sid))
+                            .map(str::to_string)
+                    });
+                    if let Some(target) = target {
+                        {
+                            let mut subagents = self.subagents.lock();
+                            let runtime = subagents.entry(target.clone()).or_default();
+                            push_recent(&mut runtime.recent_output, text, 2000);
+                        }
+                        self.emit_subagent_snapshot(&target);
+                    }
+                }
+                true
+            }
+            // AIR's earlier draft (only sent when the client opts into AIR).
+            "subagent_spawned" => {
+                let Some(child_id) = update.get("subagentSessionId").and_then(Value::as_str) else {
+                    return true;
+                };
+                {
+                    let mut subagents = self.subagents.lock();
+                    let runtime = subagents.entry(child_id.to_string()).or_default();
+                    apply_patch_str(&mut runtime.title, update.get("name"));
+                    apply_patch_str(&mut runtime.description, update.get("task"));
+                    runtime.state = "running".to_string();
+                }
+                self.emit_subagent_snapshot(child_id);
+                true
+            }
+            "subagent_state_update" => {
+                let Some(child_id) = update.get("subagentSessionId").and_then(Value::as_str) else {
+                    return true;
+                };
+                {
+                    let mut subagents = self.subagents.lock();
+                    let runtime = subagents.entry(child_id.to_string()).or_default();
+                    runtime.state = "idle".to_string();
+                    runtime.stop_reason = Some(
+                        update
+                            .get("state")
+                            .and_then(Value::as_str)
+                            .unwrap_or("completed")
+                            .to_string(),
+                    );
+                }
+                self.emit_subagent_snapshot(child_id);
+                true
+            }
+            // Async-task opt-in is not advertised; tolerate the frames.
+            "async_task_spawned" | "async_task_progress" | "async_task_state_update" => true,
+            _ => false,
+        }
+    }
+
+    /// Emit the current card state of one child (or buffer it during replay).
+    fn emit_subagent_snapshot(&self, child: &str) {
+        let info = {
+            let subagents = self.subagents.lock();
+            let Some(runtime) = subagents.get(child) else {
+                return;
+            };
+            subagent_info(child, runtime)
+        };
+        self.dispatch_root_event(HarnessEvent::SubagentUpdate {
+            entries: vec![info],
+        });
     }
 
     /// `session/request_permission` → harness approval bubble → user decision →
@@ -735,14 +1044,33 @@ fn map_session_update(tool: &str, update: SessionUpdate) -> Vec<HarnessEvent> {
                 .map(|t| vec![HarnessEvent::ThinkingDelta { text: t }])
                 .unwrap_or_default()
         }
-        SessionUpdate::UserMessageChunk(_) => Vec::new(), // we already show the user input
+        SessionUpdate::UserMessageChunk(c) => {
+            // Live turns already render the user's own input; history replay
+            // (session/load) uses this to reconstruct the transcript.
+            let wire = serde_json::to_value(&c).ok();
+            text_of_chunk(wire.as_ref())
+                .map(|t| vec![HarnessEvent::UserTextDelta { text: t }])
+                .unwrap_or_default()
+        }
         SessionUpdate::ToolCall(tc) => serde_json::to_value(&tc)
             .ok()
-            .map(|w| tool_call_events(&w))
+            .map(|w| {
+                let mut events = tool_call_events(&w);
+                if let Some(subagents) = subagent_update_event(&w) {
+                    events.push(subagents);
+                }
+                events
+            })
             .unwrap_or_default(),
         SessionUpdate::ToolCallUpdate(u) => serde_json::to_value(&u)
             .ok()
-            .map(|w| tool_call_update_events(&w))
+            .map(|w| {
+                let mut events = tool_call_update_events(&w);
+                if let Some(subagents) = subagent_update_event(&w) {
+                    events.push(subagents);
+                }
+                events
+            })
             .unwrap_or_default(),
         SessionUpdate::Plan(p) => serde_json::to_value(&p)
             .ok()
@@ -769,9 +1097,19 @@ fn map_session_update(tool: &str, update: SessionUpdate) -> Vec<HarnessEvent> {
             })
             .unwrap_or_default()
         }
-        // Not consumed by the PR1 UI (reserved for later PRs).
-        SessionUpdate::AvailableCommandsUpdate(_)
-        | SessionUpdate::CurrentModeUpdate(_)
+        // Slash command menu (ACP has no invoke method — the GUI sends
+        // `/name [input]` as the next prompt).
+        SessionUpdate::AvailableCommandsUpdate(c) => {
+            let wire = serde_json::to_value(&c).ok();
+            wire.map(|w| {
+                vec![HarnessEvent::CommandsUpdate {
+                    commands: commands_of(&w),
+                }]
+            })
+            .unwrap_or_default()
+        }
+        // Not consumed by the GUI (reserved for later PRs).
+        SessionUpdate::CurrentModeUpdate(_)
         | SessionUpdate::SessionInfoUpdate(_)
         | SessionUpdate::CompactionUpdate(_)
         | SessionUpdate::CompactionSummaryChunk(_) => Vec::new(),
@@ -797,20 +1135,20 @@ fn tool_call_events(w: &Value) -> Vec<HarnessEvent> {
     };
     let status = w.get("status").and_then(Value::as_str).unwrap_or("pending");
     let (content, file_changes) = content_of_tool_call(w.get("content"));
-    let raw_output = w.get("rawOutput").map(compact_json_string);
+    let output = content.or_else(|| raw_output_text(w));
     match status {
         "completed" => vec![HarnessEvent::ToolCallEnd {
             tool_call_id: tool_call_id.to_string(),
             ok: true,
-            content: content.or(raw_output),
+            content: output,
             error: None,
             file_changes,
         }],
         "failed" => vec![HarnessEvent::ToolCallEnd {
             tool_call_id: tool_call_id.to_string(),
             ok: false,
-            content: content.clone(),
-            error: raw_output.or(Some("tool failed".to_string())),
+            content: output.clone(),
+            error: output.or(Some("tool failed".to_string())),
             file_changes,
         }],
         _ => vec![HarnessEvent::ToolCallStart {
@@ -830,12 +1168,13 @@ fn tool_call_update_events(w: &Value) -> Vec<HarnessEvent> {
     };
     let status = w.get("status").and_then(Value::as_str);
     let (content, file_changes) = content_of_tool_call(w.get("content"));
-    let raw_output = w.get("rawOutput").map(compact_json_string);
+    let raw_output = raw_output_text(w);
+    let content = content.or_else(|| raw_output.clone());
     match status {
         Some("completed") => vec![HarnessEvent::ToolCallEnd {
             tool_call_id: tool_call_id.to_string(),
             ok: true,
-            content: content.or(raw_output),
+            content,
             error: None,
             file_changes,
         }],
@@ -843,7 +1182,7 @@ fn tool_call_update_events(w: &Value) -> Vec<HarnessEvent> {
             tool_call_id: tool_call_id.to_string(),
             ok: false,
             content: content.clone(),
-            error: raw_output.or(Some("tool failed".to_string())),
+            error: content.or(Some("tool failed".to_string())),
             file_changes,
         }],
         Some(other) => vec![HarnessEvent::ToolCallUpdate {
@@ -896,6 +1235,174 @@ fn content_of_tool_call(content: Option<&Value>) -> (Option<String>, Vec<Harness
     }
     let text = if text.is_empty() { None } else { Some(text) };
     (text, changes)
+}
+
+/// Text blocks from either ACP tool-call content (`{type:"content",
+/// content:{type:"text"}}`) or omp's `rawOutput.content` (`{type:"text",
+/// text}`). Agents keep human-readable tool output in one of the two; the raw
+/// `details` object is machine state and is never shown verbatim.
+fn text_blocks(value: Option<&Value>) -> Option<String> {
+    let arr = value?.as_array()?;
+    let mut out = String::new();
+    for item in arr {
+        let text = match item.get("type").and_then(Value::as_str) {
+            Some("text") => item.get("text").and_then(Value::as_str),
+            Some("content") => item.pointer("/content/text").and_then(Value::as_str),
+            _ => None,
+        };
+        if let Some(t) = text {
+            out.push_str(t);
+        }
+    }
+    (!out.is_empty()).then_some(out)
+}
+
+/// Human-readable text carried in a tool call's `rawOutput.content` (omp and
+/// several adapters put the final tool text here instead of `content`).
+fn raw_output_text(w: &Value) -> Option<String> {
+    text_blocks(w.pointer("/rawOutput/content"))
+}
+
+/// `available_commands_update` wire → normalized command list.
+fn commands_of(w: &Value) -> Vec<HarnessCommandInfo> {
+    let Some(arr) = w.get("availableCommands").and_then(Value::as_array) else {
+        return Vec::new();
+    };
+    arr.iter()
+        .filter_map(|c| {
+            Some(HarnessCommandInfo {
+                name: c.get("name")?.as_str()?.to_string(),
+                description: c
+                    .get("description")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string(),
+                input_hint: c
+                    .pointer("/input/hint")
+                    .and_then(Value::as_str)
+                    .map(str::to_string),
+            })
+        })
+        .collect()
+}
+
+/// Structured subagent state carried by a tool call (omp `task` progress and
+/// `wait` job snapshots). ACP has no subagent stream — agents that expose
+/// subagents put this state in `rawOutput.details`; others expose none and the
+/// event is simply absent.
+fn subagent_update_event(w: &Value) -> Option<HarnessEvent> {
+    let parent = w.get("toolCallId").and_then(Value::as_str)?.to_string();
+    let mut entries: Vec<HarnessSubagentInfo> = Vec::new();
+    if let Some(arr) = w
+        .pointer("/rawOutput/details/progress")
+        .and_then(Value::as_array)
+    {
+        for p in arr {
+            let Some(id) = p.get("id").and_then(Value::as_str) else {
+                continue;
+            };
+            entries.push(HarnessSubagentInfo {
+                id: id.to_string(),
+                tool_call_id: parent.clone(),
+                agent: str_at(p, "agent"),
+                title: None,
+                task: p.get("task").and_then(Value::as_str).map(first_line),
+                status: str_at(p, "status").unwrap_or_else(|| "running".to_string()),
+                model: str_at(p, "resolvedModel"),
+                thinking_level: str_at(p, "resolvedThinkingLevel"),
+                duration_ms: p.get("durationMs").and_then(Value::as_u64),
+                tokens: p.get("tokens").and_then(Value::as_u64),
+                cost_usd: p.get("cost").and_then(Value::as_f64),
+                recent_tools: strings_of(p.get("recentTools")),
+                recent_output: strings_of(p.get("recentOutput")),
+                result: None,
+            });
+        }
+    }
+    if let Some(arr) = w
+        .pointer("/rawOutput/details/jobs")
+        .and_then(Value::as_array)
+    {
+        for j in arr {
+            let Some(id) = j.get("id").and_then(Value::as_str) else {
+                continue;
+            };
+            // Background job snapshots also cover shells; only task jobs are subagents.
+            if j.get("type").and_then(Value::as_str) != Some("task") {
+                continue;
+            }
+            entries.push(HarnessSubagentInfo {
+                id: id.to_string(),
+                tool_call_id: parent.clone(),
+                agent: str_at(j, "agent"),
+                title: None,
+                task: str_at(j, "label").map(|s| first_line(&s)),
+                status: str_at(j, "status").unwrap_or_else(|| "running".to_string()),
+                model: str_at(j, "resolvedModel"),
+                thinking_level: str_at(j, "resolvedThinkingLevel"),
+                duration_ms: j.get("durationMs").and_then(Value::as_u64),
+                tokens: j.get("tokens").and_then(Value::as_u64),
+                cost_usd: j.get("cost").and_then(Value::as_f64),
+                recent_tools: Vec::new(),
+                recent_output: strings_of(j.get("recentOutput")),
+                result: j
+                    .get("resultText")
+                    .and_then(Value::as_str)
+                    .map(|s| crate::utils::truncate::truncate_chars_head(s, 10000)),
+            });
+        }
+    }
+    (!entries.is_empty()).then_some(HarnessEvent::SubagentUpdate { entries })
+}
+
+fn str_at(v: &Value, key: &str) -> Option<String> {
+    v.get(key).and_then(Value::as_str).map(str::to_string)
+}
+
+/// Compact string list from a string array or an array of objects
+/// (`{toolName}`, `{name}`, `{label}` preferred). Only the newest entries are
+/// kept and each is char-bounded — the UI shows one line each and these arrays
+/// repeat on every progress update.
+fn strings_of(v: Option<&Value>) -> Vec<String> {
+    let Some(arr) = v.and_then(Value::as_array) else {
+        return Vec::new();
+    };
+    let mut out: Vec<String> = arr
+        .iter()
+        .filter_map(|item| {
+            item.as_str().map(str::to_string).or_else(|| {
+                ["toolName", "name", "label", "text", "summary"]
+                    .iter()
+                    .find_map(|k| item.get(*k).and_then(Value::as_str))
+                    .map(str::to_string)
+            })
+        })
+        .collect();
+    if out.len() > 8 {
+        out.drain(..out.len() - 8);
+    }
+    for item in &mut out {
+        if item.chars().count() > 300 {
+            let mut cut: String = item.chars().take(300).collect();
+            cut.push('…');
+            *item = cut;
+        }
+    }
+    out
+}
+
+/// First non-empty line, char-bounded (subagent assignments are multi-line).
+fn first_line(text: &str) -> String {
+    let line = text
+        .lines()
+        .map(str::trim)
+        .find(|l| !l.is_empty())
+        .unwrap_or("");
+    let mut out: String = line.chars().take(160).collect();
+    if line.chars().count() > 160 {
+        out.push('…');
+    }
+    out
 }
 
 /// Plan wire `{"entries":[{"content","priority","status"}, ...]}` → PlanUpdate.
@@ -1357,6 +1864,201 @@ mod tests {
         assert_eq!(opt.current.as_deref(), Some("always-ask"));
     }
 
+    /// ACP command menu: available_commands_update carries name/description and
+    /// an optional input hint; it maps to the frontend slash-command list.
+    #[test]
+    fn maps_available_commands() {
+        let note: SessionNotification = serde_json::from_value(json!({
+            "sessionId": "s",
+            "update": {
+                "sessionUpdate": "available_commands_update",
+                "availableCommands": [
+                    { "name": "model", "description": "Show current model selection" },
+                    { "name": "switch", "description": "Switch model", "input": { "hint": "[model]" } }
+                ]
+            }
+        }))
+        .unwrap();
+        match map_session_update("t", note.update).pop().unwrap() {
+            HarnessEvent::CommandsUpdate { commands } => {
+                assert_eq!(commands.len(), 2);
+                assert_eq!(commands[0].name, "model");
+                assert_eq!(commands[0].description, "Show current model selection");
+                assert!(commands[0].input_hint.is_none());
+                assert_eq!(commands[1].input_hint.as_deref(), Some("[model]"));
+            }
+            other => panic!("unexpected event: {other:?}"),
+        }
+    }
+
+    /// session/load replays user messages as user_message_chunk; the history
+    /// builder needs them to delimit turns.
+    #[test]
+    fn maps_user_message_chunk() {
+        let note: SessionNotification = serde_json::from_value(json!({
+            "sessionId": "s",
+            "update": {
+                "sessionUpdate": "user_message_chunk",
+                "content": { "type": "text", "text": "你好" }
+            }
+        }))
+        .unwrap();
+        match map_session_update("t", note.update).pop().unwrap() {
+            HarnessEvent::UserTextDelta { text } => assert_eq!(text, "你好"),
+            other => panic!("unexpected event: {other:?}"),
+        }
+    }
+
+    /// omp puts tool text in `rawOutput.content` (not `content`) and exposes
+    /// subagent progress in `rawOutput.details.progress`. Both must surface:
+    /// the text as the tool result, the progress as a SubagentUpdate.
+    #[test]
+    fn maps_omp_task_progress_and_raw_output_text() {
+        let note: SessionNotification = serde_json::from_value(json!({
+            "sessionId": "s",
+            "update": {
+                "sessionUpdate": "tool_call_update",
+                "toolCallId": "call_task",
+                "status": "in_progress",
+                "rawOutput": {
+                    "content": [ { "type": "text", "text": "Running agent Foo..." } ],
+                    "details": {
+                        "progress": [{
+                            "index": 0,
+                            "id": "Foo",
+                            "agent": "sonic",
+                            "agentSource": "bundled",
+                            "modelRole": "smol",
+                            "status": "running",
+                            "task": "# Target\nDo the thing\n\n# Change\nDo it",
+                            "assignment": "Do it",
+                            "recentTools": ["read_file"],
+                            "recentOutput": ["half"],
+                            "toolCount": 1,
+                            "requests": 2,
+                            "tokens": 1234,
+                            "cost": 0.002,
+                            "durationMs": 1700,
+                            "resolvedModel": "scnet/model",
+                            "resolvedThinkingLevel": "high"
+                        }]
+                    }
+                }
+            }
+        }))
+        .unwrap();
+        let events = map_session_update("t", note.update);
+        let tool = events
+            .iter()
+            .find(|e| matches!(e, HarnessEvent::ToolCallUpdate { .. }))
+            .expect("tool update event");
+        match tool {
+            HarnessEvent::ToolCallUpdate { content, .. } => {
+                assert_eq!(content.as_deref(), Some("Running agent Foo..."));
+            }
+            _ => unreachable!(),
+        }
+        let subagents = events
+            .iter()
+            .find(|e| matches!(e, HarnessEvent::SubagentUpdate { .. }))
+            .expect("subagent update event");
+        match subagents {
+            HarnessEvent::SubagentUpdate { entries } => {
+                assert_eq!(entries.len(), 1);
+                let s = &entries[0];
+                assert_eq!(s.id, "Foo");
+                assert_eq!(s.agent.as_deref(), Some("sonic"));
+                assert_eq!(s.status, "running");
+                assert_eq!(s.task.as_deref(), Some("# Target"));
+                assert_eq!(s.model.as_deref(), Some("scnet/model"));
+                assert_eq!(s.thinking_level.as_deref(), Some("high"));
+                assert_eq!(s.duration_ms, Some(1700));
+                assert_eq!(s.tokens, Some(1234));
+                assert_eq!(s.recent_tools, vec!["read_file"]);
+                assert_eq!(s.recent_output, vec!["half"]);
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    /// Replayed events collapse into user/assistant messages with the same
+    /// agentSteps JSON the live frontend assembles.
+    #[test]
+    fn builds_history_messages_from_replay() {
+        let events = vec![
+            HarnessEvent::UserTextDelta {
+                text: "hi".to_string(),
+            },
+            HarnessEvent::ThinkingDelta {
+                text: "think".to_string(),
+            },
+            HarnessEvent::TextDelta {
+                text: "hello".to_string(),
+            },
+            HarnessEvent::ToolCallStart {
+                tool_call_id: "call_1".to_string(),
+                name: Some("read_file".to_string()),
+                title: None,
+                tool_kind: Some("read".to_string()),
+                arguments: Some("{\"path\":\"a\"}".to_string()),
+            },
+            HarnessEvent::ToolCallEnd {
+                tool_call_id: "call_1".to_string(),
+                ok: true,
+                content: Some("ok".to_string()),
+                error: None,
+                file_changes: Vec::new(),
+            },
+            HarnessEvent::SubagentUpdate {
+                entries: vec![HarnessSubagentInfo {
+                    id: "Foo".to_string(),
+                    tool_call_id: "call_task".to_string(),
+                    agent: Some("sonic".to_string()),
+                    title: None,
+                    task: Some("Do it".to_string()),
+                    status: "completed".to_string(),
+                    model: None,
+                    thinking_level: None,
+                    duration_ms: Some(1500),
+                    tokens: Some(42),
+                    cost_usd: None,
+                    recent_tools: vec!["read_file".to_string()],
+                    recent_output: vec!["done".to_string()],
+                    result: Some("BANANA".to_string()),
+                }],
+            },
+            HarnessEvent::UsageUpdate {
+                usage: HarnessUsage {
+                    context_tokens: Some(5000),
+                    ..Default::default()
+                },
+            },
+            HarnessEvent::TurnEnded {
+                stop_reason: "end_turn".to_string(),
+                error: None,
+            },
+        ];
+        let messages = build_history(&events);
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0].role, "user");
+        assert_eq!(messages[0].content, json!("hi"));
+        assert_eq!(messages[1].role, "assistant");
+        assert_eq!(messages[1].content, json!("hello"));
+        assert_eq!(messages[1].reasoning.as_deref(), Some("think"));
+        assert_eq!(messages[1].context_tokens, Some(5000));
+        let steps = messages[1].agent_steps.as_ref().expect("steps");
+        let steps = steps.as_array().unwrap();
+        assert_eq!(steps.len(), 2);
+        assert_eq!(steps[0]["type"], "tool_call");
+        assert_eq!(steps[0]["status"], "complete");
+        assert_eq!(steps[0]["toolCall"]["content"], "ok");
+        assert_eq!(steps[1]["type"], "subagent");
+        assert_eq!(steps[1]["status"], "complete");
+        assert_eq!(steps[1]["subagentId"], "Foo");
+        assert_eq!(steps[1]["subagentResult"], "BANANA");
+        assert_eq!(steps[1]["duration"], 1500);
+    }
+
     /// Literal wire examples from the ACP v1 spec/research: the mapping must
     /// produce exactly the normalized events the frontend expects.
     #[test]
@@ -1577,6 +2279,14 @@ mod live_tests {
             store::set_session_harness_id(&self.conn.lock(), session_row_id, harness_session_id)
                 .expect("persist harness session id");
         }
+        fn replace_history(
+            &self,
+            session_row_id: &str,
+            messages: &[crate::core::models::chat::Message],
+        ) {
+            let mut conn = self.conn.lock();
+            store::replace_messages(&mut conn, session_row_id, messages).expect("replace history");
+        }
     }
 
     /// Live roundtrip against a locally installed ACP agent: spawn, initialize,
@@ -1636,6 +2346,7 @@ mod live_tests {
                 initial_model: None,
                 initial_thinking: None,
                 spawn_option_values: Default::default(),
+                replay_history: false,
                 extra_env: vec![],
             },
             cmd_rx,
@@ -1701,5 +2412,174 @@ mod live_tests {
         assert!(turn_error.is_none(), "驱动器报错: {}", turn_error.unwrap());
         assert!(got_text, "回合内未收到任何文本流");
         assert!(harness_sid.is_some(), "握手未上报 harness 会话 ID");
+    }
+
+    /// Live `session/load` roundtrip against omp: run one real turn, kill the
+    /// process, then relaunch with `replay_history` — the agent's transcript
+    /// must arrive as one History snapshot (user + assistant) and the command
+    /// menu must be advertised. This is the regression the GUI history fix is
+    /// built on.
+    ///
+    /// Ignored by default: needs `omp` on PATH with configured credentials.
+    /// `cargo test --manifest-path src-tauri/Cargo.toml acp_live_omp -- --ignored --nocapture`
+    #[tokio::test]
+    #[ignore = "live: requires `omp` on PATH with configured credentials"]
+    async fn acp_live_omp_history_replay() {
+        if crate::utils::exec_resolve::resolve_executable("omp").is_none() {
+            eprintln!("[live] omp 未安装，跳过真实联调");
+            return;
+        }
+        let ws = std::env::temp_dir().join(format!("aio-omp-replay-{}", std::process::id()));
+        std::fs::create_dir_all(&ws).unwrap();
+        let workspace_path = store::canonical_workspace_path(&ws).unwrap();
+        const ROW_ID: &str = "omp-replay-row";
+
+        let live_conn = || {
+            let conn = rusqlite::Connection::open_in_memory().unwrap();
+            crate::core::db::create_base_schema(&conn).unwrap();
+            crate::core::migrate::run_migrations(&conn, crate::core::db::CHAT_DB_MIGRATIONS)
+                .unwrap();
+            conn.execute(
+                "INSERT INTO harness_sessions (id, tool_id, workspace_path, title, created_at, updated_at)
+                 VALUES (?1, 'omp', ?2, 'live replay', 'now', 'now')",
+                rusqlite::params![ROW_ID, workspace_path],
+            )
+            .unwrap();
+            conn
+        };
+
+        // ---- Turn 1: fresh session + one real prompt ----
+        let token = tokio_util::sync::CancellationToken::new();
+        let (event_tx, mut event_rx) = mpsc::unbounded_channel::<DriverEvent>();
+        let ctx = DriverCtx {
+            emitter: Arc::new(TestEmitter {
+                conn: parking_lot::Mutex::new(live_conn()),
+            }),
+            client_version: "test".to_string(),
+            key: ("omp".to_string(), ROW_ID.to_string()),
+            token: token.clone(),
+            events: event_tx,
+            approvals: Arc::new(dashmap::DashMap::new()),
+        };
+        let spec = registry::lookup("omp").expect("omp 必须在注册表内");
+        let (cmd_tx, cmd_rx) = mpsc::unbounded_channel::<HarnessCommand>();
+        let handle = AcpDriver::launch(
+            DriverSpawn {
+                ctx,
+                spec: spec.clone(),
+                workspace_path: workspace_path.clone(),
+                harness_session_id: None,
+                permission_mode: None,
+                initial_model: None,
+                initial_thinking: None,
+                spawn_option_values: Default::default(),
+                replay_history: false,
+                extra_env: vec![],
+            },
+            cmd_rx,
+        )
+        .await
+        .expect("ACP 握手 + 会话建立");
+        cmd_tx
+            .send(HarnessCommand::Prompt {
+                text: "Reply with exactly the single word: hello".to_string(),
+            })
+            .unwrap();
+        let mut harness_sid: Option<String> = None;
+        let turn = tokio::time::timeout(std::time::Duration::from_secs(240), async {
+            loop {
+                match event_rx.recv().await.expect("driver event channel") {
+                    DriverEvent::Event(HarnessEvent::SessionInfo {
+                        harness_session_id, ..
+                    }) => harness_sid = harness_session_id,
+                    DriverEvent::Event(HarnessEvent::TurnEnded { .. }) => break,
+                    _ => {}
+                }
+            }
+        })
+        .await;
+        token.cancel();
+        if let Some(child) = &handle.child {
+            kill_child_tree(child).await;
+        }
+        assert!(turn.is_ok(), "首轮 240s 内未结束");
+        let harness_sid = harness_sid.expect("首轮未上报会话 ID");
+
+        // ---- Turn 2: replay the same session (no prompt) ----
+        let token2 = tokio_util::sync::CancellationToken::new();
+        let (event_tx2, mut event_rx2) = mpsc::unbounded_channel::<DriverEvent>();
+        let ctx2 = DriverCtx {
+            emitter: Arc::new(TestEmitter {
+                conn: parking_lot::Mutex::new(live_conn()),
+            }),
+            client_version: "test".to_string(),
+            key: ("omp".to_string(), ROW_ID.to_string()),
+            token: token2.clone(),
+            events: event_tx2,
+            approvals: Arc::new(dashmap::DashMap::new()),
+        };
+        let (cmd_tx2, cmd_rx2) = mpsc::unbounded_channel::<HarnessCommand>();
+        let handle2 = AcpDriver::launch(
+            DriverSpawn {
+                ctx: ctx2,
+                spec,
+                workspace_path: workspace_path.clone(),
+                harness_session_id: Some(harness_sid),
+                permission_mode: None,
+                initial_model: None,
+                initial_thinking: None,
+                spawn_option_values: Default::default(),
+                replay_history: true,
+                extra_env: vec![],
+            },
+            cmd_rx2,
+        )
+        .await
+        .expect("session/load 建立会话");
+        let mut history: Option<Vec<crate::core::models::chat::Message>> = None;
+        let mut commands = 0usize;
+        let loaded = tokio::time::timeout(std::time::Duration::from_secs(60), async {
+            loop {
+                match event_rx2.recv().await.expect("driver event channel") {
+                    DriverEvent::Event(HarnessEvent::History { messages }) => {
+                        history = Some(messages)
+                    }
+                    DriverEvent::Event(HarnessEvent::CommandsUpdate { commands: list }) => {
+                        commands = list.len()
+                    }
+                    DriverEvent::State { state, .. } if state == "idle" => break,
+                    _ => {}
+                }
+            }
+        })
+        .await;
+        assert!(loaded.is_ok(), "60s 内未完成 session/load");
+        let messages = history.expect("session/load 未产生 History");
+        assert!(messages.len() >= 2, "历史应含用户与助手消息");
+        assert_eq!(messages[0].role, "user");
+        assert!(messages.iter().any(|m| m.role == "assistant"));
+        // omp sends available_commands_update right after the load response, so
+        // it may land just after the idle state — wait briefly before asserting.
+        if commands == 0 {
+            let _ = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+                while let Some(ev) = event_rx2.recv().await {
+                    if let DriverEvent::Event(HarnessEvent::CommandsUpdate { commands: list }) = ev
+                    {
+                        if !list.is_empty() {
+                            commands = list.len();
+                            break;
+                        }
+                    }
+                }
+            })
+            .await;
+        }
+        token2.cancel();
+        if let Some(child) = &handle2.child {
+            kill_child_tree(child).await;
+        }
+        let _ = std::fs::remove_dir_all(&ws);
+        assert!(commands > 0, "omp 应上报斜杠命令");
+        let _ = cmd_tx2;
     }
 }

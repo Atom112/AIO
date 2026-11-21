@@ -197,6 +197,16 @@ impl HarnessManager {
         }
 
         let (cmd_tx, cmd_rx) = mpsc::unbounded_channel::<HarnessCommand>();
+        // Replay the agent's own transcript only when AIO has none for this
+        // topic; otherwise resume silently (the DB is the display copy and
+        // large native transcripts need not cross the wire again).
+        let replay_history = if harness_session_id.is_some() {
+            let state = app.state::<crate::core::state::DbState>();
+            let conn = state.0.lock();
+            crate::plugins::harness::store::count_messages(&conn, session_row_id).unwrap_or(0) == 0
+        } else {
+            false
+        };
         let DriverHandle { child } = adapter
             .start(
                 DriverSpawn {
@@ -209,6 +219,7 @@ impl HarnessManager {
                     initial_thinking: prefs.thinking_level,
                     extra_env,
                     spawn_option_values: prefs.spawn_option_values,
+                    replay_history,
                 },
                 cmd_rx,
             )

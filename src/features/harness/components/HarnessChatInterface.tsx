@@ -12,10 +12,11 @@
  *   in the input bottom-left slot via HarnessConfigControls (the chat page's
  *   ModelSelector / AgentModeSelector / ReasoningButton visuals).
  */
-import { Component, For, Show } from 'solid-js';
+import { Component, For, Show, createSignal } from 'solid-js';
 import Icon from '../../../shared/components/Icon';
 import {
   currentHarnessApprovals,
+  currentHarnessCommands,
   currentHarnessDraft,
   currentHarnessRun,
   currentHarnessToolId,
@@ -34,6 +35,8 @@ import HarnessMessageList from './HarnessMessageList';
 import HarnessApprovalBubble from './HarnessApprovalBubble';
 import HarnessPlanStrip from './HarnessPlanStrip';
 import HarnessConfigControls from './HarnessConfigControls';
+import SlashCommandMenu from '../../../shared/components/SlashCommandMenu';
+import SlashHighlightedTextarea from '../../../shared/components/SlashHighlightedTextarea';
 
 interface HarnessChatInterfaceProps {
   inputMessage: string;
@@ -50,6 +53,26 @@ const HarnessChatInterface: Component<HarnessChatInterfaceProps> = (props) => {
   const workspace = currentHarnessWorkspace;
   const topic = () => harnessTopics().find((x) => x.id === currentHarnessTopicId());
   const hasTopic = () => !!currentHarnessTopicId();
+  // The slash menu is created before this child textarea's ref callback runs.
+  const [textareaEl, setTextareaEl] = createSignal<HTMLTextAreaElement>();
+
+  /** Agent-advertised slash commands in the shared menu's display shape. */
+  const slashCommands = () =>
+    currentHarnessCommands().map((cmd) => ({
+      label: `/${cmd.name}`,
+      description: cmd.description,
+      argumentHint: cmd.inputHint,
+    }));
+
+  /** Range of a leading slash command advertised by the current CLI agent. */
+  const slashCommandRange = (text: string) => {
+    const match = /^(\s*)(\/\S+)/.exec(text);
+    if (!match) return null;
+    const token = match[2];
+    if (!slashCommands().some((cmd) => cmd.label === token)) return null;
+    const start = match[1].length;
+    return { start, end: start + token.length };
+  };
 
   /** Title parts for the top bar: tool / workspace / topic. */
   const titleParts = () => {
@@ -264,12 +287,21 @@ const HarnessChatInterface: Component<HarnessChatInterfaceProps> = (props) => {
             class="rounded-xl box-border flex flex-col gap-[10px] mt-[3px] p-[10px] transition-all duration-200 w-full"
             style={{ background: 'rgba(0,0,0,0.25)', border: '1px solid var(--border-dim)' }}
           >
-            <textarea
-              class="bg-transparent border-none text-white font-inherit text-base leading-relaxed min-h-[40px] max-h-[20vh] outline-none overflow-y-hidden px-[5px] pb-[5px] resize-none w-full focus:overflow-y-auto"
-              placeholder={t('harness.chat.inputPlaceholder')}
+            <SlashHighlightedTextarea
               value={props.inputMessage}
-              onInput={(e) => props.setInputMessage(e.currentTarget.value)}
+              onInput={props.setInputMessage}
               onKeyDown={handleInputKey}
+              placeholder={t('harness.chat.inputPlaceholder')}
+              commandRange={slashCommandRange}
+              textareaRef={(el) => {
+                setTextareaEl(el);
+              }}
+            />
+            <SlashCommandMenu
+              textareaRef={textareaEl()}
+              inputMessage={props.inputMessage}
+              setInputMessage={props.setInputMessage}
+              commands={slashCommands()}
             />
 
             <div

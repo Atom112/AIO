@@ -39,6 +39,76 @@ pub struct HarnessFileChange {
     pub diff: String,
 }
 
+/// One slash command advertised by the agent (`available_commands_update`).
+/// The command is executed by sending `/name [input]` as the next prompt —
+/// ACP has no separate command-invocation method.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct HarnessCommandInfo {
+    pub name: String,
+    pub description: String,
+    /// Argument hint from the agent (`input.hint`), when the command takes input.
+    pub input_hint: Option<String>,
+}
+
+/// One subagent reported by a harness tool call. Verified source: omp's `task`
+/// tool updates carry `rawOutput.details.progress[]` (id / agent / status /
+/// model / tokens / recent output) and its `wait` tool carries
+/// `details.jobs[].resultText`. ACP itself has no subagent stream, so adapters
+/// that expose subagents through structured tool output are mapped here.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct HarnessSubagentInfo {
+    /// Subagent id assigned by the harness (stable across updates).
+    pub id: String,
+    /// Parent tool call id (the `task` / `wait` call that reported it).
+    pub tool_call_id: String,
+    /// Agent/profile name (e.g. "sonic", "explorer").
+    pub agent: Option<String>,
+    /// Human-readable child title (ACP subagent RFD `title`); when absent the
+    /// GUI falls back to the harness-assigned id.
+    pub title: Option<String>,
+    /// Assignment text (first line of the task the subagent was given).
+    pub task: Option<String>,
+    /// pending | running | completed | failed | aborted | cancelled (raw)
+    pub status: String,
+    pub model: Option<String>,
+    pub thinking_level: Option<String>,
+    pub duration_ms: Option<u64>,
+    pub tokens: Option<u64>,
+    pub cost_usd: Option<f64>,
+    /// Names/labels of the subagent's most recent tool calls.
+    pub recent_tools: Vec<String>,
+    /// The subagent's most recent output lines.
+    pub recent_output: Vec<String>,
+    /// Final result text (harnesses that report it, e.g. omp's `wait` job snapshot).
+    pub result: Option<String>,
+}
+
+/// One existing session advertised by an ACP agent (`session/list`) that AIO
+/// can adopt as a topic (history is replayed by `session/load` on connect).
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct HarnessAgentSessionInfo {
+    pub session_id: String,
+    pub title: Option<String>,
+    pub updated_at: Option<String>,
+    /// Agent-reported message count (`_meta.messageCount`), when available.
+    pub message_count: Option<u64>,
+    /// Already bound to an AIO topic under this tool/workspace.
+    pub imported: bool,
+}
+
+/// Result of probing a tool's `session/list` capability.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct HarnessAgentSessionList {
+    /// False when the tool is a native adapter or does not advertise
+    /// `sessionCapabilities.list`.
+    pub supported: bool,
+    pub sessions: Vec<HarnessAgentSessionInfo>,
+}
+
 /// Usage / cost snapshot for a turn (all fields optional — adapters fill what the
 /// native protocol reports; the frontend maps them onto the token bar).
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
@@ -98,6 +168,25 @@ pub enum HarnessEvent {
     /// the full current set, replacing any previous report.
     #[serde(rename_all = "camelCase")]
     ConfigOptions { options: Vec<HarnessConfigOption> },
+    /// Slash commands the agent currently accepts (replaces the previous set).
+    /// Commands execute by sending `/name [input]` as the next prompt.
+    #[serde(rename_all = "camelCase")]
+    CommandsUpdate { commands: Vec<HarnessCommandInfo> },
+    /// A user message replayed by `session/load` (history restore). Live turns
+    /// ignore it — the GUI already renders the user's own input.
+    #[serde(rename_all = "camelCase")]
+    UserTextDelta { text: String },
+    /// Current subagent states reported by a structured tool call
+    /// (omp `task` / `wait`); upsert by id on the frontend.
+    #[serde(rename_all = "camelCase")]
+    SubagentUpdate { entries: Vec<HarnessSubagentInfo> },
+    /// Complete display history replayed by `session/load`, already converted
+    /// to the chat `Message` model and persisted by the driver. The frontend
+    /// replaces the current message list with it (and drops any stale draft).
+    #[serde(rename_all = "camelCase")]
+    History {
+        messages: Vec<crate::core::models::chat::Message>,
+    },
     /// A user prompt was accepted and the agent started a new turn.
     #[serde(rename_all = "camelCase")]
     TurnStarted,

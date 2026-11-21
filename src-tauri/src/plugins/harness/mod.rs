@@ -21,11 +21,15 @@
 //!   backs up, and atomically writes them)
 
 pub mod acp;
+mod acp_history;
+pub(crate) mod acp_sessions;
+mod acp_subagents;
 pub mod adapter;
 pub mod claude;
 pub mod codex;
 pub mod manager;
 pub mod model;
+pub mod native_sessions;
 pub mod registry;
 pub mod store;
 pub mod toolconf;

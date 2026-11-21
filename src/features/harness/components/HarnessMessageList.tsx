@@ -150,28 +150,30 @@ const HarnessMessageList: Component = () => {
     const msg = () => props.msg;
     return (
       <div
-        class={`flex gap-3 w-full mb-3 ${msg().role === 'assistant' ? 'justify-start items-start' : 'justify-end items-start pr-[10px]'}`}
+        class={`flex gap-3 w-full mb-3 ${msg().role === 'assistant' ? 'justify-center items-start' : 'justify-end items-start pr-[10px]'}`}
       >
         <div
-          class={`flex flex-col max-w-[75%] ${msg().role === 'assistant' ? 'items-start' : 'items-end'}`}
+          class={`flex flex-col ${
+            msg().role === 'assistant'
+              ? 'w-full max-w-[820px] items-stretch px-1'
+              : 'max-w-[75%] items-end'
+          }`}
         >
           <div
-            class={`rounded-[10px] leading-relaxed max-w-full min-h-[1.5em] px-[14px] py-[10px] break-words ${
+            class={`leading-relaxed max-w-full min-h-[1.5em] break-words ${
               msg().role === 'assistant'
-                ? 'rounded-tl-[2px] text-white'
-                : 'rounded-tr-[2px] text-white'
+                ? 'text-white'
+                : 'rounded-[10px] rounded-tr-[2px] px-[14px] py-[10px] text-white'
             }`}
-            style={{
-              background:
-                msg().role === 'assistant'
-                  ? 'rgba(var(--text-base-rgb),0.04)'
-                  : 'rgba(var(--primary-rgb),0.08)',
-              border:
-                msg().role === 'assistant'
-                  ? '1px solid rgba(var(--text-base-rgb),0.13)'
-                  : '1px solid rgba(var(--primary-rgb),0.16)',
-              'backdrop-filter': 'blur(6px)',
-            }}
+            style={
+              msg().role === 'assistant'
+                ? {}
+                : {
+                    background: 'rgba(var(--primary-rgb),0.08)',
+                    border: '1px solid rgba(var(--primary-rgb),0.16)',
+                    'backdrop-filter': 'blur(6px)',
+                  }
+            }
           >
             <Show when={msg().role === 'assistant' && msg().reasoning}>
               <ThinkBlock content={msg().reasoning!} isStreaming={!!props.live && isActive()} />
@@ -187,6 +189,7 @@ const HarnessMessageList: Component = () => {
                 agentSteps={msg().agentSteps}
                 isActive={!!props.live && isActive()}
                 startTime={msg().agentStartTime}
+                subagentInteractive={false}
               />
             </Show>
             <Show when={msg().content}>

@@ -91,6 +91,103 @@ pub async fn harness_list_sessions(
     store::list_sessions(&conn, &tool_id, &workspace_path)
 }
 
+/// List existing agent-side sessions for a workspace (`session/list`). Native
+/// adapters (Claude/Codex) report `supported: false`; ACP tools expose their
+/// own list when the agent advertises `sessionCapabilities.list`.
+#[tauri::command]
+pub async fn harness_list_agent_sessions(
+    app: AppHandle,
+    state: State<'_, DbState>,
+    tool_id: String,
+    workspace_path: String,
+) -> Result<crate::plugins::harness::model::HarnessAgentSessionList, String> {
+    use crate::plugins::harness::registry::HarnessToolKind;
+    let spec = registry::lookup_any(&app, &tool_id).ok_or_else(|| {
+        ierr!(
+            "未知的 harness 工具: {tool_id}",
+            "Unknown harness tool: {tool_id}"
+        )
+    })?;
+    let mut list = match &spec.kind {
+        HarnessToolKind::Acp { .. } => {
+            crate::plugins::harness::acp_sessions::list_agent_sessions(&spec, &workspace_path)
+                .await?
+        }
+        HarnessToolKind::ClaudeNative { .. } | HarnessToolKind::CodexExec { .. } => {
+            // Native adapters keep their own transcripts on disk; the list is
+            // read-only and the topic still resumes through the native CLI.
+            let sessions =
+                crate::plugins::harness::native_sessions::list_sessions(&tool_id, &workspace_path)?;
+            crate::plugins::harness::model::HarnessAgentSessionList {
+                supported: true,
+                sessions,
+            }
+        }
+    };
+    if list.supported {
+        let conn = state.0.lock();
+        for session in &mut list.sessions {
+            session.imported =
+                store::find_session_by_harness_id(&conn, &tool_id, &session.session_id)?.is_some();
+        }
+    }
+    Ok(list)
+}
+
+/// Adopt an existing agent session as an AIO topic. ACP sessions replay their
+/// transcript on connect (`session/load`); native sessions seed the display copy
+/// from the CLI's own transcript and resume via the native flag. Already-imported
+/// sessions return the existing topic (idempotent).
+#[tauri::command]
+pub async fn harness_adopt_agent_session(
+    app: AppHandle,
+    state: State<'_, DbState>,
+    tool_id: String,
+    workspace_path: String,
+    agent_session_id: String,
+    title: String,
+) -> Result<HarnessSessionRow, String> {
+    use crate::plugins::harness::registry::HarnessToolKind;
+    let title = title.trim();
+    let title = if title.is_empty() {
+        ierr!("导入的会话", "Imported session")
+    } else {
+        title.to_string()
+    };
+    let native = registry::lookup_any(&app, &tool_id)
+        .map(|spec| {
+            matches!(
+                spec.kind,
+                HarnessToolKind::ClaudeNative { .. } | HarnessToolKind::CodexExec { .. }
+            )
+        })
+        .unwrap_or(false);
+    let mut conn = state.0.lock();
+    if let Some(existing) = store::find_session_by_harness_id(&conn, &tool_id, &agent_session_id)? {
+        return Ok(existing);
+    }
+    let row = store::create_session(&conn, &tool_id, &workspace_path, &title)?;
+    store::set_session_harness_id(&conn, &row.id, &agent_session_id)?;
+    if native {
+        // Native resume does not replay the transcript; seed the display copy
+        // from the CLI's own session file (best effort — the topic still works
+        // with an empty history if the format is unknown).
+        if let Ok(messages) = crate::plugins::harness::native_sessions::import_history(
+            &tool_id,
+            &agent_session_id,
+            &workspace_path,
+        ) {
+            if !messages.is_empty() {
+                store::replace_messages(&mut conn, &row.id, &messages)?;
+            }
+        }
+    }
+    Ok(HarnessSessionRow {
+        harness_session_id: Some(agent_session_id),
+        ..row
+    })
+}
+
 /// Create a new topic under (tool, workspace). `title` is a frontend-supplied
 /// localized default (auto-rename on first message happens in the frontend).
 #[tauri::command]

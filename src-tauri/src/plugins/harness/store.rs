@@ -236,6 +236,22 @@ pub fn create_session(
     })
 }
 
+/// Find a topic already bound to an agent session id (duplicate-import guard).
+pub fn find_session_by_harness_id(
+    conn: &Connection,
+    tool_id: &str,
+    harness_session_id: &str,
+) -> Result<Option<HarnessSessionRow>, String> {
+    conn.query_row(
+        "SELECT id, tool_id, workspace_path, harness_session_id, title, model_id, created_at, updated_at
+         FROM harness_sessions WHERE tool_id = ?1 AND harness_session_id = ?2 LIMIT 1",
+        rusqlite::params![tool_id, harness_session_id],
+        row_session,
+    )
+    .optional()
+    .map_err(|e| e.to_string())
+}
+
 /// Load one topic row.
 pub fn get_session(conn: &Connection, session_row_id: &str) -> Result<HarnessSessionRow, String> {
     conn.query_row(
@@ -322,6 +338,61 @@ pub fn append_message(
     )
     .map_err(|e| e.to_string())?;
     Ok(stored)
+}
+
+/// Number of display messages stored for a topic. Used to decide whether a
+/// reconnecting session should replay the agent's own history (`session/load`)
+/// or resume silently (`session/resume` — the AIO DB already has the display
+/// copy, and a large native transcript need not be streamed again).
+pub fn count_messages(conn: &Connection, session_row_id: &str) -> Result<usize, String> {
+    let count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM harness_messages WHERE session_row_id = ?1",
+            [session_row_id],
+            |r| r.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+    Ok(count as usize)
+}
+
+/// Replace every display message of a topic in one transaction (history replay
+/// from `session/load` — the agent's own transcript is authoritative, so stale
+/// AIO rows are dropped instead of duplicated). Empty input is a no-op.
+pub fn replace_messages(
+    conn: &mut Connection,
+    session_row_id: &str,
+    messages: &[Message],
+) -> Result<(), String> {
+    if messages.is_empty() {
+        return Ok(());
+    }
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    tx.execute(
+        "DELETE FROM harness_messages WHERE session_row_id = ?1",
+        [session_row_id],
+    )
+    .map_err(|e| e.to_string())?;
+    for message in messages {
+        let mut stored = message.clone();
+        if stored.id.as_deref().map(str::is_empty).unwrap_or(true) {
+            stored.id = Some(uuid::Uuid::new_v4().to_string());
+        }
+        let data = serde_json::to_string(&stored).map_err(|e| e.to_string())?;
+        tx.execute(
+            "INSERT INTO harness_messages (id, session_row_id, role, created_at, data)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            rusqlite::params![
+                stored.id,
+                session_row_id,
+                stored.role,
+                crate::utils::time::now_iso(),
+                data
+            ],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 /// Load a topic's messages in insertion order. The `data` blob is the plain
@@ -495,5 +566,36 @@ mod tests {
         let loaded = load_messages(&conn, "s").unwrap();
         assert_eq!(loaded.len(), 1);
         assert_eq!(loaded[0].content, serde_json::json!("ok"));
+    }
+
+    /// History replay replaces the topic's display rows atomically: stale AIO
+    /// messages are dropped, not duplicated on every reconnect.
+    #[test]
+    fn replace_messages_drops_stale_rows() {
+        let mut conn = messages_conn();
+        let old = Message {
+            id: None,
+            role: "user".to_string(),
+            content: serde_json::json!("old"),
+            ..Default::default()
+        };
+        append_message(&conn, "s", &old).unwrap();
+        assert_eq!(count_messages(&conn, "s").unwrap(), 1);
+
+        let replayed = Message {
+            id: None,
+            role: "assistant".to_string(),
+            content: serde_json::json!("replayed"),
+            ..Default::default()
+        };
+        replace_messages(&mut conn, "s", &[replayed]).unwrap();
+        let loaded = load_messages(&conn, "s").unwrap();
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].role, "assistant");
+        assert_eq!(loaded[0].content, serde_json::json!("replayed"));
+
+        // Empty replacement is a no-op (never wipes the only copy).
+        replace_messages(&mut conn, "s", &[]).unwrap();
+        assert_eq!(count_messages(&conn, "s").unwrap(), 1);
     }
 }

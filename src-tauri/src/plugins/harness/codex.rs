@@ -20,7 +20,7 @@ use crate::plugins::harness::adapter::{
     spawn_harness_child_env, DriverCtx, DriverHandle, DriverSpawn, HarnessAdapter, HarnessCommand,
 };
 use crate::plugins::harness::model::{
-    HarnessEvent, HarnessFileChange, HarnessPlanEntry, HarnessUsage,
+    HarnessEvent, HarnessFileChange, HarnessPlanEntry, HarnessSubagentInfo, HarnessUsage,
 };
 use crate::plugins::harness::registry::SpawnOptionSpec;
 #[cfg(windows)]
@@ -621,6 +621,94 @@ fn exec_item_events(v: &Value) -> Vec<HarnessEvent> {
                 arguments: None,
             }
         }],
+        "collab_tool_call" => {
+            let tool = item.get("tool").and_then(Value::as_str).unwrap_or("collab");
+            let prompt = item
+                .get("prompt")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            let receiver_ids = item
+                .get("receiver_thread_ids")
+                .and_then(Value::as_array)
+                .and_then(|a| a.first())
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            let title = if prompt.is_empty() {
+                format!("{tool} {receiver_ids}")
+            } else {
+                prompt_first_line(&prompt)
+            };
+            let mut events = vec![if completed {
+                HarnessEvent::ToolCallEnd {
+                    tool_call_id: id(),
+                    ok: item.get("status").and_then(Value::as_str) == Some("completed"),
+                    content: item.get("agents_states").map(|v| v.to_string()),
+                    error: None,
+                    file_changes: Vec::new(),
+                }
+            } else {
+                HarnessEvent::ToolCallStart {
+                    tool_call_id: id(),
+                    name: Some(tool.to_string()),
+                    title: Some(title.clone()),
+                    tool_kind: Some("other".to_string()),
+                    arguments: Some(prompt.clone()),
+                }
+            }];
+            // `agents_states` is a map thread_id → {status, message}; one card
+            // per spawned collab agent (thread), updated on every frame.
+            if let Some(states) = item.get("agents_states").and_then(Value::as_object) {
+                let sender = item
+                    .get("sender_thread_id")
+                    .and_then(Value::as_str)
+                    .unwrap_or("");
+                let single = states.len() == 1;
+                let entries = states
+                    .iter()
+                    .filter(|(thread_id, _)| thread_id.as_str() != sender)
+                    .map(|(thread_id, state)| {
+                        let raw = state
+                            .get("status")
+                            .and_then(Value::as_str)
+                            .unwrap_or("running");
+                        let status = match raw {
+                            "completed" => "completed",
+                            "errored" | "interrupted" | "shutdown" | "not_found" => "failed",
+                            _ => "running",
+                        }
+                        .to_string();
+                        let message = state
+                            .get("message")
+                            .and_then(Value::as_str)
+                            .map(|m| crate::utils::truncate::truncate_chars_head(m, 10000));
+                        HarnessSubagentInfo {
+                            id: thread_id.clone(),
+                            tool_call_id: id(),
+                            agent: None,
+                            // A single receiver can use the prompt as its label;
+                            // multiple receivers keep the thread id so the cards
+                            // are distinguishable.
+                            title: single.then(|| title.clone()),
+                            task: (!prompt.is_empty()).then(|| prompt_first_line(&prompt)),
+                            status,
+                            model: None,
+                            thinking_level: None,
+                            duration_ms: None,
+                            tokens: None,
+                            cost_usd: None,
+                            recent_tools: Vec::new(),
+                            recent_output: message.clone().into_iter().collect(),
+                            result: message,
+                        }
+                    })
+                    .collect::<Vec<_>>();
+                if !entries.is_empty() {
+                    events.push(HarnessEvent::SubagentUpdate { entries });
+                }
+            }
+            events
+        }
         "todo_list" => {
             let Some(items) = item.get("items").and_then(Value::as_array) else {
                 return Vec::new();
@@ -646,6 +734,20 @@ fn exec_item_events(v: &Value) -> Vec<HarnessEvent> {
         }
         _ => Vec::new(),
     }
+}
+
+/// First non-empty line, char-bounded (collab prompts are multi-line tasks).
+fn prompt_first_line(text: &str) -> String {
+    let line = text
+        .lines()
+        .map(str::trim)
+        .find(|l| !l.is_empty())
+        .unwrap_or("");
+    let mut out: String = line.chars().take(160).collect();
+    if line.chars().count() > 160 {
+        out.push('…');
+    }
+    out
 }
 
 #[cfg(test)]
@@ -747,7 +849,76 @@ mod tests {
         }
     }
 
-    /// todo_list items map to the plan/task board.
+    /// Collab (multi-agent) frames: each agent thread becomes a subagent card;
+    /// statuses map to the chat step states and the message is the result.
+    #[test]
+    fn maps_collab_subagent_frames() {
+        let started = exec_item_events(&json!({
+            "type": "item.started",
+            "item": {
+                "id": "item_collab",
+                "type": "collab_tool_call",
+                "tool": "spawn_agent",
+                "sender_thread_id": "root",
+                "receiver_thread_ids": ["thread_a"],
+                "prompt": "Analyze the API surface\n\nReport findings.",
+                "agents_states": {
+                    "thread_a": { "status": "running", "message": null }
+                },
+                "status": "in_progress"
+            }
+        }));
+        assert!(matches!(
+            &started[0],
+            HarnessEvent::ToolCallStart { name, title, .. }
+                if name.as_deref() == Some("spawn_agent")
+                    && title.as_deref() == Some("Analyze the API surface")
+        ));
+        match started
+            .iter()
+            .find(|e| matches!(e, HarnessEvent::SubagentUpdate { .. }))
+        {
+            Some(HarnessEvent::SubagentUpdate { entries }) => {
+                assert_eq!(entries.len(), 1);
+                assert_eq!(entries[0].id, "thread_a");
+                assert_eq!(entries[0].status, "running");
+                assert_eq!(entries[0].task.as_deref(), Some("Analyze the API surface"));
+            }
+            other => panic!("expected SubagentUpdate, got {other:?}"),
+        }
+
+        let completed = exec_item_events(&json!({
+            "type": "item.completed",
+            "item": {
+                "id": "item_collab",
+                "type": "collab_tool_call",
+                "tool": "spawn_agent",
+                "sender_thread_id": "root",
+                "receiver_thread_ids": ["thread_a"],
+                "prompt": "Analyze the API surface",
+                "agents_states": {
+                    "thread_a": { "status": "completed", "message": "3 endpoints found" }
+                },
+                "status": "completed"
+            }
+        }));
+        assert!(matches!(
+            &completed[0],
+            HarnessEvent::ToolCallEnd { ok: true, .. }
+        ));
+        match completed
+            .iter()
+            .find(|e| matches!(e, HarnessEvent::SubagentUpdate { .. }))
+        {
+            Some(HarnessEvent::SubagentUpdate { entries }) => {
+                assert_eq!(entries[0].status, "completed");
+                assert_eq!(entries[0].result.as_deref(), Some("3 endpoints found"));
+            }
+            other => panic!("expected SubagentUpdate, got {other:?}"),
+        }
+    }
+
+    /// Todo-list frames replace the plan strip wholesale.
     #[test]
     fn maps_todo_list_to_plan() {
         match exec_item_events(&json!({
@@ -803,6 +974,7 @@ mod live_tests {
         fn set_harness_session_id(&self, row: &str, sid: &str) {
             store::set_session_harness_id(&self.conn.lock(), row, sid).expect("persist sid");
         }
+        fn replace_history(&self, _row: &str, _messages: &[crate::core::models::chat::Message]) {}
     }
 
     /// Live roundtrip against a locally installed `codex` CLI.
@@ -855,6 +1027,7 @@ mod live_tests {
                 initial_model: None,
                 initial_thinking: None,
                 spawn_option_values: Default::default(),
+                replay_history: false,
                 extra_env: vec![],
             },
             cmd_rx,

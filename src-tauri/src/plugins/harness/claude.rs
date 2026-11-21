@@ -16,7 +16,8 @@ use crate::plugins::harness::adapter::{
     spawn_harness_child_env, DriverCtx, DriverHandle, DriverSpawn, HarnessAdapter, HarnessCommand,
 };
 use crate::plugins::harness::model::{
-    HarnessApprovalOption, HarnessApprovalRequest, HarnessEvent, HarnessUsage,
+    HarnessApprovalOption, HarnessApprovalRequest, HarnessCommandInfo, HarnessEvent,
+    HarnessSubagentInfo, HarnessUsage,
 };
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -163,6 +164,19 @@ struct ClaudeDriver {
     current_model: parking_lot::Mutex<Option<String>>,
     /// Current effort level (spawn-time flag; report-only — changes apply on respawn).
     thinking_level: parking_lot::Mutex<Option<String>>,
+    /// Subagent runtime state keyed by the Task/Agent tool_use id.
+    subagents: parking_lot::Mutex<HashMap<String, ClaudeSubagentRuntime>>,
+}
+
+/// Display state of one Claude Code native subagent (Task/Agent tool).
+#[derive(Clone, Default)]
+struct ClaudeSubagentRuntime {
+    agent: Option<String>,
+    task: Option<String>,
+    status: String,
+    recent_tools: Vec<String>,
+    recent_output: Vec<String>,
+    result: Option<String>,
 }
 
 impl ClaudeDriver {
@@ -227,6 +241,7 @@ impl ClaudeDriver {
             permits: parking_lot::Mutex::new(HashMap::new()),
             current_model: parking_lot::Mutex::new(spawn.initial_model.clone()),
             thinking_level: parking_lot::Mutex::new(spawn.initial_thinking.clone()),
+            subagents: parking_lot::Mutex::new(HashMap::new()),
         });
 
         if let Some(stderr) = stderr {
@@ -337,13 +352,23 @@ impl ClaudeDriver {
         match v.get("type").and_then(Value::as_str) {
             Some("system") => self.handle_system(v),
             Some("assistant") => {
-                for event in assistant_frame_events(v) {
-                    self.ctx.emit_event(event);
+                if let Some(parent) = v.get("parent_tool_use_id").and_then(Value::as_str) {
+                    self.handle_subagent_frame(parent, v);
+                } else {
+                    self.register_task_tools(v);
+                    for event in assistant_frame_events(v) {
+                        self.ctx.emit_event(event);
+                    }
                 }
             }
             Some("user") => {
-                for event in user_frame_events(v) {
-                    self.ctx.emit_event(event);
+                if let Some(parent) = v.get("parent_tool_use_id").and_then(Value::as_str) {
+                    self.handle_subagent_tool_results(parent, v);
+                } else {
+                    for event in user_frame_events(v) {
+                        self.ctx.emit_event(event);
+                    }
+                    self.handle_task_results(v);
                 }
             }
             Some("result") => self.handle_result(v).await,
@@ -372,6 +397,141 @@ impl ClaudeDriver {
             }
             None => tracing::debug!("[harness:{}] 无 type 字段的帧", self.tool_label),
         }
+    }
+
+    /// Register main-thread Task/Agent tool calls as subagent cards (their input
+    /// carries the profile, description and prompt).
+    fn register_task_tools(&self, v: &Value) {
+        let Some(blocks) = v.pointer("/message/content").and_then(Value::as_array) else {
+            return;
+        };
+        for block in blocks {
+            let Some((id, launch)) = subagent_launch_of(block) else {
+                continue;
+            };
+            {
+                let mut subagents = self.subagents.lock();
+                let runtime = subagents
+                    .entry(id.clone())
+                    .or_insert_with(|| launch.clone());
+                runtime.agent = runtime.agent.take().or(launch.agent);
+                runtime.task = runtime.task.take().or(launch.task);
+                if runtime.status.is_empty() {
+                    runtime.status = "running".to_string();
+                }
+            }
+            self.emit_claude_subagent(&id);
+        }
+    }
+
+    /// Subagent-attributed assistant frame: its text/tool use belongs to the
+    /// Task/Agent call named by `parent_tool_use_id`, not the main transcript.
+    fn handle_subagent_frame(&self, parent: &str, v: &Value) {
+        let changed = {
+            let mut subagents = self.subagents.lock();
+            let runtime = subagents.entry(parent.to_string()).or_default();
+            apply_subagent_frame(runtime, v)
+        };
+        if changed {
+            self.emit_claude_subagent(parent);
+        }
+    }
+
+    /// Subagent-attributed user frame: nested tool results belong to the child
+    /// card, never to the parent transcript.
+    fn handle_subagent_tool_results(&self, parent: &str, v: &Value) {
+        let Some(blocks) = v.pointer("/message/content").and_then(Value::as_array) else {
+            return;
+        };
+        let mut changed = false;
+        {
+            let mut subagents = self.subagents.lock();
+            let runtime = subagents.entry(parent.to_string()).or_default();
+            if runtime.status.is_empty() {
+                runtime.status = "running".to_string();
+            }
+            for block in blocks {
+                if block.get("type").and_then(Value::as_str) != Some("tool_result") {
+                    continue;
+                }
+                if let Some(text) = tool_result_text(block.get("content").unwrap_or(&Value::Null)) {
+                    push_capped(&mut runtime.recent_output, text, 2000);
+                    changed = true;
+                }
+            }
+        }
+        if changed {
+            self.emit_claude_subagent(parent);
+        }
+    }
+
+    /// Main-thread tool_result for a Task/Agent call closes that subagent card.
+    fn handle_task_results(&self, v: &Value) {
+        let Some(blocks) = v.pointer("/message/content").and_then(Value::as_array) else {
+            return;
+        };
+        let mut changed = Vec::new();
+        {
+            let mut subagents = self.subagents.lock();
+            for block in blocks {
+                if block.get("type").and_then(Value::as_str) != Some("tool_result") {
+                    continue;
+                }
+                let Some(id) = block.get("tool_use_id").and_then(Value::as_str) else {
+                    continue;
+                };
+                let Some(runtime) = subagents.get_mut(id) else {
+                    continue;
+                };
+                let is_error = block
+                    .get("is_error")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
+                runtime.status = if is_error {
+                    "failed".to_string()
+                } else {
+                    "completed".to_string()
+                };
+                runtime.result = tool_result_text(block.get("content").unwrap_or(&Value::Null));
+                changed.push(id.to_string());
+            }
+        }
+        for id in changed {
+            self.emit_claude_subagent(&id);
+        }
+    }
+
+    /// Emit the current card snapshot for one Claude native subagent.
+    fn emit_claude_subagent(&self, id: &str) {
+        let info = {
+            let subagents = self.subagents.lock();
+            let Some(runtime) = subagents.get(id) else {
+                return;
+            };
+            HarnessSubagentInfo {
+                id: id.to_string(),
+                tool_call_id: id.to_string(),
+                agent: runtime.agent.clone(),
+                title: runtime.agent.clone().or_else(|| runtime.task.clone()),
+                task: runtime.task.clone(),
+                status: if runtime.status.is_empty() {
+                    "running".to_string()
+                } else {
+                    runtime.status.clone()
+                },
+                model: None,
+                thinking_level: None,
+                duration_ms: None,
+                tokens: None,
+                cost_usd: None,
+                recent_tools: runtime.recent_tools.clone(),
+                recent_output: runtime.recent_output.clone(),
+                result: runtime.result.clone(),
+            }
+        };
+        self.ctx.emit_event(HarnessEvent::SubagentUpdate {
+            entries: vec![info],
+        });
     }
 
     /// system/init → session/model; compact_boundary → notice.
@@ -403,6 +563,14 @@ impl ClaudeDriver {
                         self.thinking_level.lock().clone(),
                     ),
                 });
+                // The SDK init frame lists the commands that work without an
+                // interactive terminal (built-ins, skills, custom commands).
+                // Dispatching one is a normal `/name` prompt.
+                let commands = slash_commands_of(v);
+                if !commands.is_empty() {
+                    self.ctx
+                        .emit_event(HarnessEvent::CommandsUpdate { commands });
+                }
             }
             Some("compact_boundary") => {
                 self.ctx.emit_event(HarnessEvent::Notice {
@@ -806,6 +974,137 @@ fn assistant_frame_events(v: &Value) -> Vec<HarnessEvent> {
     out
 }
 
+/// `system/init.slash_commands` (names, or objects with name/description) →
+/// the normalized command menu.
+fn slash_commands_of(v: &Value) -> Vec<HarnessCommandInfo> {
+    v.get("slash_commands")
+        .and_then(Value::as_array)
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|item| {
+                    let name = item
+                        .as_str()
+                        .or_else(|| item.get("name").and_then(Value::as_str))?;
+                    Some(HarnessCommandInfo {
+                        name: name.to_string(),
+                        description: item
+                            .get("description")
+                            .and_then(Value::as_str)
+                            .unwrap_or("")
+                            .to_string(),
+                        input_hint: None,
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Parse a main-thread Task/Agent tool_use block into a subagent launch. The
+/// input carries the profile (`subagent_type`), a short description and the
+/// prompt; the tool_use id is the stable subagent key (also the ACP child's
+/// parent_tool_use_id).
+fn subagent_launch_of(block: &Value) -> Option<(String, ClaudeSubagentRuntime)> {
+    if block.get("type").and_then(Value::as_str) != Some("tool_use") {
+        return None;
+    }
+    let name = block.get("name").and_then(Value::as_str).unwrap_or("");
+    if !matches!(name, "Task" | "Agent" | "task" | "agent") {
+        return None;
+    }
+    let id = block.get("id").and_then(Value::as_str)?.to_string();
+    let input = block.get("input").unwrap_or(&Value::Null);
+    Some((
+        id,
+        ClaudeSubagentRuntime {
+            agent: input
+                .get("subagent_type")
+                .and_then(Value::as_str)
+                .map(str::to_string),
+            task: input
+                .get("description")
+                .and_then(Value::as_str)
+                .map(first_line_short)
+                .or_else(|| {
+                    input
+                        .get("prompt")
+                        .and_then(Value::as_str)
+                        .map(first_line_short)
+                }),
+            status: "running".to_string(),
+            ..Default::default()
+        },
+    ))
+}
+
+/// Fold one subagent-attributed assistant frame into its runtime snapshot.
+fn apply_subagent_frame(runtime: &mut ClaudeSubagentRuntime, v: &Value) -> bool {
+    if runtime.status.is_empty() {
+        runtime.status = "running".to_string();
+    }
+    if runtime.agent.is_none() {
+        runtime.agent = v
+            .get("agent_id")
+            .and_then(Value::as_str)
+            .map(str::to_string);
+    }
+    let Some(blocks) = v.pointer("/message/content").and_then(Value::as_array) else {
+        return false;
+    };
+    let mut changed = false;
+    for block in blocks {
+        match block.get("type").and_then(Value::as_str) {
+            Some("text") => {
+                if let Some(text) = block.get("text").and_then(Value::as_str) {
+                    push_capped(&mut runtime.recent_output, text.to_string(), 2000);
+                    changed = true;
+                }
+            }
+            Some("tool_use") => {
+                if let Some(name) = block.get("name").and_then(Value::as_str) {
+                    push_capped(&mut runtime.recent_tools, name.to_string(), 200);
+                    changed = true;
+                }
+            }
+            _ => {}
+        }
+    }
+    changed
+}
+
+/// First non-empty line, char-bounded (task prompts are multi-line).
+fn first_line_short(text: &str) -> String {
+    let line = text
+        .lines()
+        .map(str::trim)
+        .find(|l| !l.is_empty())
+        .unwrap_or("");
+    let mut out: String = line.chars().take(160).collect();
+    if line.chars().count() > 160 {
+        out.push('…');
+    }
+    out
+}
+
+/// Append to a bounded recent list (newest kept) with a display cap.
+fn push_capped(list: &mut Vec<String>, value: String, max_chars: usize) {
+    if value.trim().is_empty() {
+        return;
+    }
+    if list.last() == Some(&value) {
+        return;
+    }
+    let mut text = value;
+    if text.chars().count() > max_chars {
+        text = text.chars().take(max_chars).collect::<String>();
+        text.push('…');
+    }
+    list.push(text);
+    if list.len() > 8 {
+        list.drain(..list.len() - 8);
+    }
+}
+
 /// tool_result content block (string or block array) → plain text.
 fn tool_result_text(content: &Value) -> Option<String> {
     match content {
@@ -857,6 +1156,69 @@ fn user_frame_events(v: &Value) -> Vec<HarnessEvent> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// SDK init slash_commands: plain names and {name,description} objects both
+    /// become the harness command menu (dispatch is a normal `/name` prompt).
+    #[test]
+    fn maps_init_slash_commands() {
+        let commands = slash_commands_of(&json!({
+            "type": "system",
+            "subtype": "init",
+            "slash_commands": [
+                "compact",
+                { "name": "security-check", "description": "Run a security scan" }
+            ]
+        }));
+        assert_eq!(commands.len(), 2);
+        assert_eq!(commands[0].name, "compact");
+        assert_eq!(commands[0].description, "");
+        assert_eq!(commands[1].name, "security-check");
+        assert_eq!(commands[1].description, "Run a security scan");
+    }
+
+    /// Task/Agent launches and their subagent-attributed frames collapse into
+    /// one card snapshot keyed by the tool_use id.
+    #[test]
+    fn maps_native_subagent_launch_and_frames() {
+        let launch = subagent_launch_of(&json!({
+            "type": "tool_use",
+            "id": "toolu_task",
+            "name": "Task",
+            "input": {
+                "subagent_type": "explorer",
+                "description": "Inspect the failing test",
+                "prompt": "Investigate\nand report"
+            }
+        }))
+        .expect("launch");
+        assert_eq!(launch.0, "toolu_task");
+        assert_eq!(launch.1.agent.as_deref(), Some("explorer"));
+        assert_eq!(launch.1.task.as_deref(), Some("Inspect the failing test"));
+        assert_eq!(launch.1.status, "running");
+
+        let mut runtime = launch.1;
+        let changed = apply_subagent_frame(
+            &mut runtime,
+            &json!({
+                "type": "assistant",
+                "parent_tool_use_id": "toolu_task",
+                "agent_id": "agent_1",
+                "message": { "content": [
+                    { "type": "text", "text": "found the failure" },
+                    { "type": "tool_use", "id": "toolu_1", "name": "Read", "input": {} }
+                ]}
+            }),
+        );
+        assert!(changed);
+        assert_eq!(runtime.recent_output, vec!["found the failure"]);
+        assert_eq!(runtime.recent_tools, vec!["Read"]);
+
+        // A main-thread tool_result closes the card.
+        runtime.status = "completed".to_string();
+        runtime.result = Some("root cause: race".to_string());
+        assert_eq!(runtime.status, "completed");
+        assert_eq!(runtime.result.as_deref(), Some("root cause: race"));
+    }
 
     /// Literal assistant frames from the documented stream-json schema.
     #[test]
@@ -1030,6 +1392,7 @@ mod live_tests {
         fn set_harness_session_id(&self, row: &str, sid: &str) {
             store::set_session_harness_id(&self.conn.lock(), row, sid).expect("persist sid");
         }
+        fn replace_history(&self, _row: &str, _messages: &[crate::core::models::chat::Message]) {}
     }
 
     /// Live roundtrip against a locally installed native claude binary.
@@ -1082,6 +1445,7 @@ mod live_tests {
                 initial_model: None,
                 initial_thinking: None,
                 spawn_option_values: Default::default(),
+                replay_history: false,
                 extra_env: vec![],
             },
             cmd_rx,

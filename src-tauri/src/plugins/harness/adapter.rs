@@ -86,6 +86,13 @@ pub trait HarnessEmitter: Send + Sync {
     fn emit_approval_expired(&self, request_id: &str);
     /// Persist the harness-side session id for resume across restarts.
     fn set_harness_session_id(&self, session_row_id: &str, harness_session_id: &str);
+    /// Replace a topic's display history (session/load replay). The agent's
+    /// transcript is authoritative; stale rows are dropped.
+    fn replace_history(
+        &self,
+        session_row_id: &str,
+        messages: &[crate::core::models::chat::Message],
+    );
 }
 
 /// Production emitter: Tauri events + the chat-history SQLite connection.
@@ -129,6 +136,20 @@ impl HarnessEmitter for TauriHarnessEmitter {
             harness_session_id,
         ) {
             tracing::warn!("[harness] 保存 harness 会话 ID 失败: {e}");
+        }
+    }
+
+    fn replace_history(
+        &self,
+        session_row_id: &str,
+        messages: &[crate::core::models::chat::Message],
+    ) {
+        let state = self.app.state::<DbState>();
+        let mut conn = state.0.lock();
+        if let Err(e) =
+            crate::plugins::harness::store::replace_messages(&mut conn, session_row_id, messages)
+        {
+            tracing::warn!("[harness] 替换会话历史失败: {e}");
         }
     }
 }
@@ -177,6 +198,11 @@ impl DriverCtx {
         self.emitter
             .set_harness_session_id(&self.key.1, harness_session_id);
     }
+
+    /// Replace the topic's persisted display history (session/load replay).
+    pub fn replace_history(&self, messages: &[crate::core::models::chat::Message]) {
+        self.emitter.replace_history(&self.key.1, messages);
+    }
 }
 
 /// Adapter spawn input: the context, the resolved tool spec, and session facts.
@@ -197,6 +223,10 @@ pub struct DriverSpawn {
     /// Registry-declared spawn-option values keyed by option id (e.g.
     /// {"approval-mode": "yolo"} → the driver injects the matching CLI flag).
     pub spawn_option_values: std::collections::HashMap<String, String>,
+    /// Prefer `session/load` (full history replay) over `session/resume` when
+    /// the agent supports it. True when AIO has no display copy yet — the
+    /// replay becomes the authoritative history.
+    pub replay_history: bool,
     /// Extra env for the child: the tool's AIO-stored API key var (from the
     /// secure store) — loaded by the manager at ensure_session time.
     pub extra_env: Vec<(String, String)>,

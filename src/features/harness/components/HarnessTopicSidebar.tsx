@@ -25,6 +25,7 @@ interface HarnessTopicSidebarProps {
   onToggle: (e: MouseEvent) => void;
   onResize: (e: MouseEvent) => void;
   onAddTopic: () => void;
+  onImportSession: () => void;
   onRenameTopic: (id: string, title: string) => void;
   onDeleteTopic: (id: string) => void;
   isResizing: boolean;
@@ -136,6 +137,22 @@ const HarnessTopicSidebar: Component<HarnessTopicSidebarProps> = (props) => {
           }
         >
           {t('harness.topic.newTopic')}
+        </button>
+
+        {/* Import an existing agent-side session as a topic */}
+        <button
+          class="w-full px-3 h-10 mt-2 inline-flex items-center justify-center gap-1.5 rounded-3xl cursor-pointer transition-all duration-300 text-xs"
+          style={{
+            background: 'transparent',
+            border: '1px solid var(--border-dim)',
+            color: 'rgba(var(--text-base-rgb),0.45)',
+          }}
+          onMouseEnter={(e) => (e.currentTarget.style.color = 'rgba(var(--text-base-rgb),0.8)')}
+          onMouseLeave={(e) => (e.currentTarget.style.color = 'rgba(var(--text-base-rgb),0.45)')}
+          onClick={() => props.onImportSession()}
+        >
+          <Icon name="download" size={12} />
+          {t('harness.import.button')}
         </button>
 
         {/* Topic list: chat page's root-topic card rows */}

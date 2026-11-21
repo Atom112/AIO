@@ -54,7 +54,7 @@ Chinese-speaking users can also join the QQ community group **1130943633**.
 
 ## Visual Theme
 
-The accent color can be adjusted via color wheel, saturation, and lightness sliders, or you can select from built-in presets. Colors apply immediately and are saved in the WebView `localStorage`; they are not written to the project's `.aio/`.
+The accent color is adjusted with the ring picker in "Settings -> App Settings -> App Background" (shared with the background colors; the switch above the picker selects the target), including saturation/lightness sliders and built-in presets. Colors apply immediately and are saved in the WebView `localStorage`; they are not written to the project's `.aio/`.
 
 ### Dark Mode
 
@@ -64,6 +64,26 @@ Choose dark or light mode under "Settings -> App Settings -> Color Mode".
 - The selection is persisted via `localStorage` and survives restarts;
 - The state signals `isDarkMode` / `setIsDarkMode` are located in `src/core/store/store.ts`;
 - i18n keys: `app.darkMode.title` / `app.darkMode.description` / `app.darkMode.on` / `app.darkMode.off`.
+
+### App Background
+
+In light mode, "Settings -> App Settings -> App Background" replaces the default background with a solid color, a two-color linear gradient, or a custom image, and adjusts the layer opacity (below 100% the default background shows through). Dark mode keeps its fixed background; the custom layer is not rendered there.
+
+Colors use the same ring picker as the theme color: the switch above the picker selects whether it edits the theme color, the solid background color, or the gradient start/end color, and the ring and sliders follow that color when you switch.
+
+- Settings live in the WebView `localStorage` key `aio-app-background-v1`, not in the app config or SQLite;
+- The picked image is copied into the app data `backgrounds/` directory (named by SHA-256); the original file is only read, never moved;
+- Only `png` / `jpg` / `jpeg` / `webp` up to 20 MB are accepted;
+- Images are served through the Tauri asset protocol, which only exposes the `backgrounds/` directory.
+
+### App Font
+
+"Settings -> App Settings -> Font" scans the installed fonts and applies the chosen family to the app UI; "System default" restores the built-in font stack.
+
+- The list is built by the backend from the platform font directories (Windows system + per-user fonts, macOS system/user fonts, the common Linux `fontconfig` directories); each menu entry is rendered in its own family so you can compare fonts before applying one;
+- The choice is saved in the WebView `localStorage` key `aio-app-font` and survives restarts; the family is applied to the page body as a quoted `font-family`, so explicit monospace surfaces (code blocks) keep their own stack;
+- **Font size**: Small / Standard / Large / Extra large scales the app's text tokens and chat Markdown relative to the current standard size; spacing and layout stay fixed. The stop is saved in `localStorage` under `aio-app-font-size`;
+- "Rescan" refreshes the list after installing fonts, no restart needed.
 
 ## Command Palette
 

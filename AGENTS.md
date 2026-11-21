@@ -1,27 +1,37 @@
 # AIO (All-In-One AI) — Agent Coding Guide
 
+**English** | [简体中文](AGENTS.zh-CN.md)
+
+## Language Policy
+
+English is the primary language of this repository. Code comments, commit messages, PR and issue descriptions, and the root governance documents (`README.md`, `CONTRIBUTING.md`, `AGENTS.md`, `SECURITY.md`) are written in English first. Chinese is maintained as a full second-language mirror: `README.zh-CN.md`, `CONTRIBUTING.zh-CN.md`, `AGENTS.zh-CN.md`, and `docs/zh/`.
+
+- When a comment or document carries both languages, English comes first and Chinese follows (see "Code Comments").
+- Commit messages use an English subject and body; an optional Chinese translation follows the English body (see [CONTRIBUTING.md](CONTRIBUTING.md) §3).
+- User-facing strings are still localized through `t()` / `ierr!` with `zh-CN` and `en-US` keys; this policy does not replace i18n.
+
 ## Project Overview
 
 AIO is a lightweight, cross-platform AI assistant desktop client built with **Tauri 2.x** (Rust backend) and **SolidJS** (frontend). It supports remote API providers (OpenAI-compatible, Anthropic, Google Gemini, Ollama), local inference engines (llama.cpp, Ollama, vLLM — multi-engine, one active at a time), and an **Agent mode** that runs tool-augmented loops (file, git, shell, web, LSP, knowledge tools via MCP), spawns subagents, and enforces a three-state permission model (Allow/Ask/Deny) across five agent modes (read-only / workspace-edit / full-permission / machine-full-trust / plan). Other subsystems: a **Harness workbench** (`/harness` page) that drives third-party CLI coding agents (Claude Code, Codex, OpenCode, Oh My Pi, Gemini CLI, Qwen Code, goose, DSH) over the Agent Client Protocol and renders their streams natively (AIO's own tools stay out of the loop there), project workspaces with Git integration, MCP server management (stdio/HTTP transports, catalog, tool approvals), skills (built-in, market, npx import), LSP diagnostics, usage tracking, app self-update, and full zh-CN/en-US localization. User docs live in `docs/` (mirrored: `docs/zh/`, `docs/en/`); development guides are in `docs/zh|en/development/`.
 
-**文件分工（多人协作）**：本文件（AGENTS.md）是编码规范的唯一事实源，人类与 AI 代理同等适用；[CONTRIBUTING.md](CONTRIBUTING.md) 是流程规范（issue / 分支 / 提交信息 / PR / 发版）；[SECURITY.md](SECURITY.md) 是漏洞报告通道。本文件遵循 [agents.md 开放格式](https://agents.md/)——对仓库内任意文件干活的代理都应先读本文件（多级 AGENTS.md 就近生效）。
+**Document responsibilities (multi-contributor)**: this file (`AGENTS.md`) is the single source of truth for coding standards and applies equally to humans and AI agents; [CONTRIBUTING.md](CONTRIBUTING.md) covers process (issues / branches / commit messages / PRs / releases); [SECURITY.md](SECURITY.md) is the vulnerability-reporting channel. This file follows the [agents.md open format](https://agents.md/) — any agent working on any file in the repository should read it first (nested AGENTS.md files take precedence locally).
 
 ## Tech Stack & Versions
 
-| Layer             | Technology                                                                            | Version                   |
-| ----------------- | ------------------------------------------------------------------------------------- | ------------------------- |
-| Frontend          | SolidJS                                                                               | ^1.9.13                   |
-| Routing           | @solidjs/router                                                                       | ^0.16.1                   |
-| Styling           | Tailwind CSS (v4, via `@tailwindcss/postcss`, no tailwind.config)                     | ^4.0.0                    |
-| Build Tool        | Vite                                                                                  | ^8.0.16                   |
-| Desktop Framework | Tauri                                                                                 | 2.11.x                    |
-| Tauri Plugins     | dialog, opener, updater（fs/shell 已移除——前端零使用，全部文件/命令操作走自有命令层） | 2.x                       |
-| Backend Language  | Rust (pinned in `src-tauri/rust-toolchain.toml`; use `cargo +1.97.1`)                 | 1.97.1                    |
-| Database          | SQLite (rusqlite)                                                                     | bundled                   |
-| i18n              | @solid-primitives/i18n (locales: zh-CN, en-US)                                        | ^2.2.1                    |
-| State Management  | SolidJS Store + Signals                                                               | built-in                  |
-| Models Catalog    | @aio/models-data (sibling local package; JSON bundled as tauri resource)              | `file:../aio-models-data` |
-| Provider Icons    | @lobehub/icons-static-svg                                                             | ^1.91.0                   |
+| Layer             | Technology                                                                                                                           | Version                   |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------ | ------------------------- |
+| Frontend          | SolidJS                                                                                                                              | ^1.9.13                   |
+| Routing           | @solidjs/router                                                                                                                      | ^0.16.1                   |
+| Styling           | Tailwind CSS (v4, via `@tailwindcss/postcss`, no tailwind.config)                                                                    | ^4.0.0                    |
+| Build Tool        | Vite                                                                                                                                 | ^8.0.16                   |
+| Desktop Framework | Tauri                                                                                                                                | 2.11.x                    |
+| Tauri Plugins     | dialog, opener, updater (fs/shell removed — zero frontend usage; all file/command operations go through the app's own command layer) | 2.x                       |
+| Backend Language  | Rust (pinned in `src-tauri/rust-toolchain.toml`; use `cargo +1.97.1`)                                                                | 1.97.1                    |
+| Database          | SQLite (rusqlite)                                                                                                                    | bundled                   |
+| i18n              | @solid-primitives/i18n (locales: zh-CN, en-US)                                                                                       | ^2.2.1                    |
+| State Management  | SolidJS Store + Signals                                                                                                              | built-in                  |
+| Models Catalog    | @aio/models-data (sibling local package; JSON bundled as tauri resource)                                                             | `file:../aio-models-data` |
+| Provider Icons    | @lobehub/icons-static-svg                                                                                                            | ^1.91.0                   |
 
 ## Directory Structure
 
@@ -33,17 +43,17 @@ src/
 ├── Layout.tsx           # Root layout with NavBar
 ├── index.css            # Tailwind v4 CSS + theme CSS variables (light/dark mode)
 ├── core/
-│   ├── store/           # 域模块：types/models/chat/engine/project/profiles/ui-prefs/update/harness/stream/layout/task-board/subagent-view/background-tasks（store.ts 仅作 barrel 再导出；接口在 types.ts）；diagnostics.ts
-│   ├── api/             # Tauri 命令封装层（chat/mcp/skills/config/update/engine/project/chat/attachment/lsp/usage/providers/memory/catalog/dialog）+ events.ts（事件名常量，双端守门测试）+ streamPayloads.ts（流事件载荷类型）—— 组件与 utils 均不得裸 invoke
+│   ├── store/           # Domain modules: types/models/chat/engine/project/profiles/ui-prefs/update/harness/stream/layout/task-board/subagent-view/background-tasks (store.ts is a barrel re-export only; interfaces live in types.ts); diagnostics.ts
+│   ├── api/             # Tauri command wrapper layer (chat/mcp/skills/config/update/engine/project/chat/attachment/lsp/usage/providers/memory/catalog/dialog) + events.ts (event-name constants, guarded by a two-sided test) + streamPayloads.ts (stream event payload types) — components and utils must never call invoke directly
 │   ├── types/           # Backend mirror types: mcp.ts, skill.ts
-│   ├── utils/           # modelLogo.ts (provider logos), models.ts (ProviderConfig/Catalog 缓存+查询，invoke 已下沉 api/catalog), mcp.ts, exportConversation.ts —— 禁止裸 invoke（门禁 layering-utils）
+│   ├── utils/           # modelLogo.ts (provider logos), models.ts (ProviderConfig/Catalog cache + queries, invoke moved down to api/catalog), mcp.ts, exportConversation.ts — no direct invoke (layering-utils gate)
 │   ├── i18n/            # index.ts (t(), locale) + locales/zh-CN.json + locales/en-US.json
 │   ├── shortcuts.ts     # Keyboard shortcut + slash command registry
 │   ├── agent-prompts.ts # Agent system-prompt presets
 │   └── assets/
 ├── features/
-│   ├── chat/            # ChatPage.tsx + hooks/（chatEventListeners.ts：18 个流监听器在根 Layout 全局注册 + 3 个拖放监听器页面级；chatTurnEffects.ts：回合收尾效果）+ constants.ts + components/ (ChatInterface, TopicSidebar, ProjectSidebar, AgentProcessBlock, SubagentBlock, AgentModeSelector, ReasoningButton, TokenBar, TokenStatsBar, ShareModal, ProjectSettingsModal, ProjectSelector, TaskBoardPanel, AgentQuestionBubble, ...)
-│   ├── harness/         # HarnessPage.tsx（/harness：CLI 工具图形化兼容层）+ hooks/harnessEventListeners.ts（全局注册）+ components/（HarnessToolSidebar 两级工具/工作区栏, HarnessTopicSidebar, HarnessChatInterface, HarnessMessageList, HarnessApprovalBubble, HarnessAddWorkspaceModal）——复用 chat 叶子组件渲染
+│   ├── chat/            # ChatPage.tsx + hooks/ (chatEventListeners.ts: 18 stream listeners registered globally in the root Layout + 3 drag-and-drop listeners at page level; chatTurnEffects.ts: turn-finalization effects) + constants.ts + components/ (ChatInterface, TopicSidebar, ProjectSidebar, AgentProcessBlock, SubagentBlock, AgentModeSelector, ReasoningButton, TokenBar, TokenStatsBar, ShareModal, ProjectSettingsModal, ProjectSelector, TaskBoardPanel, AgentQuestionBubble, ...)
+│   ├── harness/         # HarnessPage.tsx (/harness: GUI compatibility layer for CLI tools) + hooks/harnessEventListeners.ts (global registration) + components/ (HarnessToolSidebar two-level tool/workspace sidebar, HarnessTopicSidebar, HarnessChatInterface, HarnessMessageList, HarnessApprovalBubble, HarnessAddWorkspaceModal) — reuses chat leaf components for rendering
 │   └── settings/        # SettingsPage.tsx, ProviderDetailPage.tsx + components/ (ProviderList, AppSettings, McpServerList, McpServerDetail, SkillList, SubagentModelSettings, EmbeddingModelSettings, LocalModelMarket, UsageSettings + usage chart components)
 └── shared/
     └── components/      # Icon, Markdown, NavBar, CommandPalette, SlashCommandMenu, Dropdown, Switch, ModelRow, GlobalKeyboardHandler, DiffView, ThinkBlock, UpdateNotification
@@ -57,27 +67,27 @@ src-tauri/src/
 ├── lib.rs               # Bootstrap: tracing init, managed state, invoke handler registration, engine cleanup on window destroy
 ├── mcp_fs_server.rs     # Built-in stdio filesystem MCP server (invoked with --fs-server)
 ├── core/
-│   ├── models/          # Shared data structures (chat/config/mcp/skill/project/agent/engine 域拆分)
-│   ├── db.rs            # SQLite initialization（走 core/migrate.rs 版本化迁移）
+│   ├── models/          # Shared data structures (split by domain: chat/config/mcp/skill/project/agent/engine)
+│   ├── db.rs            # SQLite initialization (versioned migrations via core/migrate.rs)
 │   ├── state.rs         # Tauri managed state (StreamManager, DbState, LocalEngineState, SubagentHandles)
-│   ├── config.rs        # AppConfig 持久化（save_app_config/load_app_config；命令层仅存薄包装）
-│   ├── events.rs        # 后端→前端事件名常量注册表（kebab-case 守门测试；新事件须登记）
-│   ├── file_locks.rs    # 多智能体写协调：per-file 互斥锁 + last-writer 追踪 + 跨写者 hashline 门控
-│   ├── fs_util.rs       # 原子写（temp+rename）公共工具——所有 JSON/配置持久化必须走这里
-│   ├── http.rs          # 出站 HTTP 公共约定：默认 User-Agent（reqwest 默认不发 UA → ModelScope CDN 403）与 client_builder 起手式
-│   ├── ids.rs           # 内置 ID 常量（BUILTIN_SERVER_ID / BUILTIN_FS_SERVER_ID）
-│   ├── mcp_trust.rs     # 项目级 .aio/mcp-servers.json 信任存储（指纹键控，仓库之外）
-│   ├── migrate.rs       # 版本化 SQLite 迁移运行器（PRAGMA user_version；chat 库与记忆库共用）
-│   ├── model_registry.rs # 嵌入/重排模型注册表（MANIFEST）与目录解析
-│   ├── path_safety.rs   # IPC 前端路径参数校验（safe_join：拒绝绝对路径/`..`/保留字符）
-│   ├── paths.rs         # 应用数据目录 / 包 ID
+│   ├── config.rs        # AppConfig persistence (save_app_config/load_app_config; command layer keeps thin wrappers only)
+│   ├── events.rs        # Backend→frontend event-name constant registry (kebab-case guard test; new events must register here)
+│   ├── file_locks.rs    # Multi-agent write coordination: per-file mutex + last-writer tracking + cross-writer hashline gating
+│   ├── fs_util.rs       # Atomic write (temp+rename) utilities — every JSON/config persistence path must go through here
+│   ├── http.rs          # Outbound HTTP conventions: default User-Agent (reqwest sends none by default → ModelScope CDN 403) and client_builder starter
+│   ├── ids.rs           # Built-in ID constants (BUILTIN_SERVER_ID / BUILTIN_FS_SERVER_ID)
+│   ├── mcp_trust.rs     # Project-level .aio/mcp-servers.json trust store (fingerprint-keyed, outside the repo)
+│   ├── migrate.rs       # Versioned SQLite migration runner (PRAGMA user_version; shared by chat and memory DBs)
+│   ├── model_registry.rs # Embedding/rerank model registry (MANIFEST) and directory resolution
+│   ├── path_safety.rs   # IPC path-argument validation from the frontend (safe_join: rejects absolute paths/`..`/reserved characters)
+│   ├── paths.rs         # App data directory / package ID
 │   ├── permission.rs    # Agent tool permission model (allowed/denied rules per agent mode)
 │   ├── secure_store.rs  # OS keychain-backed secret storage (API keys, MCP server secrets)
 │   └── subagent.rs      # Subagent profile definitions (10 built-in, incl. toolless vision) + tool specs
 ├── commands/
 │   ├── mod.rs
 │   ├── config.rs        # Assistants, app config, profile model overrides, custom subagent profiles, auto-start, topic branching
-│   ├── llm/             # mod.rs（薄 IPC 包装 + run_agent_turn_inner 主循环）: streaming/agent loop/budget/handoff/messages/subagents/tasks（任务清单 + ask_user）/titles/tool_specs/usage/locked_tools（文件锁接线）；btw.rs: "By The Way" 侧问
+│   ├── llm/             # mod.rs (thin IPC wrappers + run_agent_turn_inner main loop): streaming/agent loop/budget/handoff/messages/subagents/tasks (task list + ask_user)/titles/tool_specs/usage/locked_tools (file-lock wiring); btw.rs: "By The Way" side questions
 │   ├── engine.rs        # Local engine lifecycle: start/stop/status, engine scan, model listing
 │   ├── attachment.rs    # Chat attachments + file content extraction command
 │   ├── provider_config.rs # Provider configs (LobeHub-shaped), connection tests, model fetching, API key management
@@ -88,39 +98,39 @@ src-tauri/src/
 │   ├── skill.rs         # Skills CRUD, market browsing/download, npx import
 │   ├── lsp.rs           # LSP server lifecycle, diagnostics, auto-detect
 │   ├── catalog.rs       # Models catalog (bundled @aio/models-data / models.dev)
-│   ├── local_model_market.rs  # 本地 GGUF 模型市场：HF/ModelScope 搜索合并 + 硬件档案 + HF Token
-│   ├── local_model_download.rs # 本地 GGUF 下载器：多源回退/断点续传/空间预检/目录迁移
-│   ├── embedding.rs     # 嵌入模型：测试 / 列表 / 下载 / 启停 / 目录
-│   ├── rerank.rs        # 重排模型：测试 / 保存 API Key
-│   ├── memory.rs        # 项目记忆命令（memory_*：CRUD/混合检索/统计/开关）
-│   ├── harness.rs       # Harness 工作台命令（harness_*：工具检测/工作区/话题/消息/发送/停止/审批）
-│   ├── export.rs        # 会话导出（Markdown/HTML/PDF 素材）
-│   ├── image_gen.rs     # 图像生成命令
+│   ├── local_model_market.rs  # Local GGUF model market: HF/ModelScope search merge + hardware profile + HF token
+│   ├── local_model_download.rs # Local GGUF downloader: multi-source fallback/resume/space preflight/directory migration
+│   ├── embedding.rs     # Embedding models: test / list / download / start-stop / directory
+│   ├── rerank.rs        # Rerank models: test / save API key
+│   ├── memory.rs        # Project memory commands (memory_*: CRUD/hybrid retrieval/stats/toggles)
+│   ├── harness.rs       # Harness workbench commands (harness_*: tool detection/workspaces/topics/messages/send/stop/approval)
+│   ├── export.rs        # Conversation export (Markdown/HTML/PDF source material)
+│   ├── image_gen.rs     # Image generation commands
 │   └── update.rs        # App update check/install/restart
-├── services/            # 领域服务层（被命令层调用；不得反向依赖 commands）
-│   └── memory/          # 项目级记忆/RAG 服务
-│       ├── mod.rs       # 域入口 + collect_rows_warn（行级错误可见化）+ 迁移/读取拆分（migrate_* 显式写、resolve_* 纯读）
-│       ├── manager.rs   # 每项目 SQLite 连接 LRU 缓存
-│       ├── store/       # 记忆库存储层（mod/search/config/graph/stats）：facts + 版本审计 + FTS5 全文 + 向量打分 + 代码符号索引
-│       ├── code.rs      # 代码库索引与向量检索（async + spawn_blocking）
-│       ├── retrieve.rs  # 检索后处理：二阶段精排（rerank）+ 查询改写 + 多查询 RRF 融合（fail-open）
-│       ├── extract.rs   # LLM 后台事实抽取
-│       ├── judge.rs     # 事实判重/仲裁（余弦相似度阈值）
-│       ├── consolidate.rs # sleep-time 合并整理（每日自动 + 手动）
-│       ├── graph.rs     # 关系图谱抽取
-│       ├── llm.rs       # 记忆管线专用的 LLM 调用薄封装
-│       ├── tools.rs     # Agent 记忆工具（remember/recall/search_memory）
-│       ├── vec0.rs      # SQLite vec0 向量扩展适配
-│       ├── vector.rs    # 向量工具（bytes_to_f32/brute_force_topk）
-│       └── eval.rs      # RAG 评测（数据集 src-tauri/tests/rag_eval）
+├── services/            # Domain service layer (called by commands; must not depend on commands)
+│   └── memory/          # Project-level memory/RAG service
+│       ├── mod.rs       # Domain entry + collect_rows_warn (row-level error visibility) + migration/read split (migrate_* writes, resolve_* pure reads)
+│       ├── manager.rs   # Per-project SQLite connection LRU cache
+│       ├── store/       # Memory store layer (mod/search/config/graph/stats): facts + version audit + FTS5 full text + vector scoring + code symbol index
+│       ├── code.rs      # Codebase indexing and vector retrieval (async + spawn_blocking)
+│       ├── retrieve.rs  # Retrieval post-processing: two-stage rerank + query rewriting + multi-query RRF fusion (fail-open)
+│       ├── extract.rs   # LLM background fact extraction
+│       ├── judge.rs     # Fact deduplication/arbitration (cosine similarity threshold)
+│       ├── consolidate.rs # Sleep-time consolidation (daily automatic + manual)
+│       ├── graph.rs     # Relationship graph extraction
+│       ├── llm.rs       # Thin LLM-call wrapper dedicated to the memory pipeline
+│       ├── tools.rs     # Agent memory tools (remember/recall/search_memory)
+│       ├── vec0.rs      # SQLite vec0 vector-extension adapter
+│       ├── vector.rs    # Vector utilities (bytes_to_f32/brute_force_topk)
+│       └── eval.rs      # RAG evaluation (dataset in src-tauri/tests/rag_eval)
 ├── plugins/
 │   ├── engine/          # LocalEnginePlugin trait + llama_cpp, ollama, vllm, installer
 │   ├── provider/        # ProviderPlugin trait + openai_compat (fallback, registered last), anthropic, google, ollama
-│   ├── harness/         # Harness 工作台（CLI 工具兼容层）：model（归一化事件）/adapter（DriverCtx+trait+spawn）/registry（内置 ACP 工具注册表+检测）/acp（ACP JSON-RPC 驱动）/store（harness_* 三表）/manager（会话运行时+审批解析）
-│   ├── llm.rs           # LLM HTTP 客户端（post_chat_completion/chat_text_content 等，命令层已下沉至此）
-│   ├── embed/           # 嵌入 provider 插件（local_onnx + cache）
-│   ├── rerank/          # 重排 provider 插件（local_onnx + openai_compat）
-│   ├── mcp/             # MCP transports (stdio, http), connection lifecycle, convert（协议转换单实现）, error types
+│   ├── harness/         # Harness workbench (CLI tool compatibility layer): model (normalized events)/adapter (DriverCtx+trait+spawn)/registry (built-in ACP tool registry+detection)/acp (ACP JSON-RPC driver)/store (harness_* three tables)/manager (session runtime+approval resolution)
+│   ├── llm.rs           # LLM HTTP client (post_chat_completion/chat_text_content, etc.; command layer now delegates here)
+│   ├── embed/           # Embedding provider plugins (local_onnx + cache)
+│   ├── rerank/          # Rerank provider plugins (local_onnx + openai_compat)
+│   ├── mcp/             # MCP transports (stdio, http), connection lifecycle, convert (single protocol-conversion implementation), error types
 │   └── lsp/             # LSP client, transport, error types
 └── utils/
     ├── file_parser.rs   # Attachment content extraction (PDF, Office, images, text) + model path validation
@@ -132,18 +142,18 @@ src-tauri/src/
     ├── lsp_agent_tools.rs # LSP tool adapters for the agent loop
     ├── knowledge.rs     # Project knowledge (.aio/knowledge.json)
     ├── project_map.rs   # Project structure mapping
-    ├── sandbox.rs       # Shell sandboxing（路径白名单/黑名单校验）
-    ├── exec_resolve.rs  # PATH-only 可执行文件解析（全部裸名 spawn 的唯一入口；Windows PATHEXT 顺序归一）+ HiddenConsole（所有子进程隐藏控制台窗口）
+    ├── sandbox.rs       # Shell sandboxing (path allow/deny validation)
+    ├── exec_resolve.rs  # PATH-only executable resolution (the single entry point for all bare-name spawns; Windows PATHEXT order normalization) + HiddenConsole (hide console windows for all child processes)
     ├── think.rs         # Reasoning tool
     ├── url_validation.rs # SSRF/URL safety checks
     ├── token_counter.rs # Token counting
-    ├── tool_result.rs   # 工具结果统一封装（tool_ok/tool_err/tool_ok_mcp/tool_err_mcp）
-    ├── time.rs          # 时间辅助（now_iso/now_unix_secs/days_from_civil 等）
-    ├── truncate.rs      # 截断辅助（字符/字节头尾截断、truncate_tool_result）
-    ├── diff.rs          # diff 预览（compute_diff_preview/simple_diff，含 char-boundary 安全）
-    ├── jsonrpc.rs       # JSON-RPC pending 请求表（PendingMap；MCP 与 LSP 客户端共用）
-    ├── project_index.rs # 项目索引辅助（projects 文件解析）
-    └── worktree.rs      # 子智能体 worktree 隔离（创建/提交/合并回主分支/冲突中止/过期清理）
+    ├── tool_result.rs   # Unified tool-result envelope (tool_ok/tool_err/tool_ok_mcp/tool_err_mcp)
+    ├── time.rs          # Time helpers (now_iso/now_unix_secs/days_from_civil, etc.)
+    ├── truncate.rs      # Truncation helpers (character/byte head-tail truncation, truncate_tool_result)
+    ├── diff.rs          # Diff preview (compute_diff_preview/simple_diff, char-boundary safe)
+    ├── jsonrpc.rs       # JSON-RPC pending request map (PendingMap; shared by MCP and LSP clients)
+    ├── project_index.rs # Project index helpers (projects file parsing)
+    └── worktree.rs      # Subagent worktree isolation (create/commit/merge back to main branch/conflict abort/expired cleanup)
 ```
 
 ## Coding Conventions
@@ -160,23 +170,24 @@ src-tauri/src/
   2. Export it in `commands/mod.rs`.
   3. Register it in `lib.rs` via `tauri::generate_handler![...]`.
 
-### Code Comments（注释规范）
+### Code Comments
 
-- **注释写「为什么」，不写「是什么」**：代码自释的行不需要注释；需要的是决策、约束与坑（安全边界、兼容性约束、平台怪癖、性能权衡）。现有代码里的 `SEC-*`/`MCP-*`/`CHAT-*` 编号引用审查结论的注释是范例。
-- **模块头注释**：每个 `mod.rs`/复杂模块顶部一段说明职责与边界（参照 `core/migrate.rs`、`commands/feedback.rs` 的写法）。
-- **公开项必须文档化**：pub fn / pub struct 写明参数、返回、副作用与错误情形（`///` 中文为主，面向用户的消息经 `ierr!` 双语）。
-- **unsafe / 安全敏感代码**（沙箱、路径校验、密钥存储、IPC 边界）：逐段说明不变式与攻击面；禁止裸 `unsafe` 无注释。
-- **不写墓碑注释**（过时的、被注释掉的死代码）：删除即删除，git 记得一切。
-- **临时开关**：调试用的临时代码必须标记 `TODO(<name>)` 或在合入前删除；`TODO` 必须带 issue 号或署名。
+- **Explain "why", not "what"**: self-explanatory lines need no comment; comments are for decisions, constraints, and pitfalls (security boundaries, compatibility constraints, platform quirks, performance trade-offs). Numbered `SEC-*`/`MCP-*`/`CHAT-*` references to review findings are the model to follow.
+- **Language**: write comments in English first. Chinese may follow immediately as a second-language translation on the next line or paragraph; never place Chinese before English. New or edited code must not introduce Chinese-only comments. Existing Chinese-only comments are migrated when the surrounding code is touched — do not mass-translate unrelated files in a feature PR.
+- **Module headers**: every `mod.rs`/complex module starts with a paragraph describing its responsibilities and boundaries (see `core/migrate.rs`, `commands/feedback.rs`).
+- **Document public items**: pub fn / pub struct must state parameters, return values, side effects, and error cases (`///` doc comments, English first; an optional Chinese translation follows the English paragraphs). User-facing messages go through `ierr!` and stay bilingual.
+- **unsafe / security-sensitive code** (sandbox, path validation, secret storage, IPC boundary): explain invariants and attack surface paragraph by paragraph; bare `unsafe` without a comment is forbidden.
+- **No tombstone comments** (stale, commented-out dead code): delete it — git remembers everything.
+- **Temporary switches**: debugging-only code must be marked `TODO(<name>)` or removed before merge; `TODO` must carry an issue number or an owner.
 
-### Interface Contract（接口规范：Tauri IPC / 事件 / 插件 trait）
+### Interface Contract (Tauri IPC / events / plugin traits)
 
-- **命令命名**：`snake_case` 动词开头（`start_local_server`、`export_diagnostic_package`）；域前缀分组（`memory_*`、`harness_*`）。**命令名是对前端的公开 API，一旦发布不得改名**——需要演进时旧名保留为薄包装或废弃标记（`#[deprecated]` 文档注明替代）。
-- **载荷序列化**：Rust 侧统一 `#[serde(rename_all = "camelCase")]`（历史遗留的 snake_case 字段在 TS 侧如实镜像并加注释，见 `AppConfig` 先例）；TS 侧镜像类型放 `core/api/streamPayloads.ts` 或 `core/types/`，**与 Rust 结构体一一对应**。
-- **命令必为 async 或快速返回**：内部有真实 I/O（进程/文件/网络/全系统枚举）的命令一律 `#[tauri::command(async)]` 下沉阻塞池——同步命令在主线程执行，会冻结 UI（0.8.3 后 `get_feedback_snapshot` 即此坑）。评审时对任何新增同步命令默认质疑。
-- **事件契约**：后端→前端事件名 kebab-case，**双端登记**（`core/events.rs` 与 `core/api/events.ts`，守门测试强制）；载荷形状定义在 `streamPayloads.ts` 并注释对应后端结构体。事件是广播——载荷里不得携带敏感数据（密钥、未脱敏路径）。
-- **插件 trait**：`ProviderPlugin` / `LocalEnginePlugin` / harness adapter 等注册顺序即分发顺序（`openai_compat` 恒为兜底、注册最后）；trait 方法变更视为破坏性接口变更，需要 CHANGELOG `BREAKING CHANGE` 标记。
-- **安全边界**：所有接收前端路径参数的命令必须过 `core/path_safety.rs` 的 `safe_join`；返回给前端的错误信息不含本机绝对路径之外的敏感细节。
+- **Command naming**: `snake_case` starting with a verb (`start_local_server`, `export_diagnostic_package`); group by domain prefix (`memory_*`, `harness_*`). **Command names are the public frontend API and must never be renamed after release** — when evolving, keep the old name as a thin wrapper or deprecation marker (`#[deprecated]` documenting the replacement).
+- **Payload serialization**: Rust uses `#[serde(rename_all = "camelCase")]` uniformly (legacy snake_case fields are mirrored faithfully on the TS side with a comment; see the `AppConfig` precedent); TS mirror types live in `core/api/streamPayloads.ts` or `core/types/` and **map one-to-one to the Rust structs**.
+- **Commands must be async or return fast**: commands with real I/O (process/file/network/system-wide enumeration) always use `#[tauri::command(async)]` to run on the blocking pool — synchronous commands run on the main thread and freeze the UI (the `get_feedback_snapshot` pitfall after 0.8.3). Treat any new synchronous command as suspect during review.
+- **Event contract**: backend→frontend event names are kebab-case and **registered on both sides** (`core/events.rs` and `core/api/events.ts`, enforced by a guard test); payload shapes are defined in `streamPayloads.ts` with a comment naming the corresponding backend struct. Events are broadcasts — payloads must not carry sensitive data (keys, unmasked paths).
+- **Plugin traits**: registration order for `ProviderPlugin` / `LocalEnginePlugin` / harness adapters is dispatch order (`openai_compat` is always the fallback and registers last); trait method changes count as breaking interface changes and require a `BREAKING CHANGE` marker in the CHANGELOG.
+- **Security boundary**: every command that accepts a frontend path argument must pass through `core/path_safety.rs`'s `safe_join`; error messages returned to the frontend must not include sensitive details beyond local absolute paths.
 
 ### SolidJS / TypeScript
 
@@ -185,17 +196,17 @@ src-tauri/src/
 - Store updates: use functional path syntax (`setDatas('assistants', a => a.id === id, 'name', value)`).
 - Avoid `any` in new code. Define interfaces in `core/types/`.
 - Utility functions go to `core/utils/`, never duplicate logic across components.
-- **样式统一使用 Tailwind CSS 工具类编写**，避免内联样式或自定义 CSS 文件，除非确有必要。Tailwind v4 无 `tailwind.config`；主题令牌是 `src/index.css` 中的 CSS 变量（`--primary-rgb`、`--surface-bg`、`--text-base-rgb`、`--border-dim` 等），暗色模式由 `isDarkMode` 信号切换，新颜色必须走 CSS 变量，禁止硬编码 `rgba(...)` 字面量。
-- **严禁在代码中使用 Emoji 字符（包括 JSX 文本、模板字符串、配置对象）。一律使用 `<Icon name="..." />` 组件替换。对于字符串上下文（`confirm()`、`alert()`），使用纯文本等价符号（`✓` / `✗` / `[!]`）。**
-- **弹窗（模态）背景统一**：所有模态弹窗的容器必须使用亚克力样式 `background: var(--dialog-bg)` + `backdrop-filter: var(--popup-blur)` + `border: 1px solid var(--border-dim)`（变量定义在 `src/index.css`），遮罩层固定为 `bg-black/25`（遮罩不加模糊）。参照实现：`src/features/chat/components/ProjectSettingsModal.tsx`。
-- **下拉菜单统一**：所有下拉选择一律使用 `src/shared/components/Dropdown.tsx`；设置页/表单行内使用 `variant="ghost"`（透明触发器 + `--border-dim` 边框，参照 `src/features/settings/components/AppSettings.tsx` 的语言选择器），工具栏使用默认 `solid` 变体。禁止原生 `<select>` 元素（`npm run check:gates` 门禁强制执行）。
-- **勾选框统一**：所有勾选框一律使用 `src/shared/components/Checkbox.tsx`（主色描边方块 + check 图标；纯文本标签用 `label` 属性，富文本标签用 children）。禁止原生 `<input type="checkbox">`（`npm run check:gates` 门禁强制执行）。
-- **图标禁用字符代替**：按钮/控件中表达图形语义（关闭叉号、箭头、对勾等）一律使用 `<Icon name="..." />` SVG 图标，禁止用字符代替（如用 `x`/`×`/`✕` 当叉号、`→` 当箭头）；JSX 文本节点中禁止出现独占一个元素内容的 `× ✕ ✓ ✗ → ← ▲ ▼` 等符号字符（门禁强制执行）。仅有的例外是字符串上下文（`confirm()`/`alert()`/日志等纯文本）中的 `✓`/`✗`/`[!]`。图标缺失时在 `src/shared/components/Icon.tsx` 的 `PATHS` 表中新增（工厂函数形式），不得退用字符。
-- **同行元素高度相等**：同一行（同一 flex 行容器）内的按钮/输入框/下拉/标签等控件必须使用相同的高度档位——优先复用 `shared/components/buttonStyles.ts` 中同一档位的常量（行内操作统一 `px-3 py-1.5 text-xs` 档：`btnSecondarySm`/`btnDangerOutline`/`btnSuccessOutline` 等 Sm/Outline 系列），禁止同一行混用不同 padding/字号档位（如 `btnBadge` 的 `px-2 py-1 text-[11px]` 与 `btnDangerOutline` 的 `px-3 py-1.5 text-xs` 并排）；表单行内输入框的圆角与垂直内边距也需与同弹窗的下拉触发器一致（`Dropdown` ghost 变体为 `rounded-lg py-1.5`，输入框用 `rounded-lg` 匹配）。
-- **语义色按钮一律 outline**：带语义颜色的文本操作按钮（确定/保存/创建、删除/停止/关闭、测试连接/启动/批准、存密钥等）只允许 `buttonStyles.ts` 的 Outline 家族——**边框与文字携带语义色**（`border-pri-50`+`text-pri`、`border-danger/50`+`text-danger`、`border-success/50`+`text-success`、`border-warn/50`+`text-warn`），按钮主体保持中性底（`bg-white/[0.06]`，与 secondary 一致，hover 才浮现浅语义色底）。禁止实底语义按钮（`bg-pri` 实色）与色块底（`bg-danger/10`/`bg-green-400/10` 等）；中性操作用 `btnSecondary`/`btnSecondarySm`。发送/停止复合图标控件（输入区主控件）与 tab 选中态不在此规则约束内。
-- **i18n**：所有面向用户的字符串必须通过 `t()`（`core/i18n`）取词；每个 key 必须同时存在于 `locales/zh-CN.json` 与 `locales/en-US.json`，且 `{{placeholder}}` 集合一致（`npm run check:i18n` 强制校验）。禁止在 JSX/模板字符串中硬编码 UI 文案。
-- **子进程必须隐藏控制台**：安装版（release）是 GUI 子系统（`#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]`），进程自身没有控制台；任何 console 子系统子进程（cmd/powershell/git/npx/node/reg/taskkill…）若不带 `CREATE_NO_WINDOW`，Windows 会为它**新建**一个控制台窗口——用户看到终端一闪。调试模式下子进程继承调试控制台，所以只在安装版复现。规则：所有 `std::process::Command` / `tokio::process::Command` 一律链式加 `.hidden_console()`（`utils::exec_resolve::HiddenConsole`，跨平台 no-op）；裸 `CreateProcessW` 路径（`utils/sandbox/win_appcontainer.rs`）需自行带上 `CREATE_NO_WINDOW` 与 `STARTF_USESHOWWINDOW`+`SW_HIDE`。管道化 stdio 并不能阻止控制台分配（`npm run check:gates` 门禁强制执行）。
-- **UI 文案克制**：界面上只放功能性文字（标签、状态、操作结果、错误提示、一句话占位符）。开发/设计阶段的解释性描述——功能介绍、原理说明、使用教程、配置字段的长说明——一律不写入 UI，它们属于 `docs/`。新增 UI 文案时先问：删掉这句话用户会不会用不了这个功能？会才留。操作状态反馈优先用控件自身的状态变化表达（如按钮文字短暂切换为「已取消/已下载」一秒后恢复、列表项消失、布局切换），而不是新增常驻状态文字行；错误信息（含失败原因）除外。
+- **Styles use Tailwind CSS utility classes**: avoid inline styles or custom CSS files unless truly necessary. Tailwind v4 has no `tailwind.config`; theme tokens are the CSS variables in `src/index.css` (`--primary-rgb`, `--surface-bg`, `--text-base-rgb`, `--border-dim`, etc.), and dark mode is driven by the `isDarkMode` signal. New colors must go through CSS variables; hardcoded `rgba(...)` literals are forbidden.
+- **Emoji characters are forbidden in code** (including JSX text, template strings, and config objects). Use the `<Icon name="..." />` component instead. In string contexts (`confirm()`, `alert()`), use plain-text equivalents (`✓` / `✗` / `[!]`).
+- **Modal backgrounds are standardized**: every modal container uses the acrylic style `background: var(--dialog-bg)` + `backdrop-filter: var(--popup-blur)` + `border: 1px solid var(--border-dim)` (variables defined in `src/index.css`); the overlay is always `bg-black/25` (no blur). Reference: `src/features/chat/components/ProjectSettingsModal.tsx`.
+- **Dropdowns are standardized**: every dropdown uses `src/shared/components/Dropdown.tsx`; settings/form rows use `variant="ghost"` (transparent trigger + `--border-dim` border; see the language selector in `src/features/settings/components/AppSettings.tsx`), while toolbars use the default `solid` variant. Native `<select>` elements are forbidden (`npm run check:gates` enforces it).
+- **Checkboxes are standardized**: every checkbox uses `src/shared/components/Checkbox.tsx` (primary-colored outlined square + check icon; plain-text labels use the `label` prop, rich labels use children). Native `<input type="checkbox">` is forbidden (`npm run check:gates` enforces it).
+- **Icons must not be replaced by characters**: graphical meaning in buttons/controls (close cross, arrows, checkmarks, etc.) must use `<Icon name="..." />` SVG icons, never characters (e.g., `x`/`×`/`✕` as a close icon or `→` as an arrow); JSX text nodes must not contain standalone `× ✕ ✓ ✗ → ← ▲ ▼` symbols (gate-enforced). The only exception is plain-text string contexts (`confirm()`/`alert()`/logs) where `✓`/`✗`/`[!]` are allowed. Add missing icons to the `PATHS` table in `src/shared/components/Icon.tsx` (factory-function form); never fall back to characters.
+- **Equal heights within a row**: controls in the same flex row (buttons, inputs, dropdowns, labels) must use the same height tier — prefer constants from `shared/components/buttonStyles.ts` at the same tier (inline actions use the `px-3 py-1.5 text-xs` tier: `btnSecondarySm`/`btnDangerOutline`/`btnSuccessOutline` and other Sm/Outline variants). Mixing padding/font-size tiers in one row is forbidden (e.g., `btnBadge` at `px-2 py-1 text-[11px]` next to `btnDangerOutline` at `px-3 py-1.5 text-xs`); input radius and vertical padding in form rows must match the modal's dropdown trigger (`Dropdown` ghost is `rounded-lg py-1.5`, inputs use `rounded-lg`).
+- **Semantic-colored buttons are always outline**: text-action buttons with semantic color (confirm/save/create, delete/stop/close, test connection/start/approve, save key, etc.) may only use the Outline family from `buttonStyles.ts` — the border and text carry the semantic color (`border-pri-50`+`text-pri`, `border-danger/50`+`text-danger`, `border-success/50`+`text-success`, `border-warn/50`+`text-warn`), while the button body stays neutral (`bg-white/[0.06]`, same as secondary; the light semantic tint appears only on hover). Solid semantic buttons (`bg-pri`) and tinted backgrounds (`bg-danger/10`/`bg-green-400/10`, etc.) are forbidden; neutral actions use `btnSecondary`/`btnSecondarySm`. The send/stop composite icon control in the composer and selected tabs are exempt.
+- **i18n**: every user-facing string must come from `t()` (`core/i18n`); every key must exist in both `locales/zh-CN.json` and `locales/en-US.json` with an identical `{{placeholder}}` set (`npm run check:i18n` enforces it). Hardcoding UI copy in JSX/template strings is forbidden.
+- **Child processes must hide the console**: release builds use the GUI subsystem (`#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]`) and have no console of their own; any console-subsystem child process (cmd/powershell/git/npx/node/reg/taskkill…) without `CREATE_NO_WINDOW` makes Windows **create** a console window — users see a terminal flash. In debug mode children inherit the debug console, so this only reproduces in the installed build. Rule: every `std::process::Command` / `tokio::process::Command` must chain `.hidden_console()` (`utils::exec_resolve::HiddenConsole`, a cross-platform no-op); raw `CreateProcessW` paths (`utils/sandbox/win_appcontainer.rs`) must set `CREATE_NO_WINDOW` and `STARTF_USESHOWWINDOW`+`SW_HIDE` themselves. Piped stdio does not prevent console allocation (`npm run check:gates` enforces this).
+- **UI copy restraint**: the UI only carries functional text (labels, states, operation results, error messages, one-line placeholders). Explanatory descriptions from development/design — feature intros, rationale, tutorials, long config-field explanations — never go into the UI; they belong in `docs/`. Before adding UI copy, ask: would the user be unable to use this feature without this sentence? Keep it only if yes. Prefer expressing operation status through the control's own state change (e.g., button text briefly switches to "Cancelled/Downloaded" for a second, a list row disappears, layout changes) over adding persistent status lines; error messages (including causes) are exempt.
 
 ### Naming & Strings
 
@@ -204,7 +215,7 @@ src-tauri/src/
 
 ## Extensibility Guide
 
-- **Adding a New API Provider**: OpenAI-compatible providers usually need NO Rust changes — add the provider + model metadata to the sibling `aio-models-data` repo (consumed via `@aio/models-data`), add the logo mapping in `core/utils/modelLogo.ts`, and verify via Settings → Providers custom URL + "test connection". Only providers whose request/stream format differs (auth header, response JSON shape) get a dedicated plugin: implement `ProviderPlugin` in `src-tauri/src/plugins/provider/`, register it in `ProviderManager::new()` in `plugins/provider/mod.rs` BEFORE `openai_compat` (registration order is the dispatch order; `openai_compat` must stay last as fallback). UI lives in `features/settings/ProviderDetailPage.tsx` (shared provider card; engine card reuses the same page).
+- **Adding a New API Provider**: OpenAI-compatible providers usually need NO Rust changes — add the provider + model metadata to the sibling `aio-models-data` repo (consumed via `@aio/models-data`), add the logo mapping in `core/utils/modelLogo.ts`, and verify via Settings → Providers custom URL + "test connection". Only providers whose request/stream format differs (auth header, response JSON shape) get a dedicated plugin: implement `ProviderPlugin` in `src-tauri/src/plugins/provider/`, register it in `ProviderManager::new()` in `plugins/provider/mod.rs` BEFORE `openai_compat` (registration order is the dispatch order; `openai_compat` must stay last as fallback). UI lives in `features/settings/ProviderDetailPage.tsx` (shared provider card; the engine card reuses the same page).
 
 - **Adding a New Local Inference Engine**: implement `LocalEnginePlugin` in a new `plugins/engine/<id>.rs` (methods: `name`, `identifier`, `supported_extensions`, `is_platform_supported`, `install_path`, `is_installed`, `start`, `build_command`, `parse_progress_from_log`, `detect_installation`, `default_port`, `progress_event_name`), register in `EngineManager::new()` in `plugins/engine/mod.rs`. Engine binaries are **user-installed by convention** — neither bundled with the app nor auto-downloaded: `detect_installation` probes PATH and common install locations (winget/conda/homebrew/nix), and the settings page links to the engine's official builds when missing. `plugins/engine/installer.rs` only provides install-dir and detection helpers (no download path — keep it that way unless the product decision changes). The frontend picks the engine up automatically via `engine_type` on `ActivatedModel` and the startup engine scan (`scan_installed_engines`).
 
@@ -216,15 +227,15 @@ More extension paths (MCP transports, new Tauri commands, agent tools, permissio
 
 ### Global State (`core/store/`)
 
-全局状态拆分为域模块（`store.ts` 仅作 barrel 再导出，外部导入路径不变；接口在 `types.ts`）：
+Global state is split into domain modules (`store.ts` is only a barrel re-export, external import paths stay unchanged; interfaces live in `types.ts`):
 
-- `chat.ts`：`datas`（助手/话题/消息）+ 应用配置 + MCP 状态 + Skills + 标题重命名
-- `models.ts`：选中模型 / 模型目录 / 供应商配置 / modelKey / isLocalModel
-- `engine.ts`：本地引擎启动 / 进度 / 连接 / 扫描缓存
-- `project.ts` / `profiles.ts` / `ui-prefs.ts` / `update.ts` / `task-board.ts` / `stream.ts` / `layout.ts` / `background-tasks.ts`：各自域
-- `harness.ts`：Harness 工作台（工具检测/工作区/话题/消息/草稿/审批/运行态，选择持久化到 localStorage）
+- `chat.ts`: `datas` (assistants/topics/messages) + app config + MCP state + Skills + title renaming
+- `models.ts`: selected model / model catalog / provider configs / modelKey / isLocalModel
+- `engine.ts`: local engine start / progress / connection / scan cache
+- `project.ts` / `profiles.ts` / `ui-prefs.ts` / `update.ts` / `task-board.ts` / `stream.ts` / `layout.ts` / `background-tasks.ts`: their own domains
+- `harness.ts`: Harness workbench (tool detection/workspaces/topics/messages/drafts/approvals/run state; selection persisted to localStorage)
 
-关键信号：`datas`（Store: assistants/activatedModels）、`config`（apiUrl/apiKey）、`selectedModel`、`currentAssistantId`、`currentTopicId`、`projects`/`currentProjectId`（+ `gitBranch`/`gitBranches`）、`mcpServers`/`mcpServerStatus`/`mcpToolsCache`、`skills`、`providerConfigs`、`modelsCatalog*`、`profileModelOverrides`、`customSubagentProfiles`、`engineScanResults`、`appUpdate*`、harness 域信号（`harnessTools`/`harnessWorkspaces`/`harnessTopics`/`harnessMessages`/`harnessDrafts`/`harnessApprovals`/`harnessRunStates`）；UI 偏好（`themeColor`/`isDarkMode`/`reasoningLevel`/`webSearchEnabled`）持久化到 localStorage。
+Key signals: `datas` (Store: assistants/activatedModels), `config` (apiUrl/apiKey), `selectedModel`, `currentAssistantId`, `currentTopicId`, `projects`/`currentProjectId` (+ `gitBranch`/`gitBranches`), `mcpServers`/`mcpServerStatus`/`mcpToolsCache`, `skills`, `providerConfigs`, `modelsCatalog*`, `profileModelOverrides`, `customSubagentProfiles`, `engineScanResults`, `appUpdate*`, harness domain signals (`harnessTools`/`harnessWorkspaces`/`harnessTopics`/`harnessMessages`/`harnessDrafts`/`harnessApprovals`/`harnessRunStates`); UI preferences (`themeColor`/`isDarkMode`/`reasoningLevel`/`webSearchEnabled`) persist to localStorage.
 
 ### Backend State (`core/state.rs` + `lib.rs`)
 
@@ -232,24 +243,24 @@ More extension paths (MCP transports, new Tauri commands, agent tools, permissio
 - `DbState`: SQLite connection.
 - `LocalEngineState`: running local engine processes, HashMap keyed by `engine_type`; one active engine at a time enforced by `start_local_server`.
 - `SubagentHandles`: background subagent join handles.
-- Plus managers registered in `lib.rs`: `EngineManager`, `McpServerManager`/`McpServerState`/`McpRequestManager`/`PendingApprovals`, `LspManager`, `FileLockRegistry`（多智能体写协调，见 `core/file_locks.rs`）, `HarnessManager`（harness 会话运行时：子进程 + 命令通道 + 取消令牌 + 审批 oneshot 表；停止两段式=协议取消→taskkill 进程树）。
+- Plus managers registered in `lib.rs`: `EngineManager`, `McpServerManager`/`McpServerState`/`McpRequestManager`/`PendingApprovals`, `LspManager`, `FileLockRegistry` (multi-agent write coordination, see `core/file_locks.rs`), `HarnessManager` (harness session runtime: child process + command channel + cancellation token + approval oneshot map; two-stage stop = protocol cancel → taskkill process tree).
 
 ## Important Compatibility Notes
 
 - **Command Stability**: Public Tauri command names (`start_local_server`, `stop_local_server`, `is_local_server_running`, `call_llm_stream`, etc.) must remain stable to preserve frontend compatibility.
 - **Config Migration**: The `ActivatedModel` struct supports an optional `engine_type` field. Old configs without this field deserialize safely (defaults to `None`), and logic treats `None` as legacy llama.cpp behavior.
-- **Event Names**: `engine-progress` is the generic progress event (all engines default to it); the llama.cpp plugin still emits `llama-progress` for backward compatibility. Other frontend events: `llm-chunk`, `llm-round-start`, `llm-compression`, `llm-compression-failed`, `subagent-start` / `subagent-step` / `subagent-done` / `subagent-error`, `mcp-server-status`, `mcp-server-stderr`, `app-update-progress`, harness 事件族（`harness-event` / `harness-state` / `harness-approval-requested` / `harness-approval-expired`）. New events must be kebab-case.
+- **Event Names**: `engine-progress` is the generic progress event (all engines default to it); the llama.cpp plugin still emits `llama-progress` for backward compatibility. Other frontend events: `llm-chunk`, `llm-round-start`, `llm-compression`, `llm-compression-failed`, `subagent-start` / `subagent-step` / `subagent-done` / `subagent-error`, `mcp-server-status`, `mcp-server-stderr`, `app-update-progress`, and the harness event family (`harness-event` / `harness-state` / `harness-approval-requested` / `harness-approval-expired`). New events must be kebab-case.
 
 ## Branch & Release Workflow
 
-多人协作约定（流程细节与提交信息规范见 [CONTRIBUTING.md](CONTRIBUTING.md)）：
+Multi-contributor conventions (process details and commit-message rules live in [CONTRIBUTING.md](CONTRIBUTING.md)):
 
-- **日常开发**：从最新 `dev` 切出功能分支，命名 `dev-<类型>-<主题>`（如 `dev-feat-memory-panel`；Git 不允许在 `dev` 分支存在时创建 `dev/<功能>` 命名空间，故用连字符）；一个分支只做一件事，改动提交到功能分支。
-- **功能完成**：功能分支 PR 到 `dev`；CI（ci.yml，跑 `npm run verify` 同套基线）全绿 + CODEOWNERS 评审通过后合并，merge 后删除功能分支（本地 + 远端）。外部贡献者走 fork PR。
-- **发布版本**：决定发版时 `dev` PR 到 `master` 并 merge；`dev` 分支保留不动。随后 bump 版本（CHANGELOG + 三处版本号）、打 `vX.Y.Z` tag 推送触发 `release.yml`。
-- **master** 仅包含已发布版本内容；长期存在的分支只有 `dev` 与 `master`；任何分支不得 force-push 这两条长期分支。
-- **预发布版本**：tag 形如 `v1.0.0-alpha`（带连字符即预发布）——release.yml 按版本号自动将 GitHub Release 标记为 prerelease（`releases/latest` 保持指向稳定版，稳定用户不会被推 alpha），alpha 测试者从该 Release 页面手动下载。
-- **本地 exe 重建（快速验收用，不走安装包）**：`cargo +1.97.1 build --release --manifest-path src-tauri/Cargo.toml --features tauri/custom-protocol` —— **`--features tauri/custom-protocol` 不可省略**：Tauri 2 的 `generate_context!` 靠它区分 dev/prod（无此特性时上下文按 dev 烘焙：不嵌入 dist、webview 加载 devUrl，裸 cargo 构建出的 exe 打开即"localhost 拒绝连接"——`tauri dev` 与 CI 的 `tauri build` 各自隐式处理，唯独裸 cargo 不会）。窗口是否可用必须以 webview 内容为准（CDP 截图或 PrintWindow），不能只看进程 responding。
+- **Day-to-day development**: cut a feature branch from the latest `dev`, named `dev-<type>-<topic>` (e.g. `dev-feat-memory-panel`; Git cannot create a `dev/<feature>` namespace while the `dev` branch exists, hence hyphens); one branch does one thing, and changes are committed to the feature branch.
+- **Feature completion**: PR the feature branch to `dev`; merge after CI (ci.yml, same `npm run verify` baseline) is green and a CODEOWNERS review approves; delete the feature branch afterwards (local + remote). External contributors use fork PRs.
+- **Releases**: when releasing, PR `dev` to `master` and merge; leave `dev` untouched. Then bump versions (CHANGELOG + three version locations), and push a `vX.Y.Z` tag to trigger `release.yml`.
+- **master** contains released content only; the only long-lived branches are `dev` and `master`; force-pushing either is forbidden.
+- **Prereleases**: tags such as `v1.0.0-alpha` (a hyphen marks a prerelease) — release.yml uses the version number to mark the GitHub Release as a prerelease automatically (`releases/latest` keeps pointing at the stable line, so stable users are never pushed an alpha); alpha testers download manually from that Release page.
+- **Local exe rebuild (quick acceptance, no installer)**: `cargo +1.97.1 build --release --manifest-path src-tauri/Cargo.toml --features tauri/custom-protocol` — **`--features tauri/custom-protocol` is mandatory**: Tauri 2's `generate_context!` uses it to distinguish dev/prod (without it the context is baked for dev: dist is not embedded and the webview loads devUrl, so a bare cargo build opens with "localhost refused to connect" — `tauri dev` and CI's `tauri build` each handle it implicitly, but bare cargo does not). Window usability must be judged by webview content (CDP screenshot or PrintWindow), not by the process reporting "responding".
 
 ## Build & Dev Commands
 
@@ -267,7 +278,7 @@ npm run tauri build
 npm run format
 
 # Full frontend and Rust quality baseline:
-#   check:frontend = check:i18n (locale key parity) + check:docs (markdown links) + check:gates (架构/样式门禁) + prettier --check + eslint --max-warnings 0 + tsc --noEmit + vite build
+#   check:frontend = check:i18n (locale key parity) + check:docs (markdown links) + check:gates (architecture/style gates) + prettier --check + eslint --max-warnings 0 + tsc --noEmit + vite build
 #   check:rust     = cargo fmt --check + clippy --all-targets -D warnings + cargo test
 npm run verify
 ```
@@ -282,24 +293,26 @@ Before submitting changes, verify:
 - [ ] `npm run verify` passes without warnings or errors.
 - [ ] New UI strings are i18n'd: keys exist in BOTH `locales/zh-CN.json` and `locales/en-US.json` with matching `{{placeholders}}`.
 - [ ] No hardcoded color literals; theme colors go through CSS variables in `src/index.css`.
-- [ ] 新后端→前端事件名：在 `src-tauri/src/core/events.rs` 与 `src/core/api/events.ts` 两端登记（kebab-case）。
-- [ ] 新 Tauri 命令：前端经 `core/api/<域>.ts` 封装调用，组件不得裸 `invoke`。
-- [ ] `npm run check:gates` 全过（裸中文 JSX / 颜色 / any 闸门 / 分层 / 文件规模 / 命令注册 / 子进程隐藏控制台）。
-- [ ] 含 I/O 的命令为 async（阻塞池）；新命令文档注释含参数说明（见 Interface Contract）。
-- [ ] 文档改动双侧同步（`docs/zh/` 与 `docs/en/`），链接过 `check:docs`。
+- [ ] New backend→frontend event names are registered on both sides (`src-tauri/src/core/events.rs` and `src/core/api/events.ts`, kebab-case).
+- [ ] New Tauri commands are called through `core/api/<domain>.ts` wrappers; components never call `invoke` directly.
+- [ ] `npm run check:gates` passes (bare-Chinese JSX / colors / `any` ratchet / layering / file-size / command registration / hidden-console for child processes).
+- [ ] Commands with I/O are async (blocking pool); new commands have doc comments with parameter descriptions (see Interface Contract).
+- [ ] New or changed comments are English-first (Chinese may follow as the second language); no new Chinese-only comments.
+- [ ] Commit messages use an English subject and body; an optional Chinese translation follows the English body.
+- [ ] Doc changes are synced on both sides (`docs/zh/` and `docs/en/`) and pass `check:docs`.
 
-## Agent 协作守则（AI 代理辅助开发规范）
+## Agent Collaboration Rules (AI-assisted development)
 
-本仓库欢迎 AI 代理参与开发，且大量工作本就由代理完成。代理与人遵守同一套标准（编码规范即本文件、流程规范即 CONTRIBUTING.md），额外红线：
+This repository welcomes AI agents and much of the work is already agent-produced. Agents follow the same standards as humans (coding standards in this file, process in CONTRIBUTING.md), plus these red lines:
 
-- **验证诚实（最重要）**：「已验证 / 全绿 / 测试通过」的声明必须伴随实际执行的命令与真实结果输出。未运行的测试不得声称通过；无法在本机执行的部分（如平台专属测试）要如实说明并标注留给 CI。
-- **不越门禁**：不放宽 `check-gates.mjs` 阈值、不 `--no-verify`、不为让校验通过而特化代码或跳过用例；门禁调整是独立 PR 且需要维护者批准。
-- **先读后说**：对不确定的行为/接口先读源码与文档再下结论；引用规范时给出来源文件与章节，不凭记忆转述。
-- **最小改动**：只做任务要求的事——不顺手重构、不批量格式化无关文件、不改无关依赖版本；发现相邻问题记录 issue 而不是顺手修。
-- **走 PR**：代理产物一律走 PR 流程（模板、CI、评审），不直接推 `dev`/`master`；提交信息遵守 Conventional Commits，不伪装人工成果，也不虚构评审状态。
-- **机密卫生**：不提交密钥/令牌/个人数据；日志与截图脱敏；示例与会话数据用虚构内容（仓库历史上有过真实数据混入截图的事故，重拍成本很高）。
-- **遇阻即报**：卡住、被环境拒绝、或发现需求与规范冲突时，停下来报告并给出证据，不要静默绕过或降低完成标准。
+- **Verification honesty (most important)**: any claim of "verified / all green / tests pass" must include the commands actually run and the real output. Never claim unexecuted tests pass; clearly state what could not run locally (e.g., platform-specific tests) and leave it to CI.
+- **No gate bypass**: do not loosen `check-gates.mjs` thresholds, use `--no-verify`, special-case code to pass checks, or skip cases. Gate changes are separate PRs and require maintainer approval.
+- **Read before asserting**: read the source and docs before drawing conclusions about uncertain behavior/interfaces; when citing a rule, name the source file and section — never paraphrase from memory.
+- **Minimal diffs**: do only what the task requires — no drive-by refactors, no mass formatting of unrelated files, no unrelated dependency bumps; record adjacent problems as issues instead of fixing them in passing.
+- **PRs mandatory**: agent output always goes through the PR flow (template, CI, review) and is never pushed directly to `dev` / `master`; commit messages follow Conventional Commits; never impersonate human work or invent review status.
+- **Secret hygiene**: never commit keys/tokens/personal data; sanitize logs and screenshots; use fabricated content for examples and conversations (the repo once had real data slip into a screenshot, and re-shooting is expensive).
+- **Report blockers**: when stuck, rejected by the environment, or facing a conflict between the request and the standards, stop and report with evidence — never silently work around it or lower the completion bar.
 
-### 多代理并发写作协调
+### Multi-Agent Concurrent Writing Coordination
 
-多个代理（或代理与人）同时改仓库时：改同一文件前先 `git pull`；`core/file_locks.rs` 是产品内的运行时文件锁（与 git 写作协调无关）；git 层面的冲突靠「小 PR + 单一主题分支」消解——大范围重构先开 issue 对齐方案再动手。
+When multiple agents (or agents and humans) modify the repository at the same time: `git pull` before editing the same file; `core/file_locks.rs` is the product's runtime file lock (unrelated to git write coordination); resolve git-level conflicts with "small PRs + single-topic branches" — align on an issue before starting large refactors.

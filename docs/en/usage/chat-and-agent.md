@@ -33,7 +33,7 @@ When the model catalog provides context window information, the interface shows 
 - **TokenBar**: Context window progress bar with color coding (green -> yellow -> red), showing used tokens / max tokens in real time.
 - **TokenStatsBar**: Summary bar showing total tokens, request count, estimated cost, cache hit rate, and time to first token (TTFT — taken from the most recent request; hover for the full breakdown).
 
-When usage reaches approximately 75% and there are more than 10 messages, AIO summarizes older messages while keeping the most recent messages within a token budget (about 20k tokens, at least one full turn); the new summary fully replaces the old one to avoid bloat. You can also use `/compact` to compress manually.
+When usage reaches approximately 75% and there are more than 10 messages, AIO summarizes older messages while keeping the most recent messages within a token budget (about 20k tokens, at least one full turn); the new summary fully replaces the old one to avoid bloat. You can also use `/compact` to compress manually. Compaction runs per topic in the background: switching topics or continuing the conversation does not cancel it, and the result is written back to the original topic when ready.
 
 Components are located in `src/features/chat/components/` (`SessionStats.tsx`, `TokenBar.tsx`, `TokenStatsBar.tsx`).
 
@@ -100,7 +100,7 @@ Agent replies display steps including reasoning, tool calls, sub-agents, and ela
 
 The "Background Tasks" pull-up menu on the right of the Agent status bar (left of the sub-agent menu) tracks the app's own background async jobs live: automatic memory extraction and consolidation (fired asynchronously after each turn, scheduled daily in the background), index rebuilds, code indexing, embedding / local GGUF model downloads, and commands still running after 5 seconds (builds, tests and other shell scripts the app is waiting on, including ones launched by sub-agents — they show the command text and elapsed time, and stop together with their turn, so no separate control is needed). Each entry shows the kind, the owning project / model / command text, and a progress bar or elapsed time — download progress stays visible after leaving the settings page, and entries vanish automatically once their job settles. The jobs themselves are still controlled from their own surfaces (the project memory panel and the model settings pages).
 
-Before file tool execution, a unified Diff can be shown in the approval bubble. After execution, a summary below the reply shows added/deleted lines per file and allows expanding the Diff.
+Before file tool execution, a unified Diff can be shown in the approval bubble. After execution, a summary below the reply shows added/deleted lines per file. The file bubbles stay in the conversation; clicking a file row opens the full Diff as a tab in the right-hand panel — file tabs ("File 1", "File 2", ...) sit next to the "Topics" tab and can be switched and closed. The panel widens while a file is shown and animates back to its narrower width when you return to "Topics".
 
 In Git projects, you can revert changes for individual files or the entire batch. Revert works by restoring the target files to `HEAD`:
 
@@ -111,7 +111,9 @@ When a tool fails, the app configuration enables automatic retries by default: u
 
 ### DiffView Component
 
-`DiffView` (`src/shared/components/DiffView.tsx`) parses Diff content with unified formatting and color-coded hunk headers. Supports expanding/collapsing change blocks, shows added/deleted line counts per file, and includes a file-level revert button.
+`DiffView` (`src/shared/components/DiffView.tsx`) parses Diff content with unified formatting and color-coded hunk headers. In the conversation, file bubbles keep only the summary row; clicking one opens the full Diff in the right-hand panel (`detailMode="side-panel"`), while approval bubbles still expand/collapse inline. It shows added/deleted line counts per file and includes a file-level revert button.
+
+Tab state lives in `src/core/store/chat-side-panel.ts` (session-only; cleared when the assistant/topic switches), the panel shell and width transition live in `SidePanelShell`, and Diff rendering lives in `DiffLines`.
 
 ## Git and LSP
 

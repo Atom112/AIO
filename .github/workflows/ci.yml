@@ -89,7 +89,9 @@ jobs:
             libwebkit2gtk-4.1-dev \
             libappindicator3-dev \
             librsvg2-dev \
-            patchelf
+            patchelf \
+            libxcb1-dev libxcb-randr0-dev libxrandr-dev libdbus-1-dev \
+            libpipewire-0.3-dev libwayland-dev libegl1-mesa-dev clang libclang-dev pkg-config
 
       - name: Setup Node.js (tauri resource bundling)
         uses: actions/setup-node@v4

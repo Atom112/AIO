@@ -163,9 +163,10 @@ For the full index, see the [AIO Documentation Center](docs/en/README.md). For v
 
 Contributions are welcome! See the [contributing guide](CONTRIBUTING.md) for the process (issues / branches / commits / PRs) and [AGENTS.md](AGENTS.md) for coding standards — the same rules apply to humans and AI agents. Report vulnerabilities privately per [SECURITY.md](SECURITY.md).
 
+- **English is the primary language**: code comments, commit messages, PRs, and contributor docs are English-first; Chinese mirrors live in `README.zh-CN.md`, `CONTRIBUTING.zh-CN.md`, `AGENTS.zh-CN.md`, and `docs/zh/`;
 - Run `npm run verify` and the relevant tests before opening a Pull Request;
 - Docs are a bilingual mirror (`docs/zh/` ↔ `docs/en/`) — behavior changes must update both sides;
-- Commit messages follow Conventional Commits.
+- Commit messages follow Conventional Commits with an English subject; an optional Chinese translation follows the English body.
 
 ---
 

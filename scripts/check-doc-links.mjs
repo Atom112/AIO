@@ -8,9 +8,10 @@ const files = [
   join(root, 'README.md'),
   join(root, 'README.zh-CN.md'),
   join(root, 'CONTRIBUTING.md'),
-  join(root, 'CONTRIBUTING.en-US.md'),
+  join(root, 'CONTRIBUTING.zh-CN.md'),
   join(root, 'SECURITY.md'),
   join(root, 'AGENTS.md'),
+  join(root, 'AGENTS.zh-CN.md'),
 ];
 const walk = (dir) => {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {

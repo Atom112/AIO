@@ -28,6 +28,7 @@ Overview of the default rules for each Agent mode:
 ### Chat Mode (Off)
 
 - Deny all tool calls (`*` &rarr; Deny)
+- Computer-control tools are never injected (read-only mode has no desktop capability)
 
 ### Normal Mode
 
@@ -36,6 +37,8 @@ Overview of the default rules for each Agent mode:
 - Write operations (`write_file`, `replace_in_file`, `make_directory`) &rarr; Ask
 - Git write operations (`git_add`, `git_commit`) &rarr; Ask
 - Delete operations (`delete_file`) &rarr; Ask
+- Desktop snapshot (`computer_snapshot`, read-only) &rarr; Allow
+- Desktop action (`computer_action`) &rarr; Ask (per call; it is **not confined by the project sandbox** and operates the live desktop)
 - Other tools &rarr; Ask
 
 ### Full Permission / Machine Full Trust Mode (Auto / Danger)
@@ -46,6 +49,7 @@ Both tiers share the same rule set (matching the `Auto | Danger` arm in `permiss
 - Git operations (all) &rarr; Allow
 - Command execution (`execute_command`) &rarr; Allow
 - Delete operations (`delete_file`) &rarr; Allow (aligned with `execute_command`, which can already `del`/`rm`; deletion stays confined to the project sandbox. Normal mode keeps per-call confirmation)
+- Computer control (`computer_snapshot`, `computer_action`) &rarr; Allow (desktop actions likewise bypass the project sandbox, matching the full-autonomy contract of command execution)
 - Other tools &rarr; Allow
 
 The difference between the tiers is not in permission rules but in **whether commands run inside the OS sandbox**: Full permission (Auto) keeps the AppContainer/bwrap/SBPL sandbox; Machine full trust (Danger) runs commands natively with full user privileges, entirely outside the sandbox (entry shows a dedicated red risk warning).

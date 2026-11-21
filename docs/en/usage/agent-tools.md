@@ -2,7 +2,7 @@
 
 ## Overview
 
-Agent mode provides 30+ built-in tools across 7 categories. The following table lists the **core tools** with their basic permission characteristics (the six memory tools and orchestration tools have full parameter docs in their sections; subagent-management tools like `get_subagent_result` are covered under orchestration):
+Agent mode provides 30+ built-in tools across 8 categories. The following table lists the **core tools** with their basic permission characteristics (the six memory tools and orchestration tools have full parameter docs in their sections; subagent-management tools like `get_subagent_result` are covered under orchestration):
 
 > **Execution semantics**: read-only tools within the same response block (reads/search/web queries/git read/LSP/memory recall) run concurrently; mutating tools (file writes, command execution, git write) and MCP tools run serially in original order. Parallel execution is on by default; it can be turned off by setting `parallelToolExecution: false` in `config.json` (no settings UI).
 >
@@ -33,6 +33,8 @@ Agent mode provides 30+ built-in tools across 7 categories. The following table 
 | `web_fetch`           | Web           | Ask            | Allow        | Deny         |
 | `web_search`          | Web           | Ask            | Allow        | Deny         |
 | `execute_command`     | Shell         | Ask            | Allow        | Deny         |
+| `computer_snapshot`   | Desktop       | Allow          | Allow        | -            |
+| `computer_action`     | Desktop       | Ask            | Allow        | -            |
 | `think`               | Orchestration | Allow          | Allow        | Allow        |
 | `project_map`         | Orchestration | Allow          | Allow        | Allow        |
 | `delegate_task`       | Orchestration | Ask            | Allow        | Ask          |
@@ -333,6 +335,39 @@ Execute a system command in the project directory.
 | **Limits**      | Command length max 4096 characters; backtick/`$()` command substitution prohibited; dangerous commands blocked (`sudo`, `rm -rf /`, `format`, etc.); Windows Job Object sandbox; bare script interpreters as the first token (`python`/`py`/`node`/`npm`, etc.) are forwarded to the host-PATH-resolved absolute path (these names are otherwise invisible inside the sandbox shell), with a best-effort R+X grant on the interpreter directory under the Windows sandbox |
 | **Security**    | Dangerous command detection (lexical token analysis), rejecting destructive/install/network exfiltration/env injection/fork bomb patterns                                                                                                                                                                                                                                                                                                                                 |
 | **Permission**  | Normal/Ask, Auto/Allow, Plan/Deny; in sub-agents: general/debugger/tester roles allow, others deny                                                                                                                                                                                                                                                                                                                                                                        |
+
+---
+
+## Computer Control Tools
+
+Source: `src-tauri/src/utils/computer/`
+
+Accessibility-first desktop observation and control: a snapshot renders the window list and the target window's accessibility tree as **plain text** (each node carries an `@eN` ref), so any tool-calling model can drive the desktop through refs without vision. When a vision model is configured, the screenshot is turned into a text description and returned alongside. Mouse/keyboard injection and capture use system APIs (Windows UIA / macOS AXUIElement / Linux AT-SPI2 plus enigo/xcap) with no external runtime.
+
+### `computer_snapshot`
+
+Capture the desktop state: window list plus the target window's accessibility tree (read-only).
+
+| Item            | Value                                                                                                                                                                                                                                                                                                   |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Description** | Returns the screen size, the window list (title/app/pid/rect/focused) and the target window's element tree, each node carrying an `@eN` ref. Refs are valid only for this snapshot.                                                                                                                     |
+| **Parameters**  | `window` (string, optional) -- window title or app-name substring (case-insensitive), defaults to the foreground window; `max_elements` (integer, optional) -- element cap, default 300, range 50-1000; `screenshot` (boolean, optional) -- also capture and describe the screen (needs a vision model) |
+| **Return**      | Plain-text snapshot; capped at 24,000 characters per call, truncation is announced with a narrowing hint                                                                                                                                                                                                |
+| **Limits**      | Tree depth cap 12; 30s walk timeout; minimized windows return no tree (use `focus` first); screenshots are downscaled to a 1600px longest edge and only the newest 20 are kept                                                                                                                          |
+| **Permission**  | Normal/Allow, Auto/Allow, Plan/not provided; subagents never hold it                                                                                                                                                                                                                                    |
+
+### `computer_action`
+
+Perform real mouse/keyboard/window actions on the desktop.
+
+| Item            | Value                                                                                                                                                                                                                                                                                                                                                                                                           |
+| --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Description** | Runs click/move/drag/scroll/type/key/focus/launch. Prefer the `@eN` refs returned by `computer_snapshot` (native accessibility activation, no vision needed); screen physical-pixel `x`/`y` also work.                                                                                                                                                                                                          |
+| **Parameters**  | `action` (string, required) -- `click`/`double_click`/`right_click`/`move`/`drag`/`scroll`/`type`/`key`/`focus`/`launch`; `ref` (element ref) or `x`/`y` (pixel coordinates); `to_x`/`to_y` (drag target); `text` (type payload); `keys` (combo such as `ctrl+s`); `amount` (wheel steps, positive scrolls up, default 3); `window` (focus target); `app`/`args` (launch); `wait_ms` (post-action wait, 0-5000) |
+| **Return**      | One-line success summary (e.g. `Clicked @e12 button "Close" (at 870,103)`); errors guide the model to re-snapshot or fix permissions                                                                                                                                                                                                                                                                            |
+| **Limits**      | Stale refs (UI changed) are refused with a re-snapshot instruction; 120s per call; `type` with a `ref` inserts through accessibility (clipboard paste on Windows, EditableText on Linux), while physical typing without a `ref` goes through the active IME (CJK IMEs may compose characters); on Linux Wayland native Wayland clients cannot receive injected input (explicit error; use ref actions instead)  |
+| **Security**    | **Not confined by the project sandbox** -- it operates the logged-in user's live desktop. macOS needs Accessibility (plus Screen Recording for captures), Linux needs desktop accessibility (AT-SPI2). On-screen text is treated as data, never as instructions                                                                                                                                                 |
+| **Permission**  | Normal/Ask (per call, the dialog shows the action summary), Auto/Allow, Plan/not provided; subagents never hold it                                                                                                                                                                                                                                                                                              |
 
 ---
 

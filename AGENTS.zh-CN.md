@@ -1,0 +1,318 @@
+# AIO (All-In-One AI) — Agent 编码指南
+
+**简体中文** | [English](AGENTS.md)
+
+## 语言政策
+
+英文是本仓库的第一语言。代码注释、提交信息、PR / issue 描述与根目录治理文档（`README.md`、`CONTRIBUTING.md`、`AGENTS.md`、`SECURITY.md`）一律英文优先；中文作为第二语言完整镜像：`README.zh-CN.md`、`CONTRIBUTING.zh-CN.md`、`AGENTS.zh-CN.md` 与 `docs/zh/`。
+
+- 同一注释或文档同时包含两种语言时，英文在前，中文在后（见「Code Comments」）。
+- 提交信息使用英文 subject 与正文；中文翻译可选，放在英文正文之后（见 [CONTRIBUTING.zh-CN.md](CONTRIBUTING.zh-CN.md) §3）。
+- 面向用户的字符串仍通过 `t()` / `ierr!` 以 `zh-CN` 与 `en-US` 双语键输出，本政策不替代 i18n。
+
+## 项目概览
+
+AIO 是用 **Tauri 2.x**（Rust 后端）与 **SolidJS**（前端）构建的轻量、跨平台 AI 助手桌面客户端。它支持远程 API 供应商（OpenAI-compatible、Anthropic、Google Gemini、Ollama）、本地推理引擎（llama.cpp、Ollama、vLLM——多引擎，同一时间只激活一个），以及**Agent 模式**：运行带工具的循环（file、git、shell、web、LSP、经 MCP 的知识工具）、派生子智能体，并在五种 Agent 模式（只读 / 工作区编辑 / 完全权限 / 本机全权 / 计划）下执行三态权限模型（Allow/Ask/Deny）。其他子系统：**Harness 工作台**（`/harness` 页面）通过 Agent Client Protocol 驱动第三方 CLI 编码智能体（Claude Code、Codex、OpenCode、Oh My Pi、Gemini CLI、Qwen Code、goose、DSH）并原生渲染其事件流（AIO 自己的工具不参与该链路）、带 Git 集成的项目工作区、MCP 服务器管理（stdio/HTTP 传输、目录、工具审批）、Skills（内置、市场、npx 导入）、LSP 诊断、用量统计、应用自更新，以及完整的 zh-CN/en-US 本地化。用户文档在 `docs/`（镜像：`docs/zh/`、`docs/en/`）；开发指南在 `docs/zh|en/development/`。
+
+**文件分工（多人协作）**：本文件是 [AGENTS.md](AGENTS.md) 的中文镜像，编码标准以英文原版为唯一事实源，两者由同一 PR 同步；[CONTRIBUTING.zh-CN.md](CONTRIBUTING.zh-CN.md) 是流程规范（issue / 分支 / 提交信息 / PR / 发版）；[SECURITY.md](SECURITY.md) 是漏洞报告通道。本文件遵循 [agents.md 开放格式](https://agents.md/)——对仓库内任意文件干活的代理都应先读本文件（多级 AGENTS.md 就近生效）。
+
+## 技术栈与版本
+
+| 层         | 技术                                                                                  | 版本                      |
+| ---------- | ------------------------------------------------------------------------------------- | ------------------------- |
+| 前端       | SolidJS                                                                               | ^1.9.13                   |
+| 路由       | @solidjs/router                                                                       | ^0.16.1                   |
+| 样式       | Tailwind CSS（v4，经 `@tailwindcss/postcss`，无 tailwind.config）                     | ^4.0.0                    |
+| 构建工具   | Vite                                                                                  | ^8.0.16                   |
+| 桌面框架   | Tauri                                                                                 | 2.11.x                    |
+| Tauri 插件 | dialog、opener、updater（fs/shell 已移除——前端零使用，全部文件/命令操作走自有命令层） | 2.x                       |
+| 后端语言   | Rust（固定于 `src-tauri/rust-toolchain.toml`；使用 `cargo +1.97.1`）                  | 1.97.1                    |
+| 数据库     | SQLite（rusqlite）                                                                    | bundled                   |
+| i18n       | @solid-primitives/i18n（locales: zh-CN, en-US）                                       | ^2.2.1                    |
+| 状态管理   | SolidJS Store + Signals                                                               | built-in                  |
+| 模型目录   | @aio/models-data（同级本地包；JSON 作为 tauri resource 打包）                         | `file:../aio-models-data` |
+| 供应商图标 | @lobehub/icons-static-svg                                                             | ^1.91.0                   |
+
+## 目录结构
+
+### 前端（`src/`）
+
+```
+src/
+├── index.tsx            # 应用入口：Router + 懒加载路由 + 启动初始化（projects、MCP、skills、engine scan）
+├── Layout.tsx           # 根布局（含 NavBar）
+├── index.css            # Tailwind v4 CSS + 主题 CSS 变量（亮/暗色）
+├── core/
+│   ├── store/           # 域模块：types/models/chat/engine/project/profiles/ui-prefs/update/harness/stream/layout/task-board/subagent-view/background-tasks（store.ts 仅作 barrel 再导出；接口在 types.ts）；diagnostics.ts
+│   ├── api/             # Tauri 命令封装层（chat/mcp/skills/config/update/engine/project/chat/attachment/lsp/usage/providers/memory/catalog/dialog）+ events.ts（事件名常量，双端守门测试）+ streamPayloads.ts（流事件载荷类型）——组件与 utils 均不得裸 invoke
+│   ├── types/           # 后端镜像类型：mcp.ts、skill.ts
+│   ├── utils/           # modelLogo.ts（供应商图标）、models.ts（ProviderConfig/Catalog 缓存+查询，invoke 已下沉 api/catalog）、mcp.ts、exportConversation.ts——禁止裸 invoke（门禁 layering-utils）
+│   ├── i18n/            # index.ts（t()、locale）+ locales/zh-CN.json + locales/en-US.json
+│   ├── shortcuts.ts     # 键盘快捷键 + slash 命令注册表
+│   ├── agent-prompts.ts # Agent 系统提示词预设
+│   └── assets/
+├── features/
+│   ├── chat/            # ChatPage.tsx + hooks/（chatEventListeners.ts：18 个流监听器在根 Layout 全局注册 + 3 个拖放监听器页面级；chatTurnEffects.ts：回合收尾效果）+ constants.ts + components/（ChatInterface、TopicSidebar、ProjectSidebar、AgentProcessBlock、SubagentBlock、AgentModeSelector、ReasoningButton、TokenBar、TokenStatsBar、ShareModal、ProjectSettingsModal、ProjectSelector、TaskBoardPanel、AgentQuestionBubble 等）
+│   ├── harness/         # HarnessPage.tsx（/harness：CLI 工具图形化兼容层）+ hooks/harnessEventListeners.ts（全局注册）+ components/（HarnessToolSidebar 两级工具/工作区栏、HarnessTopicSidebar、HarnessChatInterface、HarnessMessageList、HarnessApprovalBubble、HarnessAddWorkspaceModal）——复用 chat 叶子组件渲染
+│   └── settings/        # SettingsPage.tsx、ProviderDetailPage.tsx + components/（ProviderList、AppSettings、McpServerList、McpServerDetail、SkillList、SubagentModelSettings、EmbeddingModelSettings、LocalModelMarket、UsageSettings + 用量图表组件）
+└── shared/
+    └── components/      # Icon、Markdown、NavBar、CommandPalette、SlashCommandMenu、Dropdown、Switch、ModelRow、GlobalKeyboardHandler、DiffView、ThinkBlock、UpdateNotification
+```
+
+### 后端（`src-tauri/src/`）
+
+```
+src-tauri/src/
+├── main.rs
+├── lib.rs               # 启动：tracing 初始化、托管状态、invoke 注册、窗口销毁时清理引擎
+├── mcp_fs_server.rs     # 内置 stdio 文件系统 MCP 服务（以 --fs-server 启动）
+├── core/
+│   ├── models/          # 共享数据结构（chat/config/mcp/skill/project/agent/engine 域拆分）
+│   ├── db.rs            # SQLite 初始化（走 core/migrate.rs 版本化迁移）
+│   ├── state.rs         # Tauri 托管状态（StreamManager、DbState、LocalEngineState、SubagentHandles）
+│   ├── config.rs        # AppConfig 持久化（save_app_config/load_app_config；命令层仅存薄包装）
+│   ├── events.rs        # 后端→前端事件名常量注册表（kebab-case 守门测试；新事件须登记）
+│   ├── file_locks.rs    # 多智能体写协调：per-file 互斥锁 + last-writer 追踪 + 跨写者 hashline 门控
+│   ├── fs_util.rs       # 原子写（temp+rename）公共工具——所有 JSON/配置持久化必须走这里
+│   ├── http.rs          # 出站 HTTP 公共约定：默认 User-Agent（reqwest 默认不发 UA → ModelScope CDN 403）与 client_builder 起手式
+│   ├── ids.rs           # 内置 ID 常量（BUILTIN_SERVER_ID / BUILTIN_FS_SERVER_ID）
+│   ├── mcp_trust.rs     # 项目级 .aio/mcp-servers.json 信任存储（指纹键控，仓库之外）
+│   ├── migrate.rs       # 版本化 SQLite 迁移运行器（PRAGMA user_version；chat 库与记忆库共用）
+│   ├── model_registry.rs # 嵌入/重排模型注册表（MANIFEST）与目录解析
+│   ├── path_safety.rs   # IPC 前端路径参数校验（safe_join：拒绝绝对路径/`..`/保留字符）
+│   ├── paths.rs         # 应用数据目录 / 包 ID
+│   ├── permission.rs    # Agent 工具权限模型（各 Agent 模式的允许/拒绝规则）
+│   ├── secure_store.rs  # 系统凭据库支撑的密钥存储（API Key、MCP 服务器密钥）
+│   └── subagent.rs      # 子智能体档案定义（10 个内置，含无工具视觉档）+ 工具规格
+├── commands/
+│   ├── mod.rs
+│   ├── config.rs        # 助手、应用配置、档案模型覆盖、自定义子智能体档案、自动启动、话题分支
+│   ├── llm/             # mod.rs（薄 IPC 包装 + run_agent_turn_inner 主循环）: streaming/agent loop/budget/handoff/messages/subagents/tasks（任务清单 + ask_user）/titles/tool_specs/usage/locked_tools（文件锁接线）；btw.rs: “By The Way” 侧问
+│   ├── engine.rs        # 本地引擎生命周期：启动/停止/状态、引擎扫描、模型列表
+│   ├── attachment.rs    # 聊天附件 + 文件内容抽取命令
+│   ├── provider_config.rs # 供应商配置（LobeHub 形状）、连接测试、模型拉取、API Key 管理
+│   ├── project.rs       # 项目 CRUD、路径校验
+│   ├── git.rs           # Git 分支操作、文件回退
+│   ├── mcp.rs           # MCP 服务器生命周期、工具、资源、提示词、工具审批
+│   ├── mcp_catalog.rs   # MCP 服务器市场目录
+│   ├── skill.rs         # Skills CRUD、市场浏览/下载、npx 导入
+│   ├── lsp.rs           # LSP 服务器生命周期、诊断、自动检测
+│   ├── catalog.rs       # 模型目录（打包 @aio/models-data / models.dev）
+│   ├── local_model_market.rs  # 本地 GGUF 模型市场：HF/ModelScope 搜索合并 + 硬件档案 + HF Token
+│   ├── local_model_download.rs # 本地 GGUF 下载器：多源回退/断点续传/空间预检/目录迁移
+│   ├── embedding.rs     # 嵌入模型：测试 / 列表 / 下载 / 启停 / 目录
+│   ├── rerank.rs        # 重排模型：测试 / 保存 API Key
+│   ├── memory.rs        # 项目记忆命令（memory_*：CRUD/混合检索/统计/开关）
+│   ├── harness.rs       # Harness 工作台命令（harness_*：工具检测/工作区/话题/消息/发送/停止/审批）
+│   ├── export.rs        # 会话导出（Markdown/HTML/PDF 素材）
+│   ├── image_gen.rs     # 图像生成命令
+│   └── update.rs        # 应用更新检查/安装/重启
+├── services/            # 领域服务层（被命令层调用；不得反向依赖 commands）
+│   └── memory/          # 项目级记忆/RAG 服务
+│       ├── mod.rs       # 域入口 + collect_rows_warn（行级错误可见化）+ 迁移/读取拆分（migrate_* 显式写、resolve_* 纯读）
+│       ├── manager.rs   # 每项目 SQLite 连接 LRU 缓存
+│       ├── store/       # 记忆库存储层（mod/search/config/graph/stats）：facts + 版本审计 + FTS5 全文 + 向量打分 + 代码符号索引
+│       ├── code.rs      # 代码库索引与向量检索（async + spawn_blocking）
+│       ├── retrieve.rs  # 检索后处理：二阶段精排（rerank）+ 查询改写 + 多查询 RRF 融合（fail-open）
+│       ├── extract.rs   # LLM 后台事实抽取
+│       ├── judge.rs     # 事实判重/仲裁（余弦相似度阈值）
+│       ├── consolidate.rs # sleep-time 合并整理（每日自动 + 手动）
+│       ├── graph.rs     # 关系图谱抽取
+│       ├── llm.rs       # 记忆管线专用的 LLM 调用薄封装
+│       ├── tools.rs     # Agent 记忆工具（remember/recall/search_memory）
+│       ├── vec0.rs      # SQLite vec0 向量扩展适配
+│       ├── vector.rs    # 向量工具（bytes_to_f32/brute_force_topk）
+│       └── eval.rs      # RAG 评测（数据集 src-tauri/tests/rag_eval）
+├── plugins/
+│   ├── engine/          # LocalEnginePlugin trait + llama_cpp、ollama、vllm、installer
+│   ├── provider/        # ProviderPlugin trait + openai_compat（兜底、注册最后）、anthropic、google、ollama
+│   ├── harness/         # Harness 工作台（CLI 工具兼容层）：model（归一化事件）/adapter（DriverCtx+trait+spawn）/registry（内置 ACP 工具注册表+检测）/acp（ACP JSON-RPC 驱动）/store（harness_* 三表）/manager（会话运行时+审批解析）
+│   ├── llm.rs           # LLM HTTP 客户端（post_chat_completion/chat_text_content 等，命令层已下沉至此）
+│   ├── embed/           # 嵌入 provider 插件（local_onnx + cache）
+│   ├── rerank/          # 重排 provider 插件（local_onnx + openai_compat）
+│   ├── mcp/             # MCP 传输（stdio、http）、连接生命周期、convert（协议转换单实现）、错误类型
+│   └── lsp/             # LSP 客户端、传输、错误类型
+└── utils/
+    ├── file_parser.rs   # 附件内容抽取（PDF、Office、图片、文本）+ 模型路径校验
+    ├── file_tools.rs    # Agent 文件工具
+    ├── git_tools.rs     # Agent git 工具
+    ├── shell_tools.rs   # Agent shell 工具（沙箱化）
+    ├── web_tools.rs     # Agent web 工具
+    ├── lsp_tools.rs     # Agent LSP 工具
+    ├── lsp_agent_tools.rs # Agent 循环的 LSP 工具适配器
+    ├── knowledge.rs     # 项目知识（.aio/knowledge.json）
+    ├── project_map.rs   # 项目结构映射
+    ├── sandbox.rs       # Shell 沙箱（路径白名单/黑名单校验）
+    ├── exec_resolve.rs  # PATH-only 可执行文件解析（全部裸名 spawn 的唯一入口；Windows PATHEXT 顺序归一）+ HiddenConsole（所有子进程隐藏控制台窗口）
+    ├── think.rs         # 推理工具
+    ├── url_validation.rs # SSRF/URL 安全检查
+    ├── token_counter.rs # Token 计数
+    ├── tool_result.rs   # 工具结果统一封装（tool_ok/tool_err/tool_ok_mcp/tool_err_mcp）
+    ├── time.rs          # 时间辅助（now_iso/now_unix_secs/days_from_civil 等）
+    ├── truncate.rs      # 截断辅助（字符/字节头尾截断、truncate_tool_result）
+    ├── diff.rs          # diff 预览（compute_diff_preview/simple_diff，含 char-boundary 安全）
+    ├── jsonrpc.rs       # JSON-RPC pending 请求表（PendingMap；MCP 与 LSP 客户端共用）
+    ├── project_index.rs # 项目索引辅助（projects 文件解析）
+    └── worktree.rs      # 子智能体 worktree 隔离（创建/提交/合并回主分支/冲突中止/过期清理）
+```
+
+## 编码规范
+
+### Rust
+
+- 函数、变量、模块与文件名使用 `snake_case`。
+- 结构体、枚举与 trait 使用 `PascalCase`。
+- 错误处理：命令函数优先 `map_err(|e| e.to_string())?`；面向用户的路径避免 panic。
+- 所有 `#[tauri::command]` 函数必须有描述参数与行为的文档注释。
+- 命令保持薄；业务逻辑下沉到 `plugins/` 或 `utils/`。
+- 新增 Tauri 命令时：
+  1. 在合适的 `commands/*.rs` 中实现。
+  2. 在 `commands/mod.rs` 中导出。
+  3. 在 `lib.rs` 的 `tauri::generate_handler![...]` 中注册。
+
+### Code Comments（注释规范）
+
+- **注释写「为什么」，不写「是什么」**：代码自释的行不需要注释；需要的是决策、约束与坑（安全边界、兼容性约束、平台怪癖、性能权衡）。现有代码里的 `SEC-*`/`MCP-*`/`CHAT-*` 编号引用审查结论的注释是范例。
+- **语言**：注释以英文为先。中文可作为第二语言翻译紧跟在英文之后（下一行或下一段），不得把中文放在英文之前。新增或改动的代码不得引入纯中文注释；存量纯中文注释在改动该处代码时顺带迁移——不要在功能 PR 中批量翻译无关文件。
+- **模块头注释**：每个 `mod.rs`/复杂模块顶部一段说明职责与边界（参照 `core/migrate.rs`、`commands/feedback.rs` 的写法）。
+- **公开项必须文档化**：pub fn / pub struct 写明参数、返回、副作用与错误情形（`///` 文档注释，英文在前；中文翻译可紧随英文段落之后）。面向用户的消息经 `ierr!` 保持双语。
+- **unsafe / 安全敏感代码**（沙箱、路径校验、密钥存储、IPC 边界）：逐段说明不变式与攻击面；禁止裸 `unsafe` 无注释。
+- **不写墓碑注释**（过时的、被注释掉的死代码）：删除即删除，git 记得一切。
+- **临时开关**：调试用的临时代码必须标记 `TODO(<name>)` 或在合入前删除；`TODO` 必须带 issue 号或署名。
+
+### Interface Contract（接口规范：Tauri IPC / 事件 / 插件 trait）
+
+- **命令命名**：`snake_case` 动词开头（`start_local_server`、`export_diagnostic_package`）；域前缀分组（`memory_*`、`harness_*`）。**命令名是对前端的公开 API，一旦发布不得改名**——需要演进时旧名保留为薄包装或废弃标记（`#[deprecated]` 文档注明替代）。
+- **载荷序列化**：Rust 侧统一 `#[serde(rename_all = "camelCase")]`（历史遗留的 snake_case 字段在 TS 侧如实镜像并加注释，见 `AppConfig` 先例）；TS 侧镜像类型放 `core/api/streamPayloads.ts` 或 `core/types/`，**与 Rust 结构体一一对应**。
+- **命令必为 async 或快速返回**：内部有真实 I/O（进程/文件/网络/全系统枚举）的命令一律 `#[tauri::command(async)]` 下沉阻塞池——同步命令在主线程执行，会冻结 UI（0.8.3 后 `get_feedback_snapshot` 即此坑）。评审时对任何新增同步命令默认质疑。
+- **事件契约**：后端→前端事件名 kebab-case，**双端登记**（`core/events.rs` 与 `core/api/events.ts`，守门测试强制）；载荷形状定义在 `streamPayloads.ts` 并注释对应后端结构体。事件是广播——载荷里不得携带敏感数据（密钥、未脱敏路径）。
+- **插件 trait**：`ProviderPlugin` / `LocalEnginePlugin` / harness adapter 等注册顺序即分发顺序（`openai_compat` 恒为兜底、注册最后）；trait 方法变更视为破坏性接口变更，需要 CHANGELOG `BREAKING CHANGE` 标记。
+- **安全边界**：所有接收前端路径参数的命令必须过 `core/path_safety.rs` 的 `safe_join`；返回给前端的错误信息不含本机绝对路径之外的敏感细节。
+
+### SolidJS / TypeScript
+
+- 组件：文件名与导出名使用 `PascalCase`。
+- 信号：`camelCase`，组件内状态用 `createSignal`。
+- Store 更新：使用函数路径语法（`setDatas('assistants', a => a.id === id, 'name', value)`）。
+- 新代码避免 `any`；接口定义在 `core/types/`。
+- 工具函数放 `core/utils/`，禁止在组件间重复实现。
+- **样式统一使用 Tailwind CSS 工具类编写**，避免内联样式或自定义 CSS 文件，除非确有必要。Tailwind v4 无 `tailwind.config`；主题令牌是 `src/index.css` 中的 CSS 变量（`--primary-rgb`、`--surface-bg`、`--text-base-rgb`、`--border-dim` 等），暗色模式由 `isDarkMode` 信号切换，新颜色必须走 CSS 变量，禁止硬编码 `rgba(...)` 字面量。
+- **严禁在代码中使用 Emoji 字符（包括 JSX 文本、模板字符串、配置对象）。一律使用 `<Icon name="..." />` 组件替换。对于字符串上下文（`confirm()`、`alert()`），使用纯文本等价符号（`✓` / `✗` / `[!]`）。**
+- **弹窗（模态）背景统一**：所有模态弹窗的容器必须使用亚克力样式 `background: var(--dialog-bg)` + `backdrop-filter: var(--popup-blur)` + `border: 1px solid var(--border-dim)`（变量定义在 `src/index.css`），遮罩层固定为 `bg-black/25`（遮罩不加模糊）。参照实现：`src/features/chat/components/ProjectSettingsModal.tsx`。
+- **下拉菜单统一**：所有下拉选择一律使用 `src/shared/components/Dropdown.tsx`；设置页/表单行内使用 `variant="ghost"`（透明触发器 + `--border-dim` 边框，参照 `src/features/settings/components/AppSettings.tsx` 的语言选择器），工具栏使用默认 `solid` 变体。禁止原生 `<select>` 元素（`npm run check:gates` 门禁强制执行）。
+- **勾选框统一**：所有勾选框一律使用 `src/shared/components/Checkbox.tsx`（主色描边方块 + check 图标；纯文本标签用 `label` 属性，富文本标签用 children）。禁止原生 `<input type="checkbox">`（`npm run check:gates` 门禁强制执行）。
+- **图标禁用字符代替**：按钮/控件中表达图形语义（关闭叉号、箭头、对勾等）一律使用 `<Icon name="..." />` SVG 图标，禁止用字符代替（如用 `x`/`×`/`✕` 当叉号、`→` 当箭头）；JSX 文本节点中禁止出现独占一个元素内容的 `× ✕ ✓ ✗ → ← ▲ ▼` 等符号字符（门禁强制执行）。仅有的例外是字符串上下文（`confirm()`/`alert()`/日志等纯文本）中的 `✓`/`✗`/`[!]`。图标缺失时在 `src/shared/components/Icon.tsx` 的 `PATHS` 表中新增（工厂函数形式），不得退用字符。
+- **同行元素高度相等**：同一行（同一 flex 行容器）内的按钮/输入框/下拉/标签等控件必须使用相同的高度档位——优先复用 `shared/components/buttonStyles.ts` 中同一档位的常量（行内操作统一 `px-3 py-1.5 text-xs` 档：`btnSecondarySm`/`btnDangerOutline`/`btnSuccessOutline` 等 Sm/Outline 系列），禁止同一行混用不同 padding/字号档位（如 `btnBadge` 的 `px-2 py-1 text-[11px]` 与 `btnDangerOutline` 的 `px-3 py-1.5 text-xs` 并排）；表单行内输入框的圆角与垂直内边距也需与同弹窗的下拉触发器一致（`Dropdown` ghost 变体为 `rounded-lg py-1.5`，输入框用 `rounded-lg` 匹配）。
+- **语义色按钮一律 outline**：带语义颜色的文本操作按钮（确定/保存/创建、删除/停止/关闭、测试连接/启动/批准、存密钥等）只允许 `buttonStyles.ts` 的 Outline 家族——**边框与文字携带语义色**（`border-pri-50`+`text-pri`、`border-danger/50`+`text-danger`、`border-success/50`+`text-success`、`border-warn/50`+`text-warn`），按钮主体保持中性底（`bg-white/[0.06]`，与 secondary 一致，hover 才浮现浅语义色底）。禁止实底语义按钮（`bg-pri` 实色）与色块底（`bg-danger/10`/`bg-green-400/10` 等）；中性操作用 `btnSecondary`/`btnSecondarySm`。发送/停止复合图标控件（输入区主控件）与 tab 选中态不在此规则约束内。
+- **i18n**：所有面向用户的字符串必须通过 `t()`（`core/i18n`）取词；每个 key 必须同时存在于 `locales/zh-CN.json` 与 `locales/en-US.json`，且 `{{placeholder}}` 集合一致（`npm run check:i18n` 强制校验）。禁止在 JSX/模板字符串中硬编码 UI 文案。
+- **子进程必须隐藏控制台**：安装版（release）是 GUI 子系统（`#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]`），进程自身没有控制台；任何 console 子系统子进程（cmd/powershell/git/npx/node/reg/taskkill…）若不带 `CREATE_NO_WINDOW`，Windows 会为它**新建**一个控制台窗口——用户看到终端一闪。调试模式下子进程继承调试控制台，所以只在安装版复现。规则：所有 `std::process::Command` / `tokio::process::Command` 一律链式加 `.hidden_console()`（`utils::exec_resolve::HiddenConsole`，跨平台 no-op）；裸 `CreateProcessW` 路径（`utils/sandbox/win_appcontainer.rs`）需自行带上 `CREATE_NO_WINDOW` 与 `STARTF_USESHOWWINDOW`+`SW_HIDE`。管道化 stdio 并不能阻止控制台分配（`npm run check:gates` 门禁强制执行）。
+- **UI 文案克制**：界面上只放功能性文字（标签、状态、操作结果、错误提示、一句话占位符）。开发/设计阶段的解释性描述——功能介绍、原理说明、使用教程、配置字段的长说明——一律不写入 UI，它们属于 `docs/`。新增 UI 文案时先问：删掉这句话用户会不会用不了这个功能？会才留。操作状态反馈优先用控件自身的状态变化表达（如按钮文字短暂切换为「已取消/已下载」一秒后恢复、列表项消失、布局切换），而不是新增常驻状态文字行；错误信息（含失败原因）除外。
+
+### Naming & Strings
+
+- **禁止在任何地方硬编码引擎名**（如 `"Local-Llama.cpp"`）。使用 `model.engine_type` 或基于 URL 的启发式（`isLocalUrl`）。
+- 前端事件名应描述性且 kebab-case（如 `engine-progress`、`llm-chunk`）。
+
+## 扩展指南
+
+- **新增 API 供应商**：OpenAI-compatible 供应商通常无需 Rust 改动——把供应商与模型元数据加到同级 `aio-models-data` 仓库（经 `@aio/models-data` 消费），在 `core/utils/modelLogo.ts` 加图标映射，并用设置 → 供应商自定义 URL +「测试连接」验证。只有请求/流格式不同（认证头、响应 JSON 形状）的供应商才需要专用插件：在 `src-tauri/src/plugins/provider/` 实现 `ProviderPlugin`，在 `plugins/provider/mod.rs` 的 `ProviderManager::new()` 中于 `openai_compat` **之前**注册（注册顺序即分发顺序；`openai_compat` 必须保持最后作为兜底）。UI 在 `features/settings/ProviderDetailPage.tsx`（共享供应商卡片；引擎卡片复用同一页面）。
+
+- **新增本地推理引擎**：在 `plugins/engine/<id>.rs` 实现 `LocalEnginePlugin`（方法：`name`、`identifier`、`supported_extensions`、`is_platform_supported`、`install_path`、`is_installed`、`start`、`build_command`、`parse_progress_from_log`、`detect_installation`、`default_port`、`progress_event_name`），在 `plugins/engine/mod.rs` 的 `EngineManager::new()` 中注册。引擎二进制**按约定由用户安装**——既不打入应用也不自动下载：`detect_installation` 探测 PATH 与常见安装位置（winget/conda/homebrew/nix），缺失时设置页链接到引擎官方构建。`plugins/engine/installer.rs` 只提供安装目录与检测辅助（无下载路径——除非产品决策改变，否则保持现状）。前端通过 `ActivatedModel` 上的 `engine_type` 与启动时引擎扫描（`scan_installed_engines`）自动识别。
+
+- **新增文件解析器**：在 `utils/file_parser.rs` 的扩展名白名单 match 中加入新扩展（`process_file_content`，若类型是新的还需 `attachment_mime_type`/`validate_attachment_path`），在同一模块内以私有辅助函数实现解析器，把扩展名加入 `src/features/chat/ChatPage.tsx` 的 `ALLOWED_DOC` / `ALLOWED_IMG` 列表（附件选择器），并更新 `docs/zh|en/reference/configuration.md`（附件白名单）。Rust 白名单是信任边界——绝不能只改选择器。
+
+更多扩展路径（MCP 传输、新 Tauri 命令、Agent 工具、权限默认值）与测试指引：见 `docs/zh|en/development/extensions.md` 与 `docs/zh|en/development/architecture.md`。
+
+## 状态管理规则
+
+### 全局状态（`core/store/`）
+
+全局状态拆分为域模块（`store.ts` 仅作 barrel 再导出，外部导入路径不变；接口在 `types.ts`）：
+
+- `chat.ts`：`datas`（助手/话题/消息）+ 应用配置 + MCP 状态 + Skills + 标题重命名
+- `models.ts`：选中模型 / 模型目录 / 供应商配置 / modelKey / isLocalModel
+- `engine.ts`：本地引擎启动 / 进度 / 连接 / 扫描缓存
+- `project.ts` / `profiles.ts` / `ui-prefs.ts` / `update.ts` / `task-board.ts` / `stream.ts` / `layout.ts` / `background-tasks.ts`：各自域
+- `harness.ts`：Harness 工作台（工具检测/工作区/话题/消息/草稿/审批/运行态，选择持久化到 localStorage）
+
+关键信号：`datas`（Store: assistants/activatedModels）、`config`（apiUrl/apiKey）、`selectedModel`、`currentAssistantId`、`currentTopicId`、`projects`/`currentProjectId`（+ `gitBranch`/`gitBranches`）、`mcpServers`/`mcpServerStatus`/`mcpToolsCache`、`skills`、`providerConfigs`、`modelsCatalog*`、`profileModelOverrides`、`customSubagentProfiles`、`engineScanResults`、`appUpdate*`、harness 域信号（`harnessTools`/`harnessWorkspaces`/`harnessTopics`/`harnessMessages`/`harnessDrafts`/`harnessApprovals`/`harnessRunStates`）；UI 偏好（`themeColor`/`isDarkMode`/`reasoningLevel`/`webSearchEnabled`）持久化到 localStorage。
+
+### 后端状态（`core/state.rs` + `lib.rs`）
+
+- `StreamManager`：活动 LLM 流任务，键为 `"{assistant_id}-{topic_id}"`；停止通过 `CancellationToken::cancel()` 让任务优雅退出并发出收尾事件——绝不用 `abort()`。
+- `DbState`：SQLite 连接。
+- `LocalEngineState`：运行中的本地引擎进程，HashMap 以 `engine_type` 键控；`start_local_server` 保证同一时间只有一个活动引擎。
+- `SubagentHandles`：后台子智能体 join 句柄。
+- 以及在 `lib.rs` 注册的管理器：`EngineManager`、`McpServerManager`/`McpServerState`/`McpRequestManager`/`PendingApprovals`、`LspManager`、`FileLockRegistry`（多智能体写协调，见 `core/file_locks.rs`）、`HarnessManager`（harness 会话运行时：子进程 + 命令通道 + 取消令牌 + 审批 oneshot 表；停止两段式=协议取消→taskkill 进程树）。
+
+## 重要兼容性说明
+
+- **命令稳定性**：公开 Tauri 命令名（`start_local_server`、`stop_local_server`、`is_local_server_running`、`call_llm_stream` 等）必须保持稳定，以维持前端兼容。
+- **配置迁移**：`ActivatedModel` 结构支持可选的 `engine_type` 字段。缺少该字段的旧配置可安全反序列化（默认 `None`），逻辑将 `None` 视为遗留 llama.cpp 行为。
+- **事件名**：`engine-progress` 是通用进度事件（所有引擎默认使用）；llama.cpp 插件仍发出 `llama-progress` 以保持向后兼容。其他前端事件：`llm-chunk`、`llm-round-start`、`llm-compression`、`llm-compression-failed`、`subagent-start` / `subagent-step` / `subagent-done` / `subagent-error`、`mcp-server-status`、`mcp-server-stderr`、`app-update-progress`，以及 harness 事件族（`harness-event` / `harness-state` / `harness-approval-requested` / `harness-approval-expired`）。新事件必须 kebab-case。
+
+## 分支与发布流程
+
+多人协作约定（流程细节与提交信息规范见 [CONTRIBUTING.zh-CN.md](CONTRIBUTING.zh-CN.md)）：
+
+- **日常开发**：从最新 `dev` 切出功能分支，命名 `dev-<类型>-<主题>`（如 `dev-feat-memory-panel`；Git 不允许在 `dev` 分支存在时创建 `dev/<功能>` 命名空间，故用连字符）；一个分支只做一件事，改动提交到功能分支。
+- **功能完成**：功能分支 PR 到 `dev`；CI（ci.yml，跑 `npm run verify` 同套基线）全绿 + CODEOWNERS 评审通过后合并，merge 后删除功能分支（本地 + 远端）。外部贡献者走 fork PR。
+- **发布版本**：决定发版时 `dev` PR 到 `master` 并 merge；`dev` 分支保留不动。随后 bump 版本（CHANGELOG + 三处版本号）、打 `vX.Y.Z` tag 推送触发 `release.yml`。
+- **master** 仅包含已发布版本内容；长期存在的分支只有 `dev` 与 `master`；任何分支不得 force-push 这两条长期分支。
+- **预发布版本**：tag 形如 `v1.0.0-alpha`（带连字符即预发布）——release.yml 按版本号自动将 GitHub Release 标记为 prerelease（`releases/latest` 保持指向稳定版，稳定用户不会被推 alpha），alpha 测试者从该 Release 页面手动下载。
+- **本地 exe 重建（快速验收用，不走安装包）**：`cargo +1.97.1 build --release --manifest-path src-tauri/Cargo.toml --features tauri/custom-protocol` —— **`--features tauri/custom-protocol` 不可省略**：Tauri 2 的 `generate_context!` 靠它区分 dev/prod（无此特性时上下文按 dev 烘焙：不嵌入 dist、webview 加载 devUrl，裸 cargo 构建出的 exe 打开即“localhost 拒绝连接”——`tauri dev` 与 CI 的 `tauri build` 各自隐式处理，唯独裸 cargo 不会）。窗口是否可用必须以 webview 内容为准（CDP 截图或 PrintWindow），不能只看进程 responding。
+
+## 构建与开发命令
+
+```bash
+# 安装锁定依赖
+npm ci
+
+# 开发模式（前端 + Tauri）
+npm run tauri dev
+
+# 生产构建
+npm run tauri build
+
+# 格式化（prettier + cargo fmt）
+npm run format
+
+# 前端与 Rust 完整质量基线：
+#   check:frontend = check:i18n（语言键位一致）+ check:docs（Markdown 链接）+ check:gates（架构/样式门禁）+ prettier --check + eslint --max-warnings 0 + tsc --noEmit + vite build
+#   check:rust     = cargo fmt --check + clippy --all-targets -D warnings + cargo test
+npm run verify
+```
+
+## 代理评审检查单
+
+提交改动前确认：
+
+- [ ] 新的 Rust 模块在父 `mod.rs` 中声明。
+- [ ] 新的 Tauri 命令在 `lib.rs` 中注册。
+- [ ] 逻辑中没有硬编码引擎/供应商名；使用常量、`engine_type` 字段或 `core/utils/modelLogo.ts` 映射。
+- [ ] `npm run verify` 无警告、无错误通过。
+- [ ] 新 UI 文案已 i18n：`locales/zh-CN.json` 与 `locales/en-US.json` 两侧都有键，`{{placeholders}}` 一致。
+- [ ] 没有硬编码颜色字面量；主题色走 `src/index.css` 的 CSS 变量。
+- [ ] 新后端→前端事件名在 `src-tauri/src/core/events.rs` 与 `src/core/api/events.ts` 两端登记（kebab-case）。
+- [ ] 新 Tauri 命令：前端经 `core/api/<域>.ts` 封装调用，组件不得裸 `invoke`。
+- [ ] `npm run check:gates` 全过（裸中文 JSX / 颜色 / any 闸门 / 分层 / 文件规模 / 命令注册 / 子进程隐藏控制台）。
+- [ ] 含 I/O 的命令为 async（阻塞池）；新命令文档注释含参数说明（见 Interface Contract）。
+- [ ] 新增或改动的注释英文在前（中文可作为第二语言紧随其后）；不得新增纯中文注释。
+- [ ] 提交信息使用英文 subject 与正文；中文翻译可选，放在英文正文之后。
+- [ ] 文档改动双侧同步（`docs/zh/` 与 `docs/en/`），链接过 `check:docs`。
+
+## Agent 协作守则（AI 代理辅助开发规范）
+
+本仓库欢迎 AI 代理参与开发，且大量工作本就由代理完成。代理与人遵守同一套标准（编码规范即本文件，流程规范即 CONTRIBUTING.zh-CN.md），额外红线：
+
+- **验证诚实（最重要）**：「已验证 / 全绿 / 测试通过」的声明必须伴随实际执行的命令与真实结果输出。未运行的测试不得声称通过；无法在本机执行的部分（如平台专属测试）要如实说明并标注留给 CI。
+- **不越门禁**：不放宽 `check-gates.mjs` 阈值、不 `--no-verify`、不为让校验通过而特化代码或跳过用例；门禁调整是独立 PR 且需要维护者批准。
+- **先读后说**：对不确定的行为/接口先读源码与文档再下结论；引用规范时给出来源文件与章节，不凭记忆转述。
+- **最小改动**：只做任务要求的事——不顺手重构、不批量格式化无关文件、不改无关依赖版本；发现相邻问题记录 issue 而不是顺手修。
+- **走 PR**：代理产物一律走 PR 流程（模板、CI、评审），不直接推 `dev`/`master`；提交信息遵守 Conventional Commits，不伪装人工成果，也不虚构评审状态。
+- **机密卫生**：不提交密钥/令牌/个人数据；日志与截图脱敏；示例与会话数据用虚构内容（仓库历史上有过真实数据混入截图的事故，重拍成本很高）。
+- **遇阻即报**：卡住、被环境拒绝、或发现需求与规范冲突时，停下来报告并给出证据，不要静默绕过或降低完成标准。
+
+### 多代理并发写作协调
+
+多个代理（或代理与人）同时改仓库时：改同一文件前先 `git pull`；`core/file_locks.rs` 是产品内的运行时文件锁（与 git 写作协调无关）；git 层面的冲突靠「小 PR + 单一主题分支」消解——大范围重构先开 issue 对齐方案再动手。

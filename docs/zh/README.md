@@ -23,7 +23,7 @@
 - [配置参考](reference/configuration.md)：配置文件、数据库、附件格式和安全边界。
 - [故障排查](troubleshooting.md)：连接、引擎、MCP、权限与构建问题。
 - [反馈与社区](../../README.zh-CN.md)：Issue Forms、Discussions、应用内反馈与 QQ 中文交流群（1130943633）。
-- [贡献指南](../../CONTRIBUTING.md)：issue / 分支 / 提交 / PR 流程规范。
+- [贡献指南](../../CONTRIBUTING.zh-CN.md)：issue / 分支 / 提交 / PR 流程规范。
 - [变更日志](../../CHANGELOG.md)
 
 > [!IMPORTANT]

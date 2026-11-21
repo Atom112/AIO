@@ -96,8 +96,33 @@ Oh My Pi / OpenCode / goose / DSH 使用各自的登录或配置体系（无 API
 ### 停止与恢复
 
 - 运行中可点状态栏或输入区的「停止」：先走协议级取消，超时后强制结束进程树。
-- 每个 CLI 工具维护自己的会话；AIO 记录其会话 ID。停止后再次发送会自动恢复原会话（工具支持恢复时）；应用重启后同样如此。个别工具不支持恢复时，重启后首轮会开新会话，AIO 内的历史记录仍然可见。
-- 斜杠命令按所选工具自身的命令体系原样透传。个别工具的交互式命令在无头模式下可能无响应，此时用「停止」结束即可。
+- 每个 CLI 工具维护自己的会话；AIO 记录其会话 ID。停止后再次发送会自动恢复原会话（工具支持恢复时）；应用重启后同样如此。若工具支持 `session/load` 且 AIO 本地尚无该话题的显示记录（或恢复失败），AIO 会重放工具自己的会话记录作为显示历史——此时以工具的记录为准，AIO 的旧显示行会被替换而不是重复追加。
+- 斜杠命令按所选工具自身的命令体系原样透传：工具通过协议上报的命令（ACP `available_commands_update`、Claude Code 原生 `system/init.slash_commands`）会出现在输入框的 `/` 菜单中，选中后填入 `/命令名`，随下一条消息发送给工具执行。工具的交互式/终端专用命令不会上报，无头模式下也可能无响应，此时用「停止」结束即可。
+- 子智能体：AIO 声明 ACP 子智能体会话能力（`clientCapabilities.subagents`）。支持该标准的适配器（Claude Code ACP、Codex ACP 等）会把每个子智能体作为独立子会话上报，AIO 渲染为可展开的子智能体卡片；此外 Oh My Pi 的 `task` / `wait` 工具结构化输出、Codex 原生 `collab_tool_call`、Claude Code 原生 Task/Agent 帧、Qwen Code 的 `_meta.parentToolCallId` 标记也都会转为同一套卡片。工具完全不上报子智能体时，只能看到其普通工具调用——AIO 不会伪造工具未提供的数据。
+
+### 导入工具已有的会话
+
+右侧话题栏的「导入已有会话」按工具类型工作：
+
+- **ACP 工具**：调用 `session/list` 列出该工作区下工具自己保存的会话（标题/更新时间/消息数）；选择后创建 AIO 话题并绑定会话 ID，连接时用 `session/load` 重放完整记录。需要工具同时声明 `sessionCapabilities.list` 与 `session/load`（Oh My Pi、OpenCode 已验证；只有列表、不能重放历史的 DSH 不提供导入）。
+- **Claude Code / Codex 原生**：读取各自本地会话目录（Claude `~/.claude/projects`、Codex `~/.codex/sessions`）列出当前工作区的会话，导入时把用户/助手文本回放为显示历史，之后由原生 `--resume` / `exec resume` 恢复完整上下文（原生转录只解析文本轮次，工具调用卡片不重建）。
+
+已导入的会话会标记为「已导入」，重复选择返回原话题。
+
+### 各工具能力边界（实测 / 协议能力）
+
+| 工具                    | 会话历史                                                             | 斜杠命令                           | 子智能体                                               |
+| ----------------------- | -------------------------------------------------------------------- | ---------------------------------- | ------------------------------------------------------ |
+| Oh My Pi                | `session/load` 重放（实测）                                          | 上报 109 条（实测）                | `task` / `wait` 结构化进度（实测）                     |
+| Claude Code（原生）     | 本地转录导入 + `--resume`                                            | `system/init.slash_commands`       | Task/Agent 帧 + `parent_tool_use_id`                   |
+| Claude Code（ACP 回退） | ACP `session/load`                                                   | ACP `available_commands_update`    | ACP 子智能体 RFD                                       |
+| Codex（原生 exec）      | 本地 rollout 导入 + `codex exec resume`                              | 无（exec 无命令面）                | `collab_tool_call`（multi_agent）                      |
+| Codex（ACP 回退）       | ACP 能力                                                             | ACP 能力                           | ACP 子智能体 RFD                                       |
+| OpenCode                | `session/list` + `session/load`（1.19 实测）                         | 工具上报命令（实测上报）           | 工具上报 RFD / 结构化输出时显示                        |
+| Gemini CLI              | `session/load`（0.66 实测）；未声明 `session/list`，不能导入既有会话 | 工具上报命令时显示                 | 工具上报时显示                                         |
+| goose / Qwen Code       | 按各自 ACP 上报（未本机实测）                                        | 按各自上报                         | Qwen 额外识别 `_meta.parentToolCallId`（若该版本上报） |
+| DSH                     | `session/list` + `session/resume`，未声明 `loadSession`，不能导入    | 当前未上报                         | 当前未上报                                             |
+| 自定义 ACP 工具         | 取决于该工具声明的 ACP 能力                                          | 取决于 `available_commands_update` | 取决于 RFD / 结构化工具输出                            |
 
 ## 工具设置页（设置 → CLI 工具）
 

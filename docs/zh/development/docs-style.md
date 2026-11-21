@@ -4,22 +4,24 @@
 
 ## 文档体系与分工
 
-| 文件                            | 受众             | 内容边界                                                                |
-| ------------------------------- | ---------------- | ----------------------------------------------------------------------- |
-| `README.md` / `README.zh-CN.md` | 所有访客         | 项目定位、特性概览、快速开始、文档导航、反馈社区；不放开发细节          |
-| `CONTRIBUTING.md`（双语）       | 贡献者           | 流程规范：issue / 分支 / 提交 / PR / 发版                               |
-| `AGENTS.md`                     | 贡献者与 AI 代理 | 编码规范唯一事实源：风格、注释、接口、门禁                              |
-| `docs/zh                        | en/usage/`       | 最终用户                                                                | 按功能域组织的使用指南（快速开始、对话与 Agent、Harness、MCP…） |
-| `docs/zh                        | en/development/` | 开发者                                                                  | 开发环境、架构、扩展指南、本规范                                |
-| `docs/zh                        | en/reference/`   | 二者之间                                                                | 配置参考、权限模型等查询型材料                                  |
-| `CHANGELOG.md`                  | 所有用户         | 面向用户的版本变化记录（Keep a Changelog 精神：按版本、讲人话、给链接） |
+| 文件                                        | 受众             | 内容边界                                                                |
+| ------------------------------------------- | ---------------- | ----------------------------------------------------------------------- |
+| `README.md` / `README.zh-CN.md`             | 所有访客         | 项目定位、特性概览、快速开始、文档导航、反馈社区；不放开发细节          |
+| `CONTRIBUTING.md` / `CONTRIBUTING.zh-CN.md` | 贡献者           | 流程规范：issue / 分支 / 提交 / PR / 发版（英文主文档；中文镜像）       |
+| `AGENTS.md` / `AGENTS.zh-CN.md`             | 贡献者与 AI 代理 | 编码规范唯一事实源：风格、注释、接口、门禁（英文主文档；中文镜像）      |
+| `docs/zh \| en/usage/`                      | 最终用户         | 按功能域组织的使用指南（快速开始、对话与 Agent、Harness、MCP…）         |
+| `docs/zh \| en/development/`                | 开发者           | 开发环境、架构、扩展指南、本规范                                        |
+| `docs/zh \| en/reference/`                  | 二者之间         | 配置参考、权限模型等查询型材料                                          |
+| `CHANGELOG.md`                              | 所有用户         | 面向用户的版本变化记录（Keep a Changelog 精神：按版本、讲人话、给链接） |
 
 ## 双语镜像规则
 
+- **英文优先**：`README.md`、`CONTRIBUTING.md`、`AGENTS.md`、`SECURITY.md` 与 `docs/en/` 一律英文主写；根目录 `*.zh-CN.md` 与 `docs/zh/` 是完整的中文第二语言镜像。
 - `docs/zh/` 与 `docs/en/` **逐文件对应**：一侧新增/改名/删除文档，另一侧在同一 PR 内同步。
 - 实质内容变更必须双侧同步；纯笔误修复也建议双侧一起改。
+- 单文件同时承载两种语言时（如 `SECURITY.md`、PR 模板、issue 表单），英文在前，中文在后。
 - 英文侧不是机器直译：术语、语气按英文技术文档习惯写（参考现有 `docs/en/` 的行文），但**事实、结构、链接目标必须与中文侧一致**。
-- README 双语与 CONTRIBUTING 双语遵循同样的对应规则。
+- README、CONTRIBUTING 与 AGENTS 的双语配对遵循同样的对应规则。
 - 校验：`npm run check:docs` 会遍历两侧所有 Markdown 链接（含锚点）——它是同步的最低保障，不是全部；结构性改动需人工对照。
 
 ## 写作规范
@@ -45,6 +47,6 @@
 
 ## 与其他规范的关系
 
-- 编码风格（代码内注释、接口文档注释）见 [AGENTS.md](../../../AGENTS.md) 的「Code Comments」与「Interface Contract」。
-- 提交与 PR 流程（含文档 PR）见 [CONTRIBUTING.md](../../../CONTRIBUTING.md)。
+- 编码风格（代码内注释、接口文档注释）见 [AGENTS.zh-CN.md](../../../AGENTS.zh-CN.md)（英文原版 [AGENTS.md](../../../AGENTS.md)）的「Code Comments」与「Interface Contract」。
+- 提交与 PR 流程（含文档 PR）见 [CONTRIBUTING.zh-CN.md](../../../CONTRIBUTING.zh-CN.md)（英文原版 [CONTRIBUTING.md](../../../CONTRIBUTING.md)）。
 - 本文档自身修订同样走 PR + 双侧同步。

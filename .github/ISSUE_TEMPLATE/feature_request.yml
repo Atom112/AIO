@@ -1,33 +1,35 @@
-name: ✨ 功能建议
-description: 提出一个新功能或对现有行为的改进建议
+name: ✨ Feature request | 功能建议
+description: Propose a new feature or an improvement to existing behavior | 提出一个新功能或对现有行为的改进建议
 title: '[feat] '
 labels: ['enhancement']
 body:
   - type: markdown
     attributes:
       value: |
+        Please discuss the idea in the Discussions "Ideas" category first — enough 👍 votes raise its priority. If you file an issue directly, describe the problem before the solution.
+
         建议先在 Discussions 的「功能想法」分类发帖讨论——收集到足够 👍 后再开 Issue，优先级更高。
   - type: textarea
     id: problem
     attributes:
-      label: 你遇到的问题 / 场景
-      description: 你想解决什么？先说问题，再说方案
-      placeholder: 当我…的时候，不得不…
+      label: Problem / scenario | 你遇到的问题 / 场景
+      description: What are you trying to solve? Describe the problem before the solution | 你想解决什么？先说问题，再说方案
+      placeholder: 'When I ... I have to ... | 当我…的时候，不得不…'
     validations:
       required: true
   - type: textarea
     id: solution
     attributes:
-      label: 期望的解决方案
-      description: 你希望 AIO 怎么做？（如果你只是想报告问题，方案可以留空）
-      placeholder: 我希望…
+      label: Proposed solution | 期望的解决方案
+      description: What should AIO do? (Leave blank if you are only reporting the problem.) | 你希望 AIO 怎么做？（如果只是想报告问题，方案可以留空）
+      placeholder: 'I would like ... | 我希望…'
     validations:
       required: false
   - type: textarea
     id: alternatives
     attributes:
-      label: 替代方案 / 现有做法
-      description: 你现在怎么绕过这个问题？其他工具（如 Claude Code CLI / Codex CLI 等）是怎么做的？
-      placeholder: 可选
+      label: Alternatives / current workaround | 替代方案 / 现有做法
+      description: How do you work around it today? How do other tools (Claude Code CLI / Codex CLI, etc.) handle it? | 你现在怎么绕过这个问题？其他工具（如 Claude Code CLI / Codex CLI 等）是怎么做的？
+      placeholder: Optional | 可选
     validations:
       required: false

@@ -96,8 +96,33 @@ Each CLI tool reads a convention instruction file at the workspace root. Hover a
 ### Stop and resume
 
 - While running, "Stop" (status bar or input area) issues a protocol-level cancel, escalating to a hard process-tree kill after a grace window.
-- Each CLI tool keeps its own session; AIO records its session id. Sending again after a stop resumes the same session (when the tool supports resume); the same applies across app restarts. Tools without resume start a fresh session on the next turn — AIO's local history remains visible either way.
-- Slash commands pass through verbatim to the tool's own command system. Some tools' interactive commands may hang in headless mode — use "Stop" when that happens.
+- Each CLI tool keeps its own session; AIO records its session id. Sending again after a stop resumes the same session (when the tool supports resume); the same applies across app restarts. When the tool supports `session/load` and AIO has no local display copy yet (or resume fails), AIO replays the tool's own transcript as the display history — the tool's record is authoritative and replaces AIO's stale rows instead of appending duplicates.
+- Slash commands pass through verbatim to the tool's own command system: commands the tool advertises over the protocol (ACP `available_commands_update`, Claude Code native `system/init.slash_commands`) appear in the input's `/` menu; selecting one fills `/name`, which is sent as the next prompt for the tool to execute. Interactive/terminal-only commands are not advertised and may hang in headless mode — use "Stop" when that happens.
+- Subagents: AIO advertises the ACP subagent-session capability (`clientCapabilities.subagents`). Adapters that implement the standard (Claude Code ACP, Codex ACP, ...) report each subagent as its own child session, which AIO renders as an expandable subagent card. Oh My Pi's structured `task` / `wait` output, Codex native `collab_tool_call`, Claude Code native Task/Agent frames and Qwen Code's `_meta.parentToolCallId` tags map to the same cards. Tools that report no subagent data show only their ordinary tool calls — AIO never invents data the tool did not provide.
+
+### Import an existing tool session
+
+The topic sidebar's "Import session" works by adapter family:
+
+- **ACP tools**: calls `session/list` to list the sessions the tool stored for this workspace (title / updated time / message count); selecting one creates an AIO topic bound to that session id, and the next connect replays it via `session/load`. Requires both `sessionCapabilities.list` and `session/load` (Oh My Pi and OpenCode verified; DSH, which can list but cannot replay history, does not offer import).
+- **Native Claude Code / Codex**: reads the CLI's own local session store (`~/.claude/projects`, `~/.codex/sessions`), lists sessions for the workspace, and seeds the display history from the user/assistant text turns; the native `--resume` / `exec resume` then restores the full context (native transcripts are text-only here — tool-call cards are not rebuilt).
+
+Already-imported sessions are marked "Imported" and re-selecting returns the existing topic.
+
+### Per-tool capability matrix (verified / protocol capabilities)
+
+| Tool                       | Session history                                                                            | Slash commands                     | Subagents                                                          |
+| -------------------------- | ------------------------------------------------------------------------------------------ | ---------------------------------- | ------------------------------------------------------------------ |
+| Oh My Pi                   | `session/load` replay (verified)                                                           | 109 commands advertised (verified) | `task` / `wait` structured progress (verified)                     |
+| Claude Code (native)       | local transcript import + `--resume`                                                       | `system/init.slash_commands`       | Task/Agent frames + `parent_tool_use_id`                           |
+| Claude Code (ACP fallback) | ACP `session/load`                                                                         | ACP `available_commands_update`    | ACP subagent RFD                                                   |
+| Codex (native exec)        | local rollout import + `codex exec resume`                                                 | none (exec has no command surface) | `collab_tool_call` (multi_agent)                                   |
+| Codex (ACP fallback)       | ACP capabilities                                                                           | ACP capabilities                   | ACP subagent RFD                                                   |
+| OpenCode                   | `session/list` + `session/load` (1.19 verified)                                            | commands advertised (verified)     | when the tool reports RFD or structured tool output                |
+| Gemini CLI                 | `session/load` (0.66 verified); no `session/list`, so existing sessions cannot be imported | when the tool advertises commands  | when the tool reports it                                           |
+| goose / Qwen Code          | per each tool's ACP advertisement (not tested locally)                                     | per each tool's advertisement      | Qwen also maps `_meta.parentToolCallId` when that build reports it |
+| DSH                        | `session/list` + `session/resume`, no `loadSession`; import unavailable                    | not advertised today               | not advertised today                                               |
+| Custom ACP tool            | per the tool's declared ACP capabilities                                                   | per `available_commands_update`    | per RFD / structured tool output                                   |
 
 ## Tool settings pages (Settings → CLI tools)
 

@@ -28,6 +28,7 @@ AIO 的权限系统基于三态决策模型：
 ### Chat 模式（Off）
 
 - 拒绝所有工具调用（`*` → Deny）
+- 电脑控制工具不注入工具集（只读模式无桌面操作能力）
 
 ### Normal 模式（普通）
 
@@ -36,6 +37,8 @@ AIO 的权限系统基于三态决策模型：
 - 写操作（`write_file`、`replace_in_file`、`make_directory`）→ Ask
 - Git 写操作（`git_add`、`git_commit`）→ Ask
 - 删除操作（`delete_file`）→ Ask
+- 电脑控制快照（`computer_snapshot`，只读）→ Allow
+- 电脑控制动作（`computer_action`）→ Ask（逐次确认；它**不受项目沙箱约束**，直接操作当前桌面）
 - 其他工具 → Ask
 
 ### 完全权限 / 本机全权模式（Auto / Danger）
@@ -46,6 +49,7 @@ AIO 的权限系统基于三态决策模型：
 - Git 操作（全部）→ Allow
 - 命令执行（`execute_command`）→ Allow
 - 删除操作（`delete_file`）→ Allow（与 `execute_command` 对齐：命令本就能 `del`/`rm`，且删除被沙箱限定在项目内；Normal 模式保持逐次确认）
+- 电脑控制（`computer_snapshot`、`computer_action`）→ Allow（桌面动作同样不受项目沙箱约束，与命令执行的完全自治语义一致）
 - 其他工具 → Allow
 
 两档的差异不在权限规则，而在**命令是否运行在 OS 沙箱内**：完全权限（Auto）保留 AppContainer/bwrap/SBPL 沙箱；本机全权（Danger）命令完全脱离沙箱、以完整用户权限原生执行（进入时弹独立的红色风险警告）。

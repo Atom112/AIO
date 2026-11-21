@@ -4,22 +4,24 @@ This guide governs writing and maintaining everything under `docs/` plus the REA
 
 ## Document System and Boundaries
 
-| File                            | Audience                   | Scope                                                                                          |
-| ------------------------------- | -------------------------- | ---------------------------------------------------------------------------------------------- |
-| `README.md` / `README.zh-CN.md` | All visitors               | Project pitch, feature overview, quick start, doc navigation, community; no dev internals      |
-| `CONTRIBUTING.md` (bilingual)   | Contributors               | Process rules: issues / branches / commits / PRs / releases                                    |
-| `AGENTS.md`                     | Contributors and AI agents | Single source of truth for coding standards: style, comments, interfaces, gates                |
-| `docs/zh                        | en/usage/`                 | End users                                                                                      | Feature-oriented user guides (getting started, chat & agent, harness, MCP, ...) |
-| `docs/zh                        | en/development/`           | Developers                                                                                     | Dev environment, architecture, extension guides, this style guide               |
-| `docs/zh                        | en/reference/`             | In between                                                                                     | Lookup material: configuration reference, permission model                      |
-| `CHANGELOG.md`                  | All users                  | User-facing version history (Keep a Changelog spirit: per version, human-readable, with links) |
+| File                                        | Audience                   | Scope                                                                                                             |
+| ------------------------------------------- | -------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `README.md` / `README.zh-CN.md`             | All visitors               | Project pitch, feature overview, quick start, doc navigation, community; no dev internals                         |
+| `CONTRIBUTING.md` / `CONTRIBUTING.zh-CN.md` | Contributors               | Process rules: issues / branches / commits / PRs / releases (English primary; Chinese mirror)                     |
+| `AGENTS.md` / `AGENTS.zh-CN.md`             | Contributors and AI agents | Single source of truth for coding standards: style, comments, interfaces, gates (English primary; Chinese mirror) |
+| `docs/zh \| en/usage/`                      | End users                  | Feature-oriented user guides (getting started, chat & agent, harness, MCP, ...)                                   |
+| `docs/zh \| en/development/`                | Developers                 | Dev environment, architecture, extension guides, this style guide                                                 |
+| `docs/zh \| en/reference/`                  | In between                 | Lookup material: configuration reference, permission model                                                        |
+| `CHANGELOG.md`                              | All users                  | User-facing version history (Keep a Changelog spirit: per version, human-readable, with links)                    |
 
 ## Bilingual Mirror Rules
 
+- **English is the primary language**: `README.md`, `CONTRIBUTING.md`, `AGENTS.md`, `SECURITY.md`, and `docs/en/` are written in English first. The `*.zh-CN.md` root files and `docs/zh/` are complete second-language mirrors.
 - `docs/zh/` and `docs/en/` mirror **file by file**: adding, renaming, or deleting a document happens on both sides in the same PR.
 - Substantive content changes must be mirrored; even typo fixes are best done on both sides.
+- When a single file carries both languages (e.g. `SECURITY.md`, the PR template, and issue forms), English comes first and Chinese follows.
 - The English side is not machine translation: terminology and tone follow English technical writing conventions (see existing `docs/en/` prose), but **facts, structure, and link targets must match the Chinese side**.
-- The bilingual READMEs and CONTRIBUTINGs follow the same pairing rules.
+- The bilingual READMEs, CONTRIBUTINGs, and AGENTS guides follow the same pairing rules.
 - Verification: `npm run check:docs` walks all Markdown links (including anchors) on both sides — it is the floor for sync compliance, not the ceiling; structural changes still need human cross-checking.
 
 ## Writing Rules

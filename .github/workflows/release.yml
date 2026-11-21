@@ -81,7 +81,9 @@ jobs:
             libappindicator3-dev \
             librsvg2-dev \
             patchelf \
-            rpm
+            rpm \
+            libxcb1-dev libxcb-randr0-dev libxrandr-dev libdbus-1-dev \
+            libpipewire-0.3-dev libwayland-dev libegl1-mesa-dev clang libclang-dev pkg-config
 
       - name: Install frontend dependencies
         run: npm ci

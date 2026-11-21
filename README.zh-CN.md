@@ -162,11 +162,12 @@ cargo check
 
 ## 🤝 贡献 | Contributing
 
-欢迎参与开发！流程规范（issue / 分支 / 提交 / PR）见[贡献指南](CONTRIBUTING.md)，编码规范见 [AGENTS.md](AGENTS.md)——人类与 AI 代理同一套标准。安全漏洞请按 [SECURITY.md](SECURITY.md) 私密报告。
+欢迎参与开发！流程规范（issue / 分支 / 提交 / PR）见[贡献指南](CONTRIBUTING.zh-CN.md)，编码规范见 [AGENTS.zh-CN.md](AGENTS.zh-CN.md)——人类与 AI 代理同一套标准。安全漏洞请按 [SECURITY.md](SECURITY.md) 私密报告。
 
+- **英文为第一语言**：代码注释、提交信息、PR 与贡献者文档一律英文优先；中文镜像见 `README.zh-CN.md`、`CONTRIBUTING.zh-CN.md`、`AGENTS.zh-CN.md` 与 `docs/zh/`；
 - Pull Request 提交前请运行 `npm run verify` 与相关测试；
 - 文档为双语镜像（`docs/zh/` 与 `docs/en/`），行为变更需双侧同步；
-- 提交信息遵循 Conventional Commits。
+- 提交信息遵循 Conventional Commits，subject 使用英文；中文翻译可选，放在英文正文之后。
 
 ---
 

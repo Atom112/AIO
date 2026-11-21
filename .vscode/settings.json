@@ -9,7 +9,7 @@
     "*.cce": "cpp",
     "*.asc": "cpp"
   },
-  "ascendCToolkit.internal.settingsVersion": "1.5.5",
+  "ascendCToolkit.internal.settingsVersion": "1.5.7",
   "ascendCToolkit.compileAndDeploy.buildConfig.operatorNameToCompile": "AIO",
   "ascendCToolkit.compileAndDeploy.buildConfig.deployCommandOrRunCommand": "d:\\base\\AIO\\build_out\\*.run",
   "ascendCToolkit.compileAndDeploy.buildConfig.compileCommand": "bash d:\\base\\AIO\\build.sh --pkg --soc={soc_version} --vendor_name=custom --ops={operatorNames}",

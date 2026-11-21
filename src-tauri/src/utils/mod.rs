@@ -14,6 +14,7 @@
 //! Conventions: tool results always use `tool_result`'s constructors; truncation goes through `truncate`; time/date uses `time`.
 //! `knowledge` is a read-only legacy module (superseded by project-level RAG); no new dependencies on it.
 
+pub mod computer;
 pub mod diff;
 pub mod exec_resolve;
 pub mod file_parser;

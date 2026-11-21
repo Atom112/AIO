@@ -17,15 +17,10 @@ import { formatDateTime, t } from '../../../core/i18n';
 import { searchChatHistory, type ChatSearchMatch } from '../utils/searchHistory';
 
 interface TopicSidebarProps {
-  width: number;
-  onResize: (e: MouseEvent) => void;
   currentAssistant: Assistant | undefined;
   editingTopicId: string | null;
   setEditingTopicId: (id: string | null) => void;
   addTopic: () => void;
-  isCollapsed: boolean;
-  onToggle: (e: MouseEvent) => void;
-  isResizing: boolean;
   /** Opens the export dialog for the given topic */
   onExportTopic: (topicId: string) => void;
 }
@@ -268,412 +263,365 @@ const TopicSidebar: Component<TopicSidebarProps> = (props) => {
   };
 
   return (
-    <div
-      class="relative flex flex-col flex-shrink-0 min-w-0 z-10"
-      style={{
-        width: props.isCollapsed ? '0%' : `${props.width}%`,
-        padding: props.isCollapsed ? '0' : '15px',
-        transition: props.isResizing ? 'none' : 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
-      }}
-      onContextMenu={(e) => e.preventDefault()}
-    >
-      {/* Faint divider between the three columns: sits on the panel edge (+/-0.5px), centered exactly with the resize handle below; hidden when collapsed */}
-      <Show when={!props.isCollapsed}>
-        <span
-          aria-hidden="true"
-          class="absolute top-0 bottom-0 w-px pointer-events-none"
-          style={{ left: '-0.5px', background: 'rgba(var(--text-base-rgb),0.12)' }}
-        />
-      </Show>
-
-      {/* Resize handle (left): 6px grab strip centered on the panel edge (concentric with the divider line) */}
-      <div
-        class="absolute top-0 bottom-0 left-[-3px] w-[6px] flex items-center justify-center cursor-ew-resize z-[1000] group"
-        onMouseDown={(e) => props.onResize(e as MouseEvent)}
-      >
-        <div
-          class="absolute z-[1001] w-[10px] h-12 rounded-[20px] backdrop-blur-md cursor-pointer flex items-center justify-center text-xs font-bold transition-all duration-200 opacity-0 group-hover:opacity-100 hover:scale-110"
-          style={{
-            background: 'rgba(var(--text-base-rgb),0.08)',
-            color: 'rgba(var(--text-base-rgb),0.6)',
-            'box-shadow': '0 2px 8px rgba(0,0,0,0.3)',
-          }}
-          title={props.isCollapsed ? t('chat.expandTopics') : t('chat.collapseTopics')}
-          onClick={(e) => {
-            e.stopPropagation();
-            props.onToggle(e);
-          }}
-        >
-          <Icon name={props.isCollapsed ? 'chevron-left' : 'chevron-right'} size={10} />
-        </div>
-      </div>
-
-      <div
-        class="h-full w-full overflow-hidden hover:overflow-y-auto transition-opacity duration-300"
-        classList={{ 'opacity-0 pointer-events-none overflow-hidden': props.isCollapsed }}
-      >
-        <Show when={props.currentAssistant}>
-          {(asst) => (
-            <div class="flex flex-col h-full">
-              {/* Chat history search: scoped to the current assistant (per-project
+    <>
+      <Show when={props.currentAssistant}>
+        {(asst) => (
+          <div class="flex flex-col h-full">
+            {/* Chat history search: scoped to the current assistant (per-project
                   isolation; pure chat = the default assistant as its own scope).
                   Matches list drops down below the input; clicking a row hands the
                   jump to ChatInterface via the pendingSearchJump store signal. */}
-              <div ref={searchRootRef} class="relative mb-[15px]">
-                <div
-                  class="w-full flex items-center rounded-2xl"
-                  style={{
-                    background: 'rgba(var(--text-base-rgb),0.04)',
-                    border: '1px solid var(--border-dim)',
-                  }}
-                >
-                  <Icon
-                    name="search"
-                    size={13}
-                    class="w-[13px] h-[13px] shrink-0 ml-3"
-                    style={{ color: 'rgba(var(--text-base-rgb),0.35)' }}
-                  />
-                  <input
-                    class="flex-1 min-w-0 bg-transparent border-none outline-none px-2 h-10 text-[0.82rem]"
-                    style={{ color: 'rgba(var(--text-base-rgb),0.8)' }}
-                    placeholder={t('chat.searchHistory')}
-                    value={searchQuery()}
-                    onInput={(e) => onSearchInput(e.currentTarget.value)}
-                    onFocus={() => {
-                      if (searchQuery().trim()) runSearch(searchQuery());
-                    }}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Escape') {
-                        onSearchInput('');
-                        e.currentTarget.blur();
-                      }
-                    }}
-                  />
-                  <Show when={searchQuery()}>
-                    <button
-                      type="button"
-                      class="flex items-center justify-center shrink-0 mr-2 w-5 h-5 rounded-md border-none bg-transparent cursor-pointer transition-all duration-150 hover:bg-[rgba(var(--text-base-rgb),0.08)] active:scale-90"
-                      style={{ color: 'rgba(var(--text-base-rgb),0.45)' }}
-                      title={t('common.cancel')}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onSearchInput('');
-                      }}
-                    >
-                      <Icon name="x" size={11} />
-                    </button>
-                  </Show>
-                </div>
-                <Show when={searchResults() !== null}>
-                  <div
-                    class="absolute left-0 right-0 top-full mt-2 z-[1400] rounded-2xl overflow-y-auto py-1 animate-fade-in"
-                    style={{
-                      'max-height': '55vh',
-                      background: 'var(--acrylic-bg)',
-                      'backdrop-filter': 'blur(24px) saturate(150%)',
-                      border: '1px solid var(--acrylic-border)',
-                      'box-shadow': 'var(--shadow-acrylic)',
-                    }}
-                  >
-                    <Show
-                      when={(searchResults()?.length ?? 0) > 0}
-                      fallback={
-                        <div
-                          class="px-3 py-3 text-xs"
-                          style={{ color: 'rgba(var(--text-base-rgb),0.45)' }}
-                        >
-                          {t('chat.searchNoResults')}
-                        </div>
-                      }
-                    >
-                      <For each={searchResults() ?? []}>
-                        {(m) => (
-                          <button
-                            type="button"
-                            class="w-full text-left px-3 py-2 rounded-xl border-none bg-transparent cursor-pointer transition-colors duration-150 hover:bg-pri-10"
-                            onClick={() => jumpToMatch(m)}
-                          >
-                            <div
-                              class="text-[11px] truncate mb-0.5"
-                              style={{ color: 'rgba(var(--text-base-rgb),0.4)' }}
-                            >
-                              {m.topicName}
-                            </div>
-                            <div
-                              class="text-xs leading-relaxed line-clamp-2 break-words"
-                              style={{ color: 'rgba(var(--text-base-rgb),0.75)' }}
-                            >
-                              {m.snippet.before}
-                              <span
-                                class="font-medium"
-                                style={{ color: 'rgb(var(--primary-rgb))' }}
-                              >
-                                {m.snippet.hit}
-                              </span>
-                              {m.snippet.after}
-                            </div>
-                          </button>
-                        )}
-                      </For>
-                    </Show>
-                  </div>
-                </Show>
-              </div>
-              <button
-                class="w-full px-3 h-12 inline-flex items-center justify-center rounded-3xl cursor-pointer transition-all duration-300"
+            <div ref={searchRootRef} class="relative mb-[15px]">
+              <div
+                class="w-full flex items-center rounded-2xl"
                 style={{
                   background: 'rgba(var(--text-base-rgb),0.04)',
                   border: '1px solid var(--border-dim)',
-                  color: 'rgba(var(--text-base-rgb),0.6)',
                 }}
-                onClick={props.addTopic}
-                onMouseEnter={(e) =>
-                  (e.currentTarget.style.background = 'rgba(var(--primary-rgb),0.12)')
-                }
-                onMouseLeave={(e) =>
-                  (e.currentTarget.style.background = 'rgba(var(--text-base-rgb),0.04)')
-                }
               >
-                {t('chat.newTopic')}
-              </button>
-              <div class="mt-[15px] space-y-1">
-                {(() => {
-                  const { roots, children } = buildTopicTree(asst().topics);
-                  // Render the topic tree recursively. Connector geometry bridges the
-                  // list gaps so the vertical rail reads as one continuous line:
-                  // - isLast / isFirst: sibling position in the parent's child list;
-                  // - railBelowInherited: the rail continues past this whole subtree
-                  //   (a parent's next sibling exists somewhere up the chain). Root
-                  //   subtrees are hard-cut — never bridge across root topics.
-                  // - folded: this topic's children are collapsed; the rail treats
-                  //   it as a leaf and the children block animates to zero height.
-                  const renderTopic = (
-                    topic: Topic,
-                    depth: number,
-                    isLast = true,
-                    isFirst = false,
-                    railBelowInherited = false,
-                  ): any => {
-                    const isChild = depth > 0;
-                    const kids = children.get(topic.id) ?? [];
-                    const hasKids = kids.length > 0;
-                    // Gap between this topic's children block and the rows
-                    // above/below it (root children get space-y-1's 4px, deeper
-                    // nesting space-y-0.5's 2px).
-                    const childGap = depth === 0 ? 4 : 2;
-                    // upExt: the first child reaches up to the parent row's bottom
-                    // edge. Non-first siblings also extend 2px up: the fold wrapper
-                    // clips the previous sibling's 2px stem overhang below its own
-                    // row, so each next row re-draws that strip from its side and
-                    // the rail stays continuous under clipping.
-                    const parentGap = depth === 1 ? 4 : 2;
-                    const upExt = isChild ? (isFirst ? parentGap : 2) : 0;
-                    const midY = upExt + 14;
-                    // Fold state must be read ONLY inside the closures / JSX
-                    // attribute expressions below, never directly in this body:
-                    // the whole IIFE is a memo, so a body-level signal read would
-                    // rebuild the entire subtree on every toggle — fresh DOM nodes
-                    // carry no transition, which is why the fold animation never
-                    // played. Closure reads compile to fine-grained per-attribute
-                    // effects that update the SAME nodes in place, letting the
-                    // grid-template-rows / opacity transitions actually run.
-                    const isFolded = () => hasKids && collapsedTopicIds().has(topic.id);
-                    // stemOn: the rail continues below this row — toward the next
-                    // sibling, into this row's own (expanded) children, or toward
-                    // an uncle (inherited). Folded children do not continue the
-                    // rail; without a stem the line ends at the row's elbow (L).
-                    const stemOn = () =>
-                      isChild && (!isLast || (hasKids && !isFolded()) || railBelowInherited);
-                    const railH = () => 28 + upExt + (stemOn() ? 2 : 0);
-                    const connectorPath = () =>
-                      stemOn()
-                        ? `M5 0 V${railH()} M5 ${upExt + 10} Q5 ${midY} 9 ${midY} H22`
-                        : `M5 0 V${upExt + 10} Q5 ${midY} 9 ${midY} H22`;
-                    return (
-                      <>
-                        <div
-                          class={`group flex items-center justify-between cursor-pointer rounded-2xl transition-all duration-200 text-white/75 hover:bg-white/[0.06] ${isChild ? 'ml-5 h-7 px-1.5 bg-transparent' : 'px-3 h-12 rounded-3xl bg-white/[0.03] border border-white/[0.04]'}`}
-                          classList={{
-                            // Active: keep the resting border/background untouched;
-                            // only the themed inner glow marks the state. Child rows
-                            // (28px stadium) use the size-scaled variant so the glow
-                            // reaches the text instead of ringing it.
-                            [isChild ? 'active-glow-sm' : 'active-glow']:
-                              topic.id === currentTopicId(),
-                          }}
-                          onClick={() => setCurrentTopicId(topic.id)}
+                <Icon
+                  name="search"
+                  size={13}
+                  class="w-[13px] h-[13px] shrink-0 ml-3"
+                  style={{ color: 'rgba(var(--text-base-rgb),0.35)' }}
+                />
+                <input
+                  class="flex-1 min-w-0 bg-transparent border-none outline-none px-2 h-10 text-[0.82rem]"
+                  style={{ color: 'rgba(var(--text-base-rgb),0.8)' }}
+                  placeholder={t('chat.searchHistory')}
+                  value={searchQuery()}
+                  onInput={(e) => onSearchInput(e.currentTarget.value)}
+                  onFocus={() => {
+                    if (searchQuery().trim()) runSearch(searchQuery());
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Escape') {
+                      onSearchInput('');
+                      e.currentTarget.blur();
+                    }
+                  }}
+                />
+                <Show when={searchQuery()}>
+                  <button
+                    type="button"
+                    class="flex items-center justify-center shrink-0 mr-2 w-5 h-5 rounded-md border-none bg-transparent cursor-pointer transition-all duration-150 hover:bg-[rgba(var(--text-base-rgb),0.08)] active:scale-90"
+                    style={{ color: 'rgba(var(--text-base-rgb),0.45)' }}
+                    title={t('common.cancel')}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onSearchInput('');
+                    }}
+                  >
+                    <Icon name="x" size={11} />
+                  </button>
+                </Show>
+              </div>
+              <Show when={searchResults() !== null}>
+                <div
+                  class="absolute left-0 right-0 top-full mt-2 z-[1400] rounded-2xl overflow-y-auto py-1 animate-fade-in"
+                  style={{
+                    'max-height': '55vh',
+                    background: 'var(--acrylic-bg)',
+                    'backdrop-filter': 'blur(24px) saturate(150%)',
+                    border: '1px solid var(--acrylic-border)',
+                    'box-shadow': 'var(--shadow-acrylic)',
+                  }}
+                >
+                  <Show
+                    when={(searchResults()?.length ?? 0) > 0}
+                    fallback={
+                      <div
+                        class="px-3 py-3 text-xs"
+                        style={{ color: 'rgba(var(--text-base-rgb),0.45)' }}
+                      >
+                        {t('chat.searchNoResults')}
+                      </div>
+                    }
+                  >
+                    <For each={searchResults() ?? []}>
+                      {(m) => (
+                        <button
+                          type="button"
+                          class="w-full text-left px-3 py-2 rounded-xl border-none bg-transparent cursor-pointer transition-colors duration-150 hover:bg-pri-10"
+                          onClick={() => jumpToMatch(m)}
                         >
-                          {/* Branch marker for child topics: rounded elbow connector.
+                          <div
+                            class="text-[11px] truncate mb-0.5"
+                            style={{ color: 'rgba(var(--text-base-rgb),0.4)' }}
+                          >
+                            {m.topicName}
+                          </div>
+                          <div
+                            class="text-xs leading-relaxed line-clamp-2 break-words"
+                            style={{ color: 'rgba(var(--text-base-rgb),0.75)' }}
+                          >
+                            {m.snippet.before}
+                            <span class="font-medium" style={{ color: 'rgb(var(--primary-rgb))' }}>
+                              {m.snippet.hit}
+                            </span>
+                            {m.snippet.after}
+                          </div>
+                        </button>
+                      )}
+                    </For>
+                  </Show>
+                </div>
+              </Show>
+            </div>
+            <button
+              class="w-full px-3 h-12 inline-flex items-center justify-center rounded-3xl cursor-pointer transition-all duration-300"
+              style={{
+                background: 'rgba(var(--text-base-rgb),0.04)',
+                border: '1px solid var(--border-dim)',
+                color: 'rgba(var(--text-base-rgb),0.6)',
+              }}
+              onClick={props.addTopic}
+              onMouseEnter={(e) =>
+                (e.currentTarget.style.background = 'rgba(var(--primary-rgb),0.12)')
+              }
+              onMouseLeave={(e) =>
+                (e.currentTarget.style.background = 'rgba(var(--text-base-rgb),0.04)')
+              }
+            >
+              {t('chat.newTopic')}
+            </button>
+            <div class="mt-[15px] space-y-1">
+              {(() => {
+                const { roots, children } = buildTopicTree(asst().topics);
+                // Render the topic tree recursively. Connector geometry bridges the
+                // list gaps so the vertical rail reads as one continuous line:
+                // - isLast / isFirst: sibling position in the parent's child list;
+                // - railBelowInherited: the rail continues past this whole subtree
+                //   (a parent's next sibling exists somewhere up the chain). Root
+                //   subtrees are hard-cut — never bridge across root topics.
+                // - folded: this topic's children are collapsed; the rail treats
+                //   it as a leaf and the children block animates to zero height.
+                const renderTopic = (
+                  topic: Topic,
+                  depth: number,
+                  isLast = true,
+                  isFirst = false,
+                  railBelowInherited = false,
+                ): any => {
+                  const isChild = depth > 0;
+                  const kids = children.get(topic.id) ?? [];
+                  const hasKids = kids.length > 0;
+                  // Gap between this topic's children block and the rows
+                  // above/below it (root children get space-y-1's 4px, deeper
+                  // nesting space-y-0.5's 2px).
+                  const childGap = depth === 0 ? 4 : 2;
+                  // upExt: the first child reaches up to the parent row's bottom
+                  // edge. Non-first siblings also extend 2px up: the fold wrapper
+                  // clips the previous sibling's 2px stem overhang below its own
+                  // row, so each next row re-draws that strip from its side and
+                  // the rail stays continuous under clipping.
+                  const parentGap = depth === 1 ? 4 : 2;
+                  const upExt = isChild ? (isFirst ? parentGap : 2) : 0;
+                  const midY = upExt + 14;
+                  // Fold state must be read ONLY inside the closures / JSX
+                  // attribute expressions below, never directly in this body:
+                  // the whole IIFE is a memo, so a body-level signal read would
+                  // rebuild the entire subtree on every toggle — fresh DOM nodes
+                  // carry no transition, which is why the fold animation never
+                  // played. Closure reads compile to fine-grained per-attribute
+                  // effects that update the SAME nodes in place, letting the
+                  // grid-template-rows / opacity transitions actually run.
+                  const isFolded = () => hasKids && collapsedTopicIds().has(topic.id);
+                  // stemOn: the rail continues below this row — toward the next
+                  // sibling, into this row's own (expanded) children, or toward
+                  // an uncle (inherited). Folded children do not continue the
+                  // rail; without a stem the line ends at the row's elbow (L).
+                  const stemOn = () =>
+                    isChild && (!isLast || (hasKids && !isFolded()) || railBelowInherited);
+                  const railH = () => 28 + upExt + (stemOn() ? 2 : 0);
+                  const connectorPath = () =>
+                    stemOn()
+                      ? `M5 0 V${railH()} M5 ${upExt + 10} Q5 ${midY} 9 ${midY} H22`
+                      : `M5 0 V${upExt + 10} Q5 ${midY} 9 ${midY} H22`;
+                  return (
+                    <>
+                      <div
+                        class={`group flex items-center justify-between cursor-pointer rounded-2xl transition-all duration-200 text-white/75 hover:bg-white/[0.06] ${isChild ? 'ml-5 h-7 px-1.5 bg-transparent' : 'px-3 h-12 rounded-3xl bg-white/[0.03] border border-white/[0.04]'}`}
+                        classList={{
+                          // Active: keep the resting border/background untouched;
+                          // only the themed inner glow marks the state. Child rows
+                          // (28px stadium) use the size-scaled variant so the glow
+                          // reaches the text instead of ringing it.
+                          [isChild ? 'active-glow-sm' : 'active-glow']:
+                            topic.id === currentTopicId(),
+                        }}
+                        onClick={() => setCurrentTopicId(topic.id)}
+                      >
+                        {/* Branch marker for child topics: rounded elbow connector.
                               The SVG may overflow the row box (margin-top negative /
                               extra height) so the vertical rail spans the list gaps
                               and connects with the rows above and below. */}
-                          {isChild && (
-                            <svg
-                              viewBox={`0 0 22 ${railH()}`}
-                              width="22"
-                              height={railH()}
-                              class="shrink-0 self-start"
-                              style={upExt ? { 'margin-top': `-${upExt}px` } : undefined}
-                              fill="none"
-                              stroke="rgba(var(--text-base-rgb),0.35)"
-                              stroke-width="1.5"
-                              stroke-linecap="round"
-                              aria-hidden="true"
-                            >
-                              <title>{t('chat.branchTopic')}</title>
-                              <path d={connectorPath()} />
-                            </svg>
-                          )}
-                          <Show
-                            when={props.editingTopicId === topic.id}
-                            fallback={
-                              <span
-                                style={{
-                                  color: `rgba(var(--text-base-rgb),${isChild ? '0.45' : '0.75'})`,
-                                  'font-size': isChild ? '0.78rem' : '0.9rem',
-                                  overflow: 'hidden',
-                                  'text-overflow': 'ellipsis',
-                                  'white-space': 'nowrap',
-                                  'padding-right': '8px',
-                                  'user-select': 'none',
-                                }}
-                              >
-                                {topic.name}
-                              </span>
-                            }
+                        {isChild && (
+                          <svg
+                            viewBox={`0 0 22 ${railH()}`}
+                            width="22"
+                            height={railH()}
+                            class="shrink-0 self-start"
+                            style={upExt ? { 'margin-top': `-${upExt}px` } : undefined}
+                            fill="none"
+                            stroke="rgba(var(--text-base-rgb),0.35)"
+                            stroke-width="1.5"
+                            stroke-linecap="round"
+                            aria-hidden="true"
                           >
-                            <input
-                              class="rounded px-2 py-0.5 text-[0.85rem] h-5 outline-none w-[80%]"
+                            <title>{t('chat.branchTopic')}</title>
+                            <path d={connectorPath()} />
+                          </svg>
+                        )}
+                        <Show
+                          when={props.editingTopicId === topic.id}
+                          fallback={
+                            <span
                               style={{
-                                background: 'rgba(0,0,0,0.3)',
-                                border: '1px solid var(--border-dim)',
-                                color: 'rgba(var(--text-base-rgb),0.85)',
+                                color: `rgba(var(--text-base-rgb),${isChild ? '0.45' : '0.75'})`,
+                                'font-size': isChild ? '0.78rem' : '0.9rem',
+                                overflow: 'hidden',
+                                'text-overflow': 'ellipsis',
+                                'white-space': 'nowrap',
+                                'padding-right': '8px',
+                                'user-select': 'none',
                               }}
-                              value={topic.name}
-                              ref={(el) => {
-                                setTimeout(() => {
-                                  el.focus();
-                                  el.select();
-                                }, 0);
-                              }}
-                              onBlur={(e) =>
-                                saveTopicRename(asst().id, topic.id, e.currentTarget.value)
-                              }
-                              onKeyDown={(e) =>
-                                e.key === 'Enter' &&
-                                saveTopicRename(asst().id, topic.id, e.currentTarget.value)
-                              }
-                              onClick={(e) => e.stopPropagation()}
-                            />
-                          </Show>
-                          <div class="flex items-center gap-0.5 shrink-0">
-                            {/* Fold toggle: only for topics with children, hover-only
+                            >
+                              {topic.name}
+                            </span>
+                          }
+                        >
+                          <input
+                            class="rounded px-2 py-0.5 text-[0.85rem] h-5 outline-none w-[80%]"
+                            style={{
+                              background: 'rgba(0,0,0,0.3)',
+                              border: '1px solid var(--border-dim)',
+                              color: 'rgba(var(--text-base-rgb),0.85)',
+                            }}
+                            value={topic.name}
+                            ref={(el) => {
+                              setTimeout(() => {
+                                el.focus();
+                                el.select();
+                              }, 0);
+                            }}
+                            onBlur={(e) =>
+                              saveTopicRename(asst().id, topic.id, e.currentTarget.value)
+                            }
+                            onKeyDown={(e) =>
+                              e.key === 'Enter' &&
+                              saveTopicRename(asst().id, topic.id, e.currentTarget.value)
+                            }
+                            onClick={(e) => e.stopPropagation()}
+                          />
+                        </Show>
+                        <div class="flex items-center gap-0.5 shrink-0">
+                          {/* Fold toggle: only for topics with children, hover-only
                                 visibility (same as the more button). Caret icons
                                 indicate the click action: v (caret-down) when
                                 folded (click expands downward), ^ (caret-up) when
                                 expanded (click folds up). */}
-                            <Show when={hasKids}>
-                              <button
-                                type="button"
-                                class="flex items-center justify-center border-none bg-transparent cursor-pointer rounded-md text-white/40 hover:text-white/85 transition-all duration-200 active:scale-90 opacity-0 group-hover:opacity-100"
-                                style={{
-                                  width: isChild ? '18px' : '24px',
-                                  height: isChild ? '18px' : '24px',
-                                }}
-                                title={
-                                  isFolded() ? t('chat.expandBranches') : t('chat.collapseBranches')
-                                }
-                                aria-expanded={!isFolded()}
-                                aria-label={
-                                  isFolded() ? t('chat.expandBranches') : t('chat.collapseBranches')
-                                }
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setCollapsedTopicIds((prev) => {
-                                    const next = new Set(prev);
-                                    if (next.has(topic.id)) next.delete(topic.id);
-                                    else next.add(topic.id);
-                                    return next;
-                                  });
-                                }}
-                              >
-                                <Icon
-                                  name={isFolded() ? 'caret-down' : 'caret-up'}
-                                  size={isChild ? 13 : 15}
-                                />
-                              </button>
-                            </Show>
+                          <Show when={hasKids}>
                             <button
-                              class="flex items-center justify-center border-none rounded-full cursor-pointer transition-all duration-200 active:scale-90 opacity-0 group-hover:opacity-100 bg-white/[0.06] text-white/60 hover:bg-pri-10"
+                              type="button"
+                              class="flex items-center justify-center border-none bg-transparent cursor-pointer rounded-md text-white/40 hover:text-white/85 transition-all duration-200 active:scale-90 opacity-0 group-hover:opacity-100"
                               style={{
-                                width: isChild ? '22px' : '30px',
-                                height: isChild ? '22px' : '30px',
+                                width: isChild ? '18px' : '24px',
+                                height: isChild ? '18px' : '24px',
                               }}
-                              onClick={(e) => openTopicMenu(e as MouseEvent, topic.id)}
+                              title={
+                                isFolded() ? t('chat.expandBranches') : t('chat.collapseBranches')
+                              }
+                              aria-expanded={!isFolded()}
+                              aria-label={
+                                isFolded() ? t('chat.expandBranches') : t('chat.collapseBranches')
+                              }
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setCollapsedTopicIds((prev) => {
+                                  const next = new Set(prev);
+                                  if (next.has(topic.id)) next.delete(topic.id);
+                                  else next.add(topic.id);
+                                  return next;
+                                });
+                              }}
                             >
                               <Icon
-                                src="/icons/app-logo/dot-menu.svg"
-                                class={isChild ? 'w-[13px] h-[13px]' : 'w-[18px] h-[18px]'}
+                                name={isFolded() ? 'caret-down' : 'caret-up'}
+                                size={isChild ? 13 : 15}
                               />
                             </button>
-                          </div>
+                          </Show>
+                          <button
+                            class="flex items-center justify-center border-none rounded-full cursor-pointer transition-all duration-200 active:scale-90 opacity-0 group-hover:opacity-100 bg-white/[0.06] text-white/60 hover:bg-pri-10"
+                            style={{
+                              width: isChild ? '22px' : '30px',
+                              height: isChild ? '22px' : '30px',
+                            }}
+                            onClick={(e) => openTopicMenu(e as MouseEvent, topic.id)}
+                          >
+                            <Icon
+                              src="/icons/app-logo/dot-menu.svg"
+                              class={isChild ? 'w-[13px] h-[13px]' : 'w-[18px] h-[18px]'}
+                            />
+                          </button>
                         </div>
-                        {/* Render child topics recursively. The grid wrapper animates the
+                      </div>
+                      {/* Render child topics recursively. The grid wrapper animates the
                             fold via grid-template-rows 0fr↔1fr; its negative top margin
                             cancels the list gap and the inner padding restores it, so the
                             connector bridge stays inside the clipped box and rows land
                             exactly where they did before the wrapper existed. */}
-                        <Show when={hasKids}>
-                          <div
-                            class="grid transition-[grid-template-rows] duration-200 ease-out"
-                            style={{
-                              'margin-top': `-${childGap}px`,
-                              'grid-template-rows': isFolded() ? '0fr' : '1fr',
-                            }}
-                          >
-                            <div class="overflow-hidden min-h-0">
-                              <div
-                                class="space-y-0.5 transition-opacity duration-200"
-                                style={{
-                                  'padding-top': `${childGap}px`,
-                                  opacity: isFolded() ? '0' : '1',
+                      <Show when={hasKids}>
+                        <div
+                          class="grid transition-[grid-template-rows] duration-200 ease-out"
+                          style={{
+                            'margin-top': `-${childGap}px`,
+                            'grid-template-rows': isFolded() ? '0fr' : '1fr',
+                          }}
+                        >
+                          <div class="overflow-hidden min-h-0">
+                            <div
+                              class="space-y-0.5 transition-opacity duration-200"
+                              style={{
+                                'padding-top': `${childGap}px`,
+                                opacity: isFolded() ? '0' : '1',
+                              }}
+                            >
+                              <For each={children.get(topic.id)}>
+                                {(child) => {
+                                  const siblings = children.get(topic.id) ?? [];
+                                  const isLastSibling =
+                                    siblings[siblings.length - 1]?.id === child.id;
+                                  const isFirstSibling = siblings[0]?.id === child.id;
+                                  // Children inherit the rail-below flag: the rail
+                                  // continues past this subtree when this topic has a
+                                  // next sibling, or when the flag was inherited from
+                                  // above. Root subtrees never bridge across roots.
+                                  const kidsRailBelow =
+                                    depth === 0 ? false : !isLast || railBelowInherited;
+                                  return renderTopic(
+                                    child,
+                                    depth + 1,
+                                    isLastSibling,
+                                    isFirstSibling,
+                                    kidsRailBelow,
+                                  );
                                 }}
-                              >
-                                <For each={children.get(topic.id)}>
-                                  {(child) => {
-                                    const siblings = children.get(topic.id) ?? [];
-                                    const isLastSibling =
-                                      siblings[siblings.length - 1]?.id === child.id;
-                                    const isFirstSibling = siblings[0]?.id === child.id;
-                                    // Children inherit the rail-below flag: the rail
-                                    // continues past this subtree when this topic has a
-                                    // next sibling, or when the flag was inherited from
-                                    // above. Root subtrees never bridge across roots.
-                                    const kidsRailBelow =
-                                      depth === 0 ? false : !isLast || railBelowInherited;
-                                    return renderTopic(
-                                      child,
-                                      depth + 1,
-                                      isLastSibling,
-                                      isFirstSibling,
-                                      kidsRailBelow,
-                                    );
-                                  }}
-                                </For>
-                              </div>
+                              </For>
                             </div>
                           </div>
-                        </Show>
-                      </>
-                    );
-                  };
-                  return roots.map((root) => renderTopic(root, 0));
-                })()}
-              </div>
+                        </div>
+                      </Show>
+                    </>
+                  );
+                };
+                return roots.map((root) => renderTopic(root, 0));
+              })()}
             </div>
-          )}
-        </Show>
-      </div>
+          </div>
+        )}
+      </Show>
 
       {showTopicMenuDiv() && (
         <Portal>
@@ -729,7 +677,7 @@ const TopicSidebar: Component<TopicSidebarProps> = (props) => {
           </div>
         </Portal>
       )}
-    </div>
+    </>
   );
 };
 

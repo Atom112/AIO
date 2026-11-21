@@ -615,6 +615,7 @@ pub(crate) async fn execute_builtin_tool(
     token: &CancellationToken,
     writer_id: &str,
     workspace_root: Option<&str>,
+    vision_ctx: Option<&vision::ComputerVisionCtx>,
 ) -> Result<ToolResult, String> {
     let project_root = file_tools::resolve_project_root(app, project_id)?;
     // Tools operate on the workspace root when the caller runs isolated (git worktree);
@@ -748,6 +749,15 @@ pub(crate) async fn execute_builtin_tool(
                             "\n\n⚠ Sandbox unavailable: this command will run without an OS-level sandbox"
                         ));
                 }
+            }
+            // 电脑操作：把动作摘要放进确认框（用户看到的是「将要发生什么」，不是工具名）
+            if tool_name == tool_names::COMPUTER_ACTION {
+                reason = ierr!(
+                    "电脑操作: {}\n\n工具 '{}' 需要您的确认才能执行（将直接操作当前桌面）",
+                    "Computer action: {}\n\nTool '{}' needs your confirmation (it operates the live desktop)",
+                    crate::utils::computer::describe_action(arguments),
+                    tool_name
+                );
             }
             // File-modifying tools: precompute a diff preview
             let (preview_diff, file_path) =
@@ -1053,6 +1063,27 @@ pub(crate) async fn execute_builtin_tool(
             .await
             .unwrap_or_else(|_| crate::utils::tool_result::tool_err("project_map 执行线程 panic"));
         Ok(res)
+    } else if matches!(
+        tool_name,
+        tool_names::COMPUTER_SNAPSHOT | tool_names::COMPUTER_ACTION
+    ) {
+        // 视觉路由只在「截图请求」时解析：普通电脑操作不碰目录与密钥库。
+        // 目录/密钥库都是阻塞 I/O（含 keyring），放阻塞池里取值。
+        let needs_vision = tool_name == tool_names::COMPUTER_SNAPSHOT
+            && arguments["screenshot"].as_bool().unwrap_or(false);
+        let route = if needs_vision {
+            let app_c = app.clone();
+            let ctx_c = vision_ctx.cloned();
+            tokio::task::spawn_blocking(move || {
+                ctx_c.and_then(|ctx| vision::resolve_computer_vision_route(&app_c, &ctx))
+            })
+            .await
+            .ok()
+            .flatten()
+        } else {
+            None
+        };
+        crate::utils::computer::execute(app, tool_name, arguments, token, route.as_ref()).await
     } else if tool_name.starts_with("git_") {
         let tool_name_c = tool_name.to_string();
         let arguments_c = arguments.clone();

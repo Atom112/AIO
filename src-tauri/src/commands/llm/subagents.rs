@@ -1427,6 +1427,7 @@ pub(crate) async fn execute_subagent(
                                 &tok,
                                 &wl,
                                 wr.as_deref(),
+                                None,
                             )
                             .await
                         });
@@ -1482,6 +1483,7 @@ pub(crate) async fn execute_subagent(
                             token,
                             &writer_label,
                             workspace_root,
+                            None,
                         )
                         .await
                     };

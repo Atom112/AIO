@@ -43,6 +43,26 @@ export const savePanelWidth = (side: PanelSide, width: number): void => {
   safeSet(WIDTH_KEY[side], String(width));
 };
 
+const DIFF_PANEL_WIDTH_KEY = 'chat-right-panel-diff-width';
+/** Wider ceiling for the file-diff tab (the topic list stays clamped to 30%). */
+const DIFF_PANEL_MIN = 15;
+const DIFF_PANEL_MAX = 55;
+
+/**
+ * Width percentage of the right-hand panel while a file-diff tab is active.
+ * Defaults to 42% (wider than the topic sidebar's 18% default / 30% ceiling) and is
+ * clamped to 15-55%; switching back to the topic tab restores the regular width.
+ */
+export const loadDiffPanelWidth = (): number => {
+  const v = Number(safeGet(DIFF_PANEL_WIDTH_KEY));
+  if (!Number.isFinite(v) || v <= 0) return 42;
+  return Math.min(Math.max(v, DIFF_PANEL_MIN), DIFF_PANEL_MAX);
+};
+
+export const saveDiffPanelWidth = (width: number): void => {
+  safeSet(DIFF_PANEL_WIDTH_KEY, String(Math.min(Math.max(width, DIFF_PANEL_MIN), DIFF_PANEL_MAX)));
+};
+
 /** Panel collapsed flag ('true' string format, matching the historic values). */
 export const loadPanelCollapsed = (side: PanelSide): boolean =>
   safeGet(COLLAPSED_KEY[side]) === 'true';

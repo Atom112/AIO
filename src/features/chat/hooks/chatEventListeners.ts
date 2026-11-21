@@ -36,7 +36,8 @@ import {
   saveSingleAssistantToBackend,
   selectedModel,
   setAgentTaskBoard,
-  setCompactingTopicId,
+  beginCompaction,
+  endCompaction,
   setDatas,
   setPendingApprovals,
   setPendingQuestions,
@@ -569,11 +570,16 @@ export function registerChatStreamListeners(): Promise<UnlistenFn>[] {
         setTimeout(async () => {
           await checkAndRename(assistant_id, topic_id);
           // In-record "compacting" pill for the auto path as well (mainstream feedback)
-          setCompactingTopicId(topic_id);
+          beginCompaction(topic_id);
           try {
-            await checkAndSummarize();
+            // Pin to the topic that produced this done event: the 500ms delay and
+            // checkAndRename may span a user topic switch.
+            await checkAndSummarize(undefined, {
+              assistantId: assistant_id,
+              topicId: topic_id,
+            });
           } finally {
-            setCompactingTopicId(null);
+            endCompaction(topic_id);
           }
         }, 500);
         return;

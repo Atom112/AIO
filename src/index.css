@@ -137,6 +137,18 @@
     radial-gradient(circle at 10% 90%, rgba(255, 113, 200, 0.35) 0, transparent 500px), #2f2f2f;
 }
 
+/* App font size: scale ONLY the text tokens (spacing/layout stay fixed). The
+   line-height tokens are unitless ratios, so they scale with font-size. */
+:root {
+  --app-font-scale: 1;
+  --text-xs: calc(0.75rem * var(--app-font-scale));
+  --text-sm: calc(0.875rem * var(--app-font-scale));
+  --text-base: calc(1rem * var(--app-font-scale));
+  --text-lg: calc(1.125rem * var(--app-font-scale));
+  --text-xl: calc(1.25rem * var(--app-font-scale));
+  --text-2xl: calc(1.5rem * var(--app-font-scale));
+}
+
 /* ── Dark mode: CSS variable overrides for surface/text/border ── */
 [data-theme='dark'] {
   --surface-bg: 8, 10, 16;
@@ -843,14 +855,27 @@ body {
 }
 
 /* ── Dropdown menu surface (shared Dropdown component) ──
-   The panel is intentionally MORE opaque than a plain --popup-bg wash: blur alone
-   over text right underneath reads as "no blur" (achromatic content blurs into a
-   barely-changed wash), so the panel carries enough tint to visually separate. */
+   The menu is portaled to <body> and fixed-positioned (Dropdown.tsx): hosts such
+   as settings cards use backdrop-filter, which creates a stacking context, so an
+   in-flow absolute menu would paint under later sibling cards. The surface is
+   deliberately near-opaque: blur alone over text underneath reads as "no blur"
+   (achromatic content blurs into a barely-changed wash). */
 .dropdown-menu {
-  background: var(--popup-bg);
+  background: rgba(var(--surface-bg), 0.92);
   backdrop-filter: var(--popup-blur);
   border: 1px solid var(--border-dim);
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+  /* Animate appearance only. Position/size are rewritten every frame while
+     scrolling; transitioning them would make the menu lag behind the trigger.
+     Tailwind v4 uses the individual translate/scale properties. */
+  transition:
+    opacity 150ms ease-out,
+    translate 150ms ease-out,
+    scale 150ms ease-out;
+}
+
+[data-theme='dark'] .dropdown-menu {
+  background: rgba(var(--surface-bg), 0.96);
 }
 
 /* ── Theme-aware text colors (use in place of text-white/XX) ── */
@@ -870,6 +895,20 @@ body {
 }
 .bg-theme-surface-50 {
   background-color: rgba(var(--surface-bg), 0.5);
+}
+
+/* ── App background layer (user-customized solid / gradient / image, light mode only) ──
+   Rendered by Layout above the default `--app-bg` of `.app-container`; the inline
+   style carries the fill (or image) plus the alpha, so the default gradient shows
+   through when the user lowers the opacity. Decorative only: never hit-tested. */
+.app-bg-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background-position: center;
+  background-size: cover;
+  background-repeat: no-repeat;
 }
 
 /* ══════════════════════════════════════════════
@@ -934,7 +973,7 @@ input[type='number']::-webkit-inner-spin-button {
 
 .markdown-body {
   color: rgba(var(--text-base-rgb), 0.87);
-  font-size: 14px;
+  font-size: calc(14px * var(--app-font-scale));
   line-height: 1.7;
   word-wrap: break-word;
   overflow-wrap: break-word;
@@ -1049,31 +1088,34 @@ input[type='number']::-webkit-inner-spin-button {
   font-style: italic;
 }
 
-.markdown-body .table-wrapper {
-  @apply overflow-x-auto;
+.markdown-body .md-table-wrap {
   margin: 0.8em 0;
-}
-
-.markdown-body table {
-  @apply border-collapse w-full;
-  border-spacing: 0;
-  max-width: 100%;
-  font-size: 0.9em;
-  display: block;
+  border: 1px solid rgba(var(--text-base-rgb), 0.1);
+  border-radius: 10px;
   overflow-x: auto;
+  background: rgba(var(--text-base-rgb), 0.015);
 }
 
-.markdown-body table::-webkit-scrollbar {
+.markdown-body .md-table-wrap::-webkit-scrollbar {
   height: 4px;
 }
 
-.markdown-body table::-webkit-scrollbar-track {
+.markdown-body .md-table-wrap::-webkit-scrollbar-track {
   background: transparent;
 }
 
-.markdown-body table::-webkit-scrollbar-thumb {
+.markdown-body .md-table-wrap::-webkit-scrollbar-thumb {
   background: rgba(var(--text-base-rgb), 0.1);
   border-radius: 2px;
+}
+
+.markdown-body .md-table-wrap table {
+  @apply w-full;
+  display: table;
+  border-collapse: separate;
+  border-spacing: 0;
+  max-width: 100%;
+  font-size: 0.9em;
 }
 
 .markdown-body thead {
@@ -1081,11 +1123,26 @@ input[type='number']::-webkit-inner-spin-button {
 }
 
 .markdown-body th {
-  @apply font-semibold text-white/90 text-left px-3 py-2 border border-white/[0.08] whitespace-nowrap;
+  @apply font-semibold text-white/90 text-left px-3 py-2 whitespace-nowrap;
+  border: 0;
+  border-right: 1px solid rgba(var(--text-base-rgb), 0.1);
+  border-bottom: 1px solid rgba(var(--text-base-rgb), 0.12);
 }
 
 .markdown-body td {
-  @apply px-3 py-[7px] border border-white/[0.06] text-white/80;
+  @apply px-3 py-[7px] text-white/80;
+  border: 0;
+  border-right: 1px solid rgba(var(--text-base-rgb), 0.07);
+  border-bottom: 1px solid rgba(var(--text-base-rgb), 0.07);
+}
+
+.markdown-body th:last-child,
+.markdown-body td:last-child {
+  border-right: 0;
+}
+
+.markdown-body tbody tr:last-child td {
+  border-bottom: 0;
 }
 
 .markdown-body tbody tr {
@@ -1102,6 +1159,50 @@ input[type='number']::-webkit-inner-spin-button {
 
 .markdown-body tfoot {
   @apply bg-white/[0.03];
+}
+
+/* Mermaid: placeholder carries the raw source; the diagram is filled after a
+   debounced async render (see Markdown.tsx). Invalid/incomplete diagrams fall
+   back to the visible source instead of mermaid's error glyph. */
+.markdown-body .mermaid-block {
+  margin: 0.8em 0;
+  padding: 10px 12px;
+  border: 1px solid rgba(var(--text-base-rgb), 0.1);
+  border-radius: 10px;
+  background: rgba(var(--text-base-rgb), 0.02);
+  overflow-x: auto;
+}
+
+.markdown-body .mermaid-src {
+  display: none;
+  margin: 0;
+  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+  font-size: 0.85em;
+  line-height: 1.5;
+  color: rgba(var(--text-base-rgb), 0.65);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.markdown-body .mermaid-failed .mermaid-src {
+  display: block;
+}
+
+.markdown-body .mermaid-failed .mermaid-diagram {
+  display: none;
+}
+
+.markdown-body .mermaid-diagram {
+  min-height: 2px;
+  contain: layout paint;
+}
+
+.markdown-body .mermaid-diagram svg {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 0 auto;
+  background: transparent;
 }
 
 .markdown-body caption {

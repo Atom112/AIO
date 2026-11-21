@@ -1,14 +1,26 @@
 /**
  * @file Layout.tsx
  * @description Root layout component: the whole window is a single acrylic panel (NavBar + pages share one glass surface);
- * the background is a static multi-color gradient (unaffected by the theme color), and the theme color only applies to interactive elements like buttons and switches.
+ * the background is the `--app-bg` multi-color gradient (unaffected by the theme color) plus an optional user
+ * background layer (solid / gradient / image, light mode only), and the theme color only applies to interactive
+ * elements like buttons and switches.
  */
 import NavBar from './shared/components/NavBar';
 import UpdateNotification from './shared/components/UpdateNotification';
 import GlobalKeyboardHandler from './shared/components/GlobalKeyboardHandler';
 import CommandPalette from './shared/components/CommandPalette';
 import { Transition } from 'solid-transition-group';
-import { Component, createSignal, onCleanup, onMount, ParentProps } from 'solid-js';
+import {
+  Component,
+  createEffect,
+  createMemo,
+  createSignal,
+  onCleanup,
+  onMount,
+  ParentProps,
+  Show,
+} from 'solid-js';
+import { convertFileSrc } from '@tauri-apps/api/core';
 import { loadProviderConfigs } from './core/api/config';
 import { checkAppUpdate } from './core/api/update';
 import { Window } from '@tauri-apps/api/window';
@@ -31,6 +43,13 @@ import {
   setModelsCatalogVersion,
   setModelsCatalogGeneratedAt,
   setProviderConfigs,
+  appBackground,
+  isDarkMode,
+  buildBackgroundLayerStyle,
+  appFont,
+  appFontStack,
+  appFontSize,
+  appFontScale,
 } from './core/store/store';
 import { updateDiagnostics, type LspDiagnosticsUpdatePayload } from './core/store/diagnostics';
 import { registerChatStreamListeners } from './features/chat/hooks/chatEventListeners';
@@ -164,19 +183,48 @@ const Layout: Component<ParentProps> = (props) => {
     unlistenResized?.();
   });
 
+  // Custom background layer (solid / gradient / image) — null in dark mode or on defaults.
+  const backgroundStyle = createMemo(() =>
+    buildBackgroundLayerStyle(appBackground(), isDarkMode(), convertFileSrc),
+  );
+
+  // App font (settings → App settings): applied on <body> so every page inherits it
+  // (index.css gives `html, body` an explicit font stack, so the root alone would not
+  // cascade); mono/code surfaces keep their own explicit font-family stacks.
+  createEffect(() => {
+    const stack = appFontStack(appFont());
+    if (stack) document.body.style.setProperty('font-family', stack);
+    else document.body.style.removeProperty('font-family');
+  });
+
+  // App font size: the CSS text tokens multiply by this scale (Layout's effect
+  // keeps live slider changes in sync; index.tsx sets the initial value).
+  createEffect(() => {
+    document.documentElement.style.setProperty(
+      '--app-font-scale',
+      String(appFontScale(appFontSize())),
+    );
+  });
+
   return (
     <div
-      class="app-container h-screen flex flex-col overflow-hidden rounded-xl"
+      class="app-container relative h-screen flex flex-col overflow-hidden rounded-xl"
       classList={{ 'rounded-none': windowMaximized() }}
       style={{ background: 'var(--app-bg)' }}
     >
-      <GlobalKeyboardHandler />
-      <CommandPalette />
-      <NavBar />
-      <main class="flex-1 relative overflow-hidden">
-        <Transition name="page-fade">{props.children}</Transition>
-      </main>
-      <UpdateNotification />
+      {/* Sits between the default --app-bg and the UI; opacity < 100 lets --app-bg show through */}
+      <Show when={backgroundStyle()}>
+        <div class="app-bg-layer" style={backgroundStyle()!} aria-hidden="true" />
+      </Show>
+      <div id="app-content" class="relative z-[1] flex flex-col flex-1 min-h-0">
+        <GlobalKeyboardHandler />
+        <CommandPalette />
+        <NavBar />
+        <main class="flex-1 relative overflow-hidden">
+          <Transition name="page-fade">{props.children}</Transition>
+        </main>
+        <UpdateNotification />
+      </div>
     </div>
   );
 };

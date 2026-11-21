@@ -11,7 +11,29 @@ vi.stubGlobal('localStorage', {
   removeItem: () => {},
 });
 
-const { getRegisteredCommands } = await import('./shortcuts');
+const { getRegisteredCommands, findLeadingSlashCommand } = await import('./shortcuts');
+
+describe('findLeadingSlashCommand', () => {
+  it('locates only the recognized command token at the start', () => {
+    expect(findLeadingSlashCommand('/compact keep this')).toEqual({
+      start: 0,
+      end: 8,
+      token: '/compact',
+    });
+    expect(findLeadingSlashCommand('  /compact')).toEqual({
+      start: 2,
+      end: 10,
+      token: '/compact',
+    });
+  });
+
+  it('does not color partial, unknown, or non-leading commands', () => {
+    expect(findLeadingSlashCommand('/com')).toBeNull();
+    expect(findLeadingSlashCommand('/not-a-command')).toBeNull();
+    expect(findLeadingSlashCommand('hello /compact')).toBeNull();
+    expect(findLeadingSlashCommand('https://example.com')).toBeNull();
+  });
+});
 
 describe('default shortcut uniqueness (FE-03)', () => {
   it('factory defaults have no key conflicts', () => {

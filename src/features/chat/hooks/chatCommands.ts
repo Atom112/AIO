@@ -14,7 +14,8 @@ import { savePanelCollapsed } from '../../../core/store/layout';
 import { persistReasoningLevel, persistWebSearch } from '../../../core/store/ui-prefs';
 import {
   setDatas as storeSetDatas,
-  setCompactingTopicId,
+  beginCompaction,
+  endCompaction,
   type AgentMode,
   type Assistant,
   type CompactOutcome,
@@ -38,7 +39,6 @@ export interface ChatCommandDeps {
   switchToProject: (id: string) => Promise<void>;
   // Generation control
   isThinking: () => boolean;
-  setIsThinking: (v: boolean) => void;
   handleStopGeneration: () => Promise<void>;
   // Mode & search
   reasoningLevel: () => 'off' | 'low' | 'medium' | 'high';
@@ -56,7 +56,7 @@ export interface ChatCommandDeps {
   /** force=true skips the auto-compaction threshold guard (manual /compact runs immediately) */
   checkAndSummarize: (
     keepBudgetOverride?: number,
-    opts?: { force?: boolean },
+    opts?: { force?: boolean; assistantId?: string; topicId?: string },
   ) => Promise<CompactOutcome>;
   navigate: (path: string) => void;
 }
@@ -75,7 +75,6 @@ export function registerChatCommands(deps: ChatCommandDeps): string[] {
     switchToChat,
     switchToProject,
     isThinking,
-    setIsThinking,
     handleStopGeneration,
     reasoningLevel,
     // P3（localStorage 收编）：setter 不再取用——persist* 已在 ui-prefs 内同时置信号与写盘
@@ -290,8 +289,10 @@ export function registerChatCommands(deps: ChatCommandDeps): string[] {
         switch (outcome.reason) {
           case 'nothing-to-compact':
             return `✓ /compact — ${t('slash.feedback.compactNothing')}`;
-          case 'topic-switched':
-            return `✗ /compact — ${t('slash.feedback.compactTopicSwitched')}`;
+          case 'superseded':
+            return `✗ /compact — ${t('slash.feedback.compactSuperseded')}`;
+          case 'topic-gone':
+            return `✗ /compact — ${t('slash.feedback.compactTopicGone')}`;
           case 'empty-result':
             return `✗ /compact — ${t('slash.feedback.compactEmptyResult')}`;
           default:
@@ -311,15 +312,20 @@ export function registerChatCommands(deps: ChatCommandDeps): string[] {
       const budgetArg = args ? Number(args.trim()) : NaN;
       const budget = Number.isFinite(budgetArg) && budgetArg > 0 ? budgetArg : undefined;
       const topicId = currentTopicId();
-      setIsThinking(true);
-      // In-record "compacting" pill (mainstream visual feedback, cf. DSH)
-      if (topicId) setCompactingTopicId(topicId);
+      const asstId = currentAssistantId();
+      // Compaction is a background job: it must not flip the global isThinking gate
+      // (that would block sending in every other topic until the 45s summary ends).
+      // The per-topic pill is the only progress UI.
+      if (topicId) beginCompaction(topicId);
       try {
-        const outcome = await checkAndSummarize(budget, { force: true });
+        const outcome = await checkAndSummarize(budget, {
+          force: true,
+          assistantId: asstId ?? undefined,
+          topicId: topicId ?? undefined,
+        });
         return compactOutcomeFeedback(outcome);
       } finally {
-        setCompactingTopicId(null);
-        setIsThinking(false);
+        if (topicId) endCompaction(topicId);
       }
     },
   });

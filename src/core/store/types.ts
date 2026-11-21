@@ -177,7 +177,8 @@ export type AgentMode = 'off' | 'normal' | 'auto' | 'danger' | 'plan';
  * - compressed: summary persisted (overwrites topic.summary and trims history)
  * - archived: summary failed, fell back to local archive (readable via read_artifact)
  * - skipped: compaction not run (below auto threshold / preserve zone covers all history / nothing to compact /
- *   CHAT-2: topic switched mid-summarize or the trim would empty the history — persist aborted to protect data)
+ *   CHAT-2: the topic was deleted, or another compaction/history rewrite moved the trim boundary mid-summarize —
+ *   the stale result is discarded to protect data)
  * - failed: summary and archive both failed, history unchanged
  */
 export type CompactOutcome =
@@ -189,7 +190,8 @@ export type CompactOutcome =
         | 'below-threshold'
         | 'short-history'
         | 'nothing-to-compact'
-        | 'topic-switched'
+        | 'superseded'
+        | 'topic-gone'
         | 'empty-result';
     }
   | { kind: 'failed'; error: string };

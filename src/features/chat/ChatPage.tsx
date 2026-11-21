@@ -1,4 +1,4 @@
-import { Component, createSignal, onMount, onCleanup, createEffect, Show } from 'solid-js';
+import { Component, createSignal, onMount, onCleanup, createEffect, on, Show } from 'solid-js';
 import {
   appendMessage,
   callLlmStream,
@@ -77,11 +77,16 @@ import {
   setPendingApprovals,
   pendingQuestions,
   setPendingQuestions,
+  activeSidePanelTab,
+  diffPanelTabs,
+  resetDiffPanelTabs,
 } from '../../core/store/store';
 // P3（localStorage 裸调收编）：面板布局持久化经 core/store/layout 域 API
 import {
+  loadDiffPanelWidth,
   loadPanelCollapsed,
   loadPanelWidth,
+  saveDiffPanelWidth,
   savePanelCollapsed,
   savePanelWidth,
 } from '../../core/store/layout';
@@ -94,6 +99,9 @@ import ProjectMcpTrustModal from './components/ProjectMcpTrustModal';
 import ChatInterface from './components/ChatInterface';
 import SubagentConversationView from './components/SubagentConversationView';
 import TopicSidebar from './components/TopicSidebar';
+import SidePanelShell from './components/SidePanelShell';
+import SidePanelTabs from './components/SidePanelTabs';
+import DiffPanel from './components/DiffPanel';
 import { Portal } from 'solid-js/web';
 import ShareModal from './components/ShareModal';
 import ProblemsPanel from './components/ProblemsPanel';
@@ -134,6 +142,7 @@ const createAssistant = (name?: string, id?: string): Assistant => ({
 const ChatPage: Component = () => {
   const [leftPanelWidth, setLeftPanelWidth] = createSignal(loadPanelWidth('left')); // left panel width percentage (assistant list), default 18%, range 15%-30%
   const [rightPanelWidth, setRightPanelWidth] = createSignal(loadPanelWidth('right')); // right panel width percentage (topic list), default 18%, range 15%-30%
+  const [diffPanelWidth, setDiffPanelWidth] = createSignal(loadDiffPanelWidth()); // wider width for the file-diff tab, default 42%, range 15%-55%
   const [isLeftCollapsed, setIsLeftCollapsed] = createSignal(loadPanelCollapsed('left')); // left/right panel width adjustment logic
   const [isRightCollapsed, setIsRightCollapsed] = createSignal(loadPanelCollapsed('right'));
   const [inputMessage, setInputMessage] = createSignal(''); // message text currently in the input box
@@ -198,13 +207,21 @@ const ChatPage: Component = () => {
     isRightCollapsed,
   });
 
+  /** Active diff tab of the right-hand panel (undefined while the topic list is shown). */
+  const activeDiffTab = () => diffPanelTabs().find((tab) => tab.id === activeSidePanelTab());
+  /** Whether the right-hand panel is showing a file diff (wider width, drag max 55%). */
+  const showingDiff = () => activeDiffTab() !== undefined;
+
   /**
    * Compute the right panel display width.
    * @returns {number} live tracking width while dragging (H-3: preview signal,
-   *   persistence commits only on release), otherwise the remembered width; 0 when collapsed
+   *   persistence commits only on release), otherwise the width remembered for the
+   *   active tab kind (topics = narrow, file diff = wide); 0 when collapsed
    */
   const displayRightWidth = () =>
-    isRightCollapsed() ? 0 : (rightDragWidth() ?? rightPanelWidth());
+    isRightCollapsed()
+      ? 0
+      : (rightDragWidth() ?? (showingDiff() ? diffPanelWidth() : rightPanelWidth()));
 
   /**
    * Toggle the left panel collapsed state.
@@ -560,7 +577,6 @@ const ChatPage: Component = () => {
       switchToChat,
       switchToProject,
       isThinking,
-      setIsThinking,
       handleStopGeneration,
       reasoningLevel,
       webSearchEnabled,
@@ -698,6 +714,33 @@ const ChatPage: Component = () => {
   createEffect(() => {
     savePanelWidth('right', rightPanelWidth());
   });
+  createEffect(() => {
+    saveDiffPanelWidth(diffPanelWidth());
+  });
+
+  // Activating a diff tab must reveal the panel even if the topic sidebar was
+  // collapsed; collapsing it afterwards stays collapsed (the effect only tracks the
+  // active tab id, not the collapsed flag).
+  createEffect(
+    on([activeSidePanelTab, diffPanelTabs], ([tab, tabs]) => {
+      if (tab === 'topics' || !tabs.some((item) => item.id === tab) || !isRightCollapsed()) return;
+      setIsRightCollapsed(false);
+      savePanelCollapsed('right', false);
+    }),
+  );
+
+  // Diff tabs belong to the conversation: switching assistant/topic clears them and
+  // returns the panel to the topic list (width animates back to the narrow width).
+  let prevPanelScope = '';
+  createEffect(() => {
+    const scope = `${currentAssistantId()}|${currentTopicId()}`;
+    if (prevPanelScope === '' || prevPanelScope === scope) {
+      prevPanelScope = scope;
+      return;
+    }
+    prevPanelScope = scope;
+    resetDiffPanelTabs();
+  });
 
   // auto-detect and start language servers when the project switches
   createEffect(() => {
@@ -821,18 +864,37 @@ const ChatPage: Component = () => {
         </Show>
       </div>
 
-      <TopicSidebar
+      <SidePanelShell
         width={displayRightWidth()}
         isCollapsed={isRightCollapsed()}
-        onToggle={toggleRight}
-        onResize={(e) => !isRightCollapsed() && startResizeRight(e)}
-        currentAssistant={currentAssistant()}
-        editingTopicId={editingTopicId()}
-        setEditingTopicId={setEditingTopicId}
-        addTopic={addTopic}
-        onExportTopic={(topicId) => enterSelectionMode(topicId)}
         isResizing={isResizing()}
-      />
+        scrollMode={showingDiff() ? 'always' : 'hover'}
+        onResize={(e) =>
+          !isRightCollapsed() &&
+          startResizeRight(
+            e,
+            showingDiff() ? 55 : 30,
+            showingDiff() ? setDiffPanelWidth : undefined,
+          )
+        }
+        onToggle={toggleRight}
+        header={<SidePanelTabs />}
+      >
+        <Show
+          when={activeDiffTab()}
+          fallback={
+            <TopicSidebar
+              currentAssistant={currentAssistant()}
+              editingTopicId={editingTopicId()}
+              setEditingTopicId={setEditingTopicId}
+              addTopic={addTopic}
+              onExportTopic={(topicId) => enterSelectionMode(topicId)}
+            />
+          }
+        >
+          {(tab) => <DiffPanel tab={tab()} />}
+        </Show>
+      </SidePanelShell>
 
       <Portal>
         <ShareModal

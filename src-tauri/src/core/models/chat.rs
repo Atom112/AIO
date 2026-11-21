@@ -165,7 +165,7 @@ pub struct GeneratedImage {
 }
 
 /// A single chat message.
-#[derive(Serialize, Deserialize, Clone, Default)]
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct Message {
     pub id: Option<String>,

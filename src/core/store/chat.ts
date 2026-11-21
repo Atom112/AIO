@@ -342,6 +342,26 @@ export const saveSingleAssistantToBackend = async (id: string) => {
 };
 
 /**
+ * Persist ONLY a topic's core row (name/summary/trim boundary/flags).
+ *
+ * Use this for topic-level mutations on long conversations instead of
+ * `saveSingleAssistantToBackend`: the full save deep-clones the entire assistant
+ * (including multi-MB `agentSteps`/`toolCalls` on assistant messages) on the UI
+ * thread and ships it over IPC, which can freeze the window. This path sends
+ * O(topic core) and never serializes history.
+ */
+export const saveTopicCoreToBackend = async (asstId: string, topicId: string) => {
+  const asst = datas.assistants.find((a) => a.id === asstId);
+  const topic = asst?.topics.find((tp) => tp.id === topicId);
+  if (!topic) return;
+  try {
+    await upsertTopicMessages(asstId, topic, []);
+  } catch (err) {
+    console.error('[saveTopicCoreToBackend] failed:', err);
+  }
+};
+
+/**
  * Message-scoped incremental persistence (review H-2): upserts the topic's core
  * row plus ONLY the named messages. Replaces the stream/tool-result hot path's
  * full saveSingleAssistantToBackend, whose O(session-so-far) reactive-proxy deep
@@ -383,12 +403,35 @@ export const [pendingRenameRequest, setPendingRenameRequest] = createSignal<{
 // ====== Context compaction progress ======
 
 /**
- * Topic ID whose context is being compacted right now (manual /compact or the
- * conversation-end auto path). Renders an in-record "compacting" pill with a
- * spinner (mainstream visual feedback, cf. DSH's in-record compaction indicator);
- * null when idle. Cleared when the run settles.
+ * Topic IDs whose context is being compacted right now (manual /compact or the
+ * conversation-end auto path). A SET, not a single id: compaction is a background
+ * job per topic — switching topics must not cancel it, and two topics may compact
+ * concurrently. Renders an in-record "compacting" pill only when the user is
+ * looking at that topic; the job keeps running while they are elsewhere.
  */
-export const [compactingTopicId, setCompactingTopicId] = createSignal<string | null>(null);
+export const [compactingTopicIds, setCompactingTopicIds] = createSignal<ReadonlySet<string>>(
+  new Set(),
+);
+
+/** Mark a topic as compacting (idempotent). */
+export const beginCompaction = (topicId: string) => {
+  setCompactingTopicIds((prev) => {
+    if (prev.has(topicId)) return prev;
+    const next = new Set(prev);
+    next.add(topicId);
+    return next;
+  });
+};
+
+/** Clear a topic's compacting marker (idempotent). */
+export const endCompaction = (topicId: string) => {
+  setCompactingTopicIds((prev) => {
+    if (!prev.has(topicId)) return prev;
+    const next = new Set(prev);
+    next.delete(topicId);
+    return next;
+  });
+};
 
 /**
  * Trigger regeneration of a topic title (manual entry point).
@@ -416,8 +459,9 @@ export const requestRenameTopic = (asstId: string, topicId: string): boolean => 
     'renamed',
     false,
   );
-  // Persist asynchronously (does not block the UI)
-  void saveSingleAssistantToBackend(asstId);
+  // Persist asynchronously (topic core only; a full assistant save would deep-clone
+  // the entire history on the UI thread)
+  void saveTopicCoreToBackend(asstId, topicId);
 
   // Notify ChatPage via the signal
   setPendingRenameRequest({ asstId, topicId });

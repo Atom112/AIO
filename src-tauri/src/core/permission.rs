@@ -281,6 +281,20 @@ pub fn default_rules_for_mode(mode: &AgentMode) -> Vec<PermissionRule> {
                 &[AgentMode::Normal],
                 PermissionAction::Allow,
             ),
+            // 电脑控制：快照只读（桌面元信息 + 无障碍树），放行；
+            // 真实鼠标/键盘/进程动作逐次确认——它不受项目沙箱约束。
+            r(
+                "builtin-normal-allow-computer-snapshot",
+                tool_names::COMPUTER_SNAPSHOT,
+                &[AgentMode::Normal],
+                PermissionAction::Allow,
+            ),
+            r(
+                "builtin-normal-ask-computer-action",
+                tool_names::COMPUTER_ACTION,
+                &[AgentMode::Normal],
+                PermissionAction::Ask,
+            ),
             // Write operations: allowed without confirmation (工作区内修改 — the
             // sandbox still confines paths to the project root).
             r(
@@ -468,6 +482,19 @@ pub fn default_rules_for_mode(mode: &AgentMode) -> Vec<PermissionRule> {
             r(
                 "builtin-auto-allow-command",
                 tool_names::EXECUTE_COMMAND,
+                &[AgentMode::Auto, AgentMode::Danger],
+                PermissionAction::Allow,
+            ),
+            // 电脑控制：与 execute_command 同一「完全自治」契约（进入该档位时已确认风险）。
+            r(
+                "builtin-auto-allow-computer-snapshot",
+                tool_names::COMPUTER_SNAPSHOT,
+                &[AgentMode::Auto, AgentMode::Danger],
+                PermissionAction::Allow,
+            ),
+            r(
+                "builtin-auto-allow-computer-action",
+                tool_names::COMPUTER_ACTION,
                 &[AgentMode::Auto, AgentMode::Danger],
                 PermissionAction::Allow,
             ),

@@ -14,22 +14,12 @@
  * - On selection the query is replaced with the full command name; arguments are injected via $ARGUMENTS and handled by ChatPage
  */
 
-import {
-  Component,
-  createSignal,
-  createMemo,
-  createEffect,
-  onCleanup,
-  For,
-  Show,
-  Setter,
-} from 'solid-js';
+import { Component, createSignal, createMemo, createEffect, onCleanup, For, Show } from 'solid-js';
 import { Portal } from 'solid-js/web';
 import {
   getSlashCommands,
   getCommandDisplayDescription,
   getCommandArgumentHint,
-  type CommandAction,
 } from '../../core/shortcuts';
 import { t } from '../../core/i18n';
 
@@ -39,7 +29,19 @@ interface SlashCommandMenuProps {
   /** Current textarea text */
   inputMessage: string;
   /** Textarea text setter */
-  setInputMessage: Setter<string>;
+  setInputMessage: (value: string) => void;
+  /** Custom command source (e.g. a CLI agent's ACP command menu). When set,
+   * replaces the chat app's built-in slash commands; selection still only
+   * fills the input, so each host keeps its own execution path. */
+  commands?: SlashMenuCommand[];
+}
+
+/** Display shape shared by the built-in chat commands and agent commands. */
+export interface SlashMenuCommand {
+  /** Slash-prefixed label (e.g. "/compact"). */
+  label: string;
+  description: string;
+  argumentHint?: string;
 }
 
 // ---- matching utilities ----
@@ -93,8 +95,15 @@ const SlashCommandMenu: Component<SlashCommandMenuProps> = (props) => {
   let menuRef: HTMLDivElement | undefined;
   let justSelected = false;
 
-  // All slash commands
-  const allSlashCommands = createMemo(() => getSlashCommands());
+  // All slash commands (host-provided list or the chat registry)
+  const allSlashCommands = createMemo<SlashMenuCommand[]>(() => {
+    if (props.commands) return props.commands;
+    return getSlashCommands().map((cmd) => ({
+      label: cmd.label,
+      description: getCommandDisplayDescription(cmd),
+      argumentHint: getCommandArgumentHint(cmd),
+    }));
+  });
 
   // Fuzzy-filtered command list
   const filteredCommands = createMemo(() => {
@@ -103,7 +112,7 @@ const SlashCommandMenu: Component<SlashCommandMenuProps> = (props) => {
     return allSlashCommands().filter((cmd) => {
       // Match the command name (minus the / prefix) and the description
       const name = cmd.label.startsWith('/') ? cmd.label.slice(1) : cmd.label;
-      return fuzzyMatch(q, name) || fuzzyMatch(q, getCommandDisplayDescription(cmd));
+      return fuzzyMatch(q, name) || fuzzyMatch(q, cmd.description);
     });
   });
 
@@ -127,7 +136,7 @@ const SlashCommandMenu: Component<SlashCommandMenuProps> = (props) => {
   };
 
   // Select a command: place /commandName into the input (keeping arguments the user typed)
-  const selectCommand = (cmd: CommandAction) => {
+  const selectCommand = (cmd: SlashMenuCommand) => {
     const ta = props.textareaRef;
     if (!ta) return;
 
@@ -312,14 +321,14 @@ const SlashCommandMenu: Component<SlashCommandMenuProps> = (props) => {
                   <span class="text-[13px] font-semibold text-white/85 whitespace-nowrap font-mono">
                     {cmd.label}
                   </span>
-                  <Show when={getCommandArgumentHint(cmd)}>
+                  <Show when={cmd.argumentHint}>
                     <span class="text-[11px] text-white/30 italic whitespace-nowrap overflow-hidden text-ellipsis">
-                      {getCommandArgumentHint(cmd)}
+                      {cmd.argumentHint}
                     </span>
                   </Show>
                 </div>
                 <span class="text-[11px] text-white/30 whitespace-nowrap overflow-hidden text-ellipsis shrink text-right">
-                  {getCommandDisplayDescription(cmd)}
+                  {cmd.description}
                 </span>
               </div>
             );

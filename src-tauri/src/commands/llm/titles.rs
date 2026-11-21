@@ -109,25 +109,31 @@ pub async fn summarize_history(
 /// - `locale` — UI language ("en-US" gets the English placeholder, otherwise Chinese)
 ///
 /// # Behavior
-/// Writes {app_data}/archives/{uuid}.txt (directory shared with the read_artifact tool) and
-/// returns a locale-dependent `[Archive #id]`-style placeholder; the model can call
-/// read_artifact with that placeholder ID to read the original content back.
+/// Parses the messages JSON and writes {app_data}/archives/{uuid}.txt (directory shared
+/// with the read_artifact tool) on the blocking pool, then returns a locale-dependent
+/// `[Archive #id]`-style placeholder. The command is async on purpose: a synchronous
+/// command would parse and write on the Tauri main thread (window message loop),
+/// freezing the UI for the duration of a large archive.
 #[tauri::command]
-pub fn archive_history(
+pub async fn archive_history(
     app: tauri::AppHandle,
     messages_json: String,
     model: String,
     locale: Option<String>,
 ) -> Result<String, String> {
-    let messages: Vec<serde_json::Value> = serde_json::from_str(&messages_json)
-        .map_err(|e| format!("Invalid messages JSON: {}", e))?;
-    if messages.is_empty() {
-        return Err(ierr!(
-            "归档需要至少一条消息",
-            "Archive requires at least one message"
-        ));
-    }
-    archive_early_messages(&app, &messages, &model, &locale.unwrap_or_default())
+    tauri::async_runtime::spawn_blocking(move || {
+        let messages: Vec<serde_json::Value> = serde_json::from_str(&messages_json)
+            .map_err(|e| format!("Invalid messages JSON: {}", e))?;
+        if messages.is_empty() {
+            return Err(ierr!(
+                "归档需要至少一条消息",
+                "Archive requires at least one message"
+            ));
+        }
+        archive_early_messages(&app, &messages, &model, &locale.unwrap_or_default())
+    })
+    .await
+    .map_err(|e| ierr!("归档线程失败: {}", "Archive task failed: {}", e))?
 }
 
 /// Clean a raw model-returned string into a well-formed title:

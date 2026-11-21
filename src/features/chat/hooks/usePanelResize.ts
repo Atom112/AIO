@@ -162,15 +162,16 @@ export function usePanelResize(deps: PanelResizeDeps) {
   };
 
   /** Drag-resize the right panel (preview while dragging; commit to the persisted width on release). */
-  const startResizeRight = (e: MouseEvent) => {
+  const startResizeRight = (e: MouseEvent, maxPct = 30, onCommit?: (width: number) => void) => {
     e.preventDefault();
     setIsResizing(true);
     const totalW = chatPageRef()?.offsetWidth ?? window.innerWidth;
 
     const handleMove = (moveEvent: MouseEvent) => {
       const pct = (moveEvent.clientX / totalW) * 100;
-      // Preview only: no persistence writes until mouseup (H-3).
-      setRightDragWidth(Math.min(Math.max(100 - pct, 15), 30));
+      // Preview only: no persistence writes until mouseup (H-3). File-diff tabs pass
+      // a larger max so the panel can grow past the topic sidebar's 30% ceiling.
+      setRightDragWidth(Math.min(Math.max(100 - pct, 15), maxPct));
     };
 
     const stopResize = () => {
@@ -179,7 +180,7 @@ export function usePanelResize(deps: PanelResizeDeps) {
       setIsResizing(false);
       const dragged = rightDragWidth();
       if (dragged !== null) {
-        setRightPanelWidth(dragged);
+        (onCommit ?? setRightPanelWidth)(dragged);
         setRightDragWidth(null);
       }
     };

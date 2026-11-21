@@ -1,93 +1,31 @@
 import { createSignal, For, Show } from 'solid-js';
 import { revertFileChange } from '../../core/api/project';
-import { currentProject } from '../../core/store/store';
+import { currentProject, openDiffPanelTab } from '../../core/store/store';
 import { t } from '../../core/i18n';
 import type { FileChangeInfo } from '../../core/store/store';
+import Icon from './Icon';
+import DiffLines, { ACTION_COLORS, actionLabel, parseSummary } from './DiffLines';
 
 interface DiffViewProps {
   changes: FileChangeInfo[];
   /** True when the whole round of file changes was batch-reverted; all cards dim and per-item revert buttons are hidden */
   allReverted?: boolean;
-}
-
-const ACTION_COLORS: Record<FileChangeInfo['action'], string> = {
-  create: 'rgba(80, 220, 100, 0.8)',
-  modify: 'rgba(252, 196, 72, 0.8)',
-  delete: 'rgba(255, 80, 80, 0.8)',
-};
-
-/**
- * FE-06: resolved lazily per render — the previous module-level object froze
- * `t()` at module-load locale, leaving these labels stuck in the old language
- * after a switch.
- */
-const actionLabel = (action: FileChangeInfo['action']): string => {
-  switch (action) {
-    case 'create':
-      return t('diff.new');
-    case 'modify':
-      return t('diff.mod');
-    case 'delete':
-      return t('diff.del');
-  }
-};
-
-function parseDiffLines(diff: string): { type: 'ctx' | 'add' | 'del' | 'hdr'; text: string }[] {
-  const lines: { type: 'ctx' | 'add' | 'del' | 'hdr'; text: string }[] = [];
-  for (const line of diff.split('\n')) {
-    if (line.startsWith('@@')) {
-      lines.push({ type: 'hdr', text: line });
-    } else if (line.startsWith('+') && !line.startsWith('+++')) {
-      lines.push({ type: 'add', text: line });
-    } else if (line.startsWith('-') && !line.startsWith('---')) {
-      lines.push({ type: 'del', text: line });
-    } else {
-      lines.push({ type: 'ctx', text: line });
-    }
-  }
-  return lines;
-}
-
-/** Parse hunk header `@@ -1,5 +1,6 @@` into red/green segments */
-function parseHunkHeader(text: string): { text: string; color?: string }[] {
-  const segs: { text: string; color?: string }[] = [];
-  // regex: match leading @@, then -N[,M], then +N[,M], then trailing @@
-  const m = text.match(/^(@@\s*)(-\d+(?:,\d+)?)(\s+)(\+\d+(?:,\d+)?)(\s*@@)/);
-  if (m) {
-    segs.push({ text: m[1] });
-    segs.push({ text: m[2], color: 'var(--color-danger)' }); // red for removed line range
-    segs.push({ text: m[3] });
-    segs.push({ text: m[4], color: 'var(--color-success)' }); // green for added line range
-    segs.push({ text: m[5] });
-  } else {
-    segs.push({ text });
-  }
-  return segs;
-}
-
-/** Parse summary `+N -M` into red/green segments */
-function parseSummary(summary: string): { text: string; color?: string }[] {
-  const segs: { text: string; color?: string }[] = [];
-  // split on whitespace, preserve delimiters
-  const parts = summary.split(/(\s+)/g);
-  for (const p of parts) {
-    if (p.startsWith('+')) {
-      segs.push({ text: p, color: 'var(--color-success)' });
-    } else if (p.startsWith('-')) {
-      segs.push({ text: p, color: 'var(--color-danger)' });
-    } else {
-      segs.push({ text: p });
-    }
-  }
-  return segs;
+  /**
+   * Where a file's diff detail opens:
+   * - `inline` (default): expand inside the bubble (harness approval preview);
+   * - `side-panel`: keep the bubble compact and open the diff as a tab in the
+   *   chat's right-hand panel (the bubbles themselves stay in the transcript).
+   */
+  detailMode?: 'inline' | 'side-panel';
 }
 
 const DiffView = (props: DiffViewProps) => {
+  const sidePanel = () => props.detailMode === 'side-panel';
+
   return (
     <For each={props.changes}>
       {(change) => {
         const [expanded, setExpanded] = createSignal(false);
-        const diffLines = () => parseDiffLines(change.diff);
 
         const handleRevert = async () => {
           try {
@@ -98,6 +36,7 @@ const DiffView = (props: DiffViewProps) => {
             console.error('Revert failed:', err);
           }
         };
+
         return (
           <div
             class="rounded-md overflow-hidden mb-1.5 border border-white/[0.06] bg-white/[0.01] transition-opacity duration-300"
@@ -106,7 +45,12 @@ const DiffView = (props: DiffViewProps) => {
             <button
               type="button"
               class="flex items-center gap-2 w-full px-2.5 py-1.5 cursor-pointer select-none bg-white/[0.03] border-none text-[13px] transition-colors hover:bg-white/[0.05]"
-              onClick={() => setExpanded(!expanded())}
+              title={sidePanel() ? t('chat.sidePanel.openDiff') : undefined}
+              onClick={() =>
+                sidePanel()
+                  ? openDiffPanelTab(change, !!props.allReverted)
+                  : setExpanded(!expanded())
+              }
             >
               <span
                 class="flex items-center justify-center w-4 h-4 rounded bg-white/[0.05] shrink-0"
@@ -172,76 +116,51 @@ const DiffView = (props: DiffViewProps) => {
               </Show>
               <span
                 class="flex items-center justify-center shrink-0 text-white/20 transition-transform duration-150 w-4 h-4"
-                style={{ transform: expanded() ? 'rotate(180deg)' : 'rotate(0deg)' }}
-              >
-                <svg
-                  xmlns="http://www.w3.org/2000/svg"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke-width="2"
-                  stroke="currentColor"
-                  class="w-3 h-3"
-                >
-                  <path
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    d="M19.5 8.25l-7.5 7.5-7.5-7.5"
-                  />
-                </svg>
-              </span>
-            </button>
-            <div
-              style={{
-                'max-height': expanded() ? '320px' : '0px',
-                opacity: expanded() ? '1' : '0',
-                transition: 'max-height 0.2s ease, opacity 0.15s ease',
-                overflow: 'hidden',
-              }}
-            >
-              <div
-                class="overflow-x-auto overflow-y-auto"
                 style={{
-                  'max-height': '320px',
-                  'font-family':
-                    "'Cascadia Code', 'Fira Code', 'JetBrains Mono', Consolas, monospace",
-                  'font-size': '12px',
-                  'line-height': '1.5',
+                  transform: !sidePanel() && expanded() ? 'rotate(180deg)' : 'rotate(0deg)',
                 }}
               >
-                <For each={diffLines()}>
-                  {(dl) => {
-                    const hunkSegs = () => (dl.type === 'hdr' ? parseHunkHeader(dl.text) : null);
-                    const addColor = 'rgba(80, 220, 100, 0.7)';
-                    const delColor = 'rgba(255, 80, 80, 0.7)';
-                    return (
-                      <div
-                        class="px-2.5 py-px whitespace-pre"
-                        classList={{
-                          'bg-emerald-500/[0.08]': dl.type === 'add',
-                          'bg-red-500/[0.08]': dl.type === 'del',
-                          'text-white/20 font-medium': dl.type === 'hdr',
-                          'text-white/40': dl.type === 'ctx',
-                        }}
-                        style={{
-                          color:
-                            dl.type === 'add' ? addColor : dl.type === 'del' ? delColor : undefined,
-                        }}
-                      >
-                        <Show when={dl.type === 'hdr' && hunkSegs()} fallback={dl.text || ' '}>
-                          <For each={hunkSegs()!}>
-                            {(seg) => (
-                              <span style={seg.color ? { color: seg.color } : undefined}>
-                                {seg.text}
-                              </span>
-                            )}
-                          </For>
-                        </Show>
-                      </div>
-                    );
+                <Show when={!sidePanel()} fallback={<Icon name="chevron-right" size={12} />}>
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke-width="2"
+                    stroke="currentColor"
+                    class="w-3 h-3"
+                  >
+                    <path
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      d="M19.5 8.25l-7.5 7.5-7.5-7.5"
+                    />
+                  </svg>
+                </Show>
+              </span>
+            </button>
+            <Show when={!sidePanel()}>
+              <div
+                style={{
+                  'max-height': expanded() ? '320px' : '0px',
+                  opacity: expanded() ? '1' : '0',
+                  transition: 'max-height 0.2s ease, opacity 0.15s ease',
+                  overflow: 'hidden',
+                }}
+              >
+                <div
+                  class="overflow-x-auto overflow-y-auto"
+                  style={{
+                    'max-height': '320px',
+                    'font-family':
+                      "'Cascadia Code', 'Fira Code', 'JetBrains Mono', Consolas, monospace",
+                    'font-size': '12px',
+                    'line-height': '1.5',
                   }}
-                </For>
+                >
+                  <DiffLines diff={change.diff} />
+                </div>
               </div>
-            </div>
+            </Show>
           </div>
         );
       }}

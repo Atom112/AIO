@@ -480,6 +480,16 @@ pub(crate) fn build_main_tool_set(
         );
         orch_tools.push(shell_spec);
 
+        // 电脑控制（computer_snapshot / computer_action）：只给主智能体——
+        // 子智能体不持有桌面能力（并发子代理同时操作同一张桌面没有安全语义）。
+        for spec in crate::utils::computer::get_tool_specs() {
+            orch_map.insert(
+                spec.function.name.clone(),
+                crate::core::ids::BUILTIN_SERVER_ID.into(),
+            );
+            orch_tools.push(spec);
+        }
+
         (orch_tools, orch_map)
     } else if web_search_enabled {
         // inject web tools only (web search in chat mode)

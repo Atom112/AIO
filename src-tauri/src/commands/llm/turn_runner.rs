@@ -126,6 +126,16 @@ impl AgentTurnRunner {
             resume_seed,
         } = self;
 
+        // 电脑控制的视觉路由素材：主模型三元组 + UI 语言 + 「vision」档位覆盖。
+        // 真正的路由解析（模型目录 + 密钥库）只在模型请求截图时才发生（见 execute_builtin_tool）。
+        let computer_vision = crate::commands::llm::vision::ComputerVisionCtx::new(
+            &api_url,
+            &api_key,
+            &model,
+            Some(locale_c.as_str()),
+            &profile_overrides_c,
+        );
+
         // Unwrap Skills (the frontend passes them only in Agent mode; empty in chat mode)
         let skills = skills.unwrap_or_default();
         // Load the app config (incl. auto-retry, subagent concurrency cap, memory toggle);
@@ -835,6 +845,7 @@ impl AgentTurnRunner {
                         let pid = project_id_c.clone();
                         let mode = agent_mode.clone();
                         let tok = token_inner.clone();
+                        let vision_c = computer_vision.clone();
                         let fut = Box::pin(async move {
                             execute_builtin_tool(
                                 &app_c2,
@@ -845,6 +856,7 @@ impl AgentTurnRunner {
                                 &tok,
                                 "main-agent",
                                 None,
+                                Some(&vision_c),
                             )
                             .await
                         });
@@ -860,6 +872,7 @@ impl AgentTurnRunner {
                             &token_inner,
                             "main-agent",
                             None,
+                            Some(&computer_vision),
                         )
                         .await
                     } else {

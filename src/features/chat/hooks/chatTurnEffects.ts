@@ -17,15 +17,20 @@ import {
   currentAssistantId,
   currentTopicId,
   datas,
-  saveSingleAssistantToBackend,
+  saveTopicCoreToBackend,
   selectedModel,
   setDatas,
+  type ActivatedModel,
   type CompactOutcome,
   type Message,
   type Topic,
 } from '../../../core/store/store';
 import { locale, t } from '../../../core/i18n';
-import { serializeConversationForSummary } from '../utils/compaction';
+import {
+  buildArchiveMessages,
+  canApplyCompaction,
+  serializeConversationForSummary,
+} from '../utils/compaction';
 
 /**
  * Get the context window size of the currently selected model (read from the model
@@ -225,7 +230,7 @@ export const checkAndRename = async (eventAsstId: string, eventTopicId: string) 
       'renamed',
       true,
     );
-    await saveSingleAssistantToBackend(eventAsstId);
+    await saveTopicCoreToBackend(eventAsstId, eventTopicId);
     if (activeTitleGen === task) activeTitleGen = null;
     console.warn('Auto-rename failed, no fallback available:', llmError);
     return;
@@ -241,7 +246,7 @@ export const checkAndRename = async (eventAsstId: string, eventTopicId: string) 
       'renamed',
       true,
     );
-    await saveSingleAssistantToBackend(eventAsstId);
+    await saveTopicCoreToBackend(eventAsstId, eventTopicId);
     if (activeTitleGen === task) activeTitleGen = null;
     return;
   }
@@ -256,7 +261,7 @@ export const checkAndRename = async (eventAsstId: string, eventTopicId: string) 
       renamed: true,
     },
   );
-  await saveSingleAssistantToBackend(eventAsstId);
+  await saveTopicCoreToBackend(eventAsstId, eventTopicId);
   if (activeTitleGen === task) activeTitleGen = null;
   console.log(`Topic auto-renamed: ${latestTopic.name} -> ${newName}`);
 };
@@ -275,6 +280,21 @@ export const estimateMsgTokens = (m: Message): number => {
   return cjk + Math.ceil((text.length - cjk) / 4) + 8;
 };
 
+/** Options for a compaction run. The ids pin the job to the topic that produced it
+ *  (auto path / manual command), so a topic switch cannot redirect the result. */
+export interface CompactOptions {
+  force?: boolean;
+  assistantId?: string;
+  topicId?: string;
+}
+
+/**
+ * Per-topic in-flight jobs (`assistantId:topicId`). A second request for the same
+ * topic joins the running job instead of starting a competing summarization; a
+ * request for another topic runs independently. Entries are removed on settle.
+ */
+const compactionJobs = new Map<string, Promise<CompactOutcome>>();
+
 /**
  * Check and summarize conversation history (token-based).
  * Automatic path (conversation-end event): compress when usage exceeds 75% of the
@@ -288,14 +308,57 @@ export const estimateMsgTokens = (m: Message): number => {
  * raw entries). On summarize failure, falls back to local archiving
  * (snapcompact-style): early context is not lost and can be read back via read_artifact.
  */
-export const checkAndSummarize = async (
+export const checkAndSummarize = (
   keepBudgetOverride?: number,
-  opts?: { force?: boolean },
+  opts?: CompactOptions,
 ): Promise<CompactOutcome> => {
-  const topic = activeTopic();
-  const currentMdl = selectedModel();
-  if (!topic || !currentMdl) return { kind: 'skipped', reason: 'nothing-to-compact' };
+  const explicitTopicId = opts?.topicId;
+  let asstId: string | undefined = opts?.assistantId ?? currentAssistantId() ?? undefined;
+  let topic: Topic | null | undefined;
 
+  if (explicitTopicId) {
+    // Pinned topic: the auto path passes the assistant/topic that produced the done
+    // event, so a switch inside the +500ms delay cannot compact the wrong topic.
+    const owner = opts?.assistantId
+      ? datas.assistants.find((a) => a.id === opts.assistantId)
+      : datas.assistants.find((a) => a.topics.some((tp) => tp.id === explicitTopicId));
+    asstId = owner?.id;
+    topic = owner?.topics.find((tp) => tp.id === explicitTopicId);
+  } else {
+    topic = activeTopic();
+  }
+
+  const currentMdl = selectedModel();
+  if (!asstId || !topic || !currentMdl) {
+    return Promise.resolve({ kind: 'skipped', reason: 'nothing-to-compact' });
+  }
+
+  const key = `${asstId}:${topic.id}`;
+  const existing = compactionJobs.get(key);
+  if (existing) return existing;
+
+  const job = runCheckAndSummarize(topic, asstId, currentMdl, keepBudgetOverride, opts);
+  compactionJobs.set(key, job);
+  const clear = () => {
+    if (compactionJobs.get(key) === job) compactionJobs.delete(key);
+  };
+  void job.then(clear, clear);
+  return job;
+};
+
+/**
+ * Run one compaction for a pinned topic. The topic/assistant ids are captured once:
+ * the summarization await may span seconds and the user may switch topics or
+ * assistants. The result is applied to the captured topic via a compare-and-swap
+ * (trim boundary + boundary message id), never to whatever topic is active later.
+ */
+const runCheckAndSummarize = async (
+  topic: Topic,
+  asstId: string,
+  currentMdl: ActivatedModel,
+  keepBudgetOverride?: number,
+  opts?: CompactOptions,
+): Promise<CompactOutcome> => {
   // get the current model's context window size
   const maxContext = await getModelContextWindow();
 
@@ -371,6 +434,11 @@ export const checkAndSummarize = async (
   // pi's compaction)
   const spanToSummarize = topic.history.slice(oldTrim, oldTrim + summarizeCount);
   const newBoundary = oldTrim + summarizeCount;
+  // Snapshot identity for the compare-and-swap at persist time: the trim boundary
+  // plus the id of the last summarized message. A clear/branch/rewrite during the
+  // summarize await invalidates the snapshot; new messages appended after the
+  // boundary do not.
+  const expectedBoundaryId = topic.history[newBoundary - 1]?.id ?? null;
 
   // pi-style serialized summarizer input: plain-text turns with truncated tool
   // results (the raw JSON form could exceed the summarizer's own context window).
@@ -398,33 +466,50 @@ export const checkAndSummarize = async (
   // Persist: move the context boundary and replace topic.summary with the new summary
   // or archive placeholder. The DISPLAYED history is never modified — messages stay
   // in the message record after compaction (user-visible, like DSH / ZCode / pi).
+  // Apply to the CAPTURED topic (not the active one): compaction is a background job,
+  // so switching topics must neither cancel nor redirect it.
   const persistCompactedTopic = async (newSummary: string): Promise<CompactOutcome> => {
-    const latestTopic = activeTopic();
-    if (!latestTopic) return { kind: 'skipped', reason: 'nothing-to-compact' };
-    // CHAT-2: 入口捕获的话题与当前话题必须一致——多秒 summarize await 期间切换话题后，
-    // 旧边界落到新话题会错误裁掉其上下文
-    if (latestTopic.id !== topic.id) {
-      console.warn('[Context] topic switched during compression, discarding persistence');
-      return { kind: 'skipped', reason: 'topic-switched' } as CompactOutcome;
+    const latestAsst = datas.assistants.find((a) => a.id === asstId);
+    const latestTopic = latestAsst?.topics.find((tp) => tp.id === topic.id);
+    if (!latestTopic) return { kind: 'skipped', reason: 'topic-gone' };
+    // CAS: a second compaction, /clear, or branch may have moved the boundary while
+    // the summary request was in flight. Applying our stale index then would cut the
+    // wrong span, so discard it instead of clobbering newer state.
+    if (!canApplyCompaction(latestTopic, oldTrim, newBoundary, expectedBoundaryId)) {
+      console.warn('[Context] context changed during compression, discarding stale result');
+      return { kind: 'skipped', reason: 'superseded' };
     }
     setDatas(
       'assistants',
-      (a) => a.id === currentAssistantId(),
+      (a) => a.id === asstId,
       'topics',
-      (tp) => tp.id === latestTopic.id,
+      (tp) => tp.id === topic.id,
       {
         summary: newSummary,
         contextTrimCount: newBoundary,
       },
     );
-    await saveSingleAssistantToBackend(currentAssistantId()!);
+    // Topic-core-only persistence: the old full-assistant save deep-cloned the whole
+    // assistant (including multi-MB agentSteps/toolCalls) on the UI thread and shipped
+    // it over IPC — the main cause of the Windows "not responding" freeze.
+    await saveTopicCoreToBackend(asstId, topic.id);
     console.log('[Context] compression complete');
     return {
       kind: 'compressed',
       summarizedCount: summarizeCount,
-      keptCount: contextLen - summarizeCount,
+      keptCount: keepCount,
     };
   };
+
+  // Slim archive payload: only role/name/content, each bounded. The Rust archive
+  // writer never stores agentSteps/toolCalls, so sending them was pure UI-thread
+  // JSON work (megabytes per message) for no recovery value.
+  const archiveSpan = () =>
+    archiveHistory(
+      JSON.stringify(buildArchiveMessages(spanToSummarize)),
+      currentMdl.model_id,
+      locale(),
+    );
 
   try {
     const newSummarySnippet = await summarizeHistory(
@@ -435,11 +520,7 @@ export const checkAndSummarize = async (
     // Success path: still archive the raw span (best effort) so details dropped by
     // the summary stay reachable via read_artifact — beyond the mainstream baseline
     try {
-      const placeholder = await archiveHistory(
-        JSON.stringify(spanToSummarize),
-        currentMdl.model_id,
-        locale(),
-      );
+      const placeholder = await archiveSpan();
       return await persistCompactedTopic(withArchiveReference(newSummarySnippet, placeholder));
     } catch (archiveErr) {
       console.warn('[Context] span archive failed (summary kept, no read-back):', archiveErr);
@@ -449,11 +530,7 @@ export const checkAndSummarize = async (
     // summarize failed -> local archive fallback (zero API cost; in Agent mode the
     // read_artifact tool can read the original back via the placeholder ID)
     try {
-      const placeholder = await archiveHistory(
-        JSON.stringify(spanToSummarize),
-        currentMdl.model_id,
-        locale(),
-      );
+      const placeholder = await archiveSpan();
       const outcome = await persistCompactedTopic(withArchiveReference('', placeholder));
       return outcome.kind === 'compressed' ? { kind: 'archived', count: summarizeCount } : outcome;
     } catch (archiveErr) {

@@ -244,6 +244,23 @@ export function resolveSlashCommand(input: string): ResolvedSlashCommand | null 
   return result;
 }
 
+/**
+ * Locate a RECOGNIZED slash command at the start of the input (leading whitespace
+ * allowed, matching the send path's `trim().startsWith('/')` check). Returns the
+ * command token's character range so the input overlay can color only the command
+ * and leave its arguments in the normal text color.
+ */
+export function findLeadingSlashCommand(
+  input: string,
+): { start: number; end: number; token: string } | null {
+  const match = /^(\s*)(\/\S+)/.exec(input);
+  if (!match) return null;
+  const token = match[2];
+  if (!resolveSlashCommand(token)) return null;
+  const start = match[1].length;
+  return { start, end: start + token.length, token };
+}
+
 // ---- Shortcut binding management ----
 
 const STORAGE_KEY = 'aio-shortcut-bindings';

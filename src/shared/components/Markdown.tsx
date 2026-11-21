@@ -2,18 +2,23 @@ import { marked, Tokens } from 'marked';
 import { markedHighlight } from 'marked-highlight';
 import DOMPurify from 'dompurify';
 import { convertFileSrc } from '@tauri-apps/api/core';
-import { createMemo, Component, Index, Show } from 'solid-js';
+import { createMemo, Component, Index, Show, createEffect, onCleanup } from 'solid-js';
 import hljs from 'highlight.js';
 import 'highlight.js/styles/github-dark.css';
 import ThinkBlock from './ThinkBlock';
 import { t } from '../../core/i18n';
+import { isDarkMode } from '../../core/store/store';
 import { openSafeUrl } from '../../core/utils/safeUrl';
+import type { Mermaid } from 'mermaid';
 
 // Configure Marked highlighting and renderers
 marked.use(
   markedHighlight({
     langPrefix: 'hljs language-',
     highlight(code, lang) {
+      // Mermaid fences are not code: return the raw source so the renderer can
+      // escape it exactly once (hljs would pre-escape `-->` and break parsing).
+      if (lang.trim().split(/\s+/)[0].toLowerCase() === 'mermaid') return code;
       const language = hljs.getLanguage(lang) ? lang : 'plaintext';
       return hljs.highlight(code, { language }).value;
     },
@@ -197,14 +202,106 @@ export function getLangIcon(lang: string): string {
   return ICONS[key] ?? _FALLBACK;
 }
 
+/** Escape text placed inside a `<pre>` element (the raw mermaid source). */
+const escapeHtmlText = (text: string): string =>
+  text
+    .replace(/&/g, '&' + 'amp;')
+    .replace(/</g, '&' + 'lt;')
+    .replace(/>/g, '&' + 'gt;');
+
+/** Placeholder HTML for a mermaid fence; the async renderer fills the diagram. */
+const mermaidBlockHtml = (source: string): string => `
+    <div class="mermaid-block">
+        <pre class="mermaid-src">${escapeHtmlText(source)}</pre>
+        <div class="mermaid-diagram" role="img"></div>
+    </div>
+`;
+
+// Dynamic import keeps mermaid (large) out of the main chat bundle until a
+// diagram actually appears. The library is initialized once per theme.
+type MermaidApi = Mermaid;
+let mermaidPromise: Promise<MermaidApi> | null = null;
+let mermaidTheme: boolean | null = null;
+let mermaidSeq = 0;
+
+const loadMermaid = async (dark: boolean): Promise<MermaidApi> => {
+  const mermaid = await (mermaidPromise ??= import('mermaid').then((mod) => mod.default));
+  if (mermaidTheme !== dark) {
+    mermaid.initialize({
+      startOnLoad: false,
+      securityLevel: 'strict',
+      theme: dark ? 'dark' : 'default',
+      // Plain-text labels avoid HTML/foreignObject injection surfaces; the
+      // generated SVG is additionally sanitized below. Root-level htmlLabels is
+      // the non-deprecated switch (flowchart.htmlLabels is deprecated).
+      htmlLabels: false,
+    });
+    mermaidTheme = dark;
+  }
+  return mermaid;
+};
+
+/** Render one placeholder in place; generation tokens drop stale async results. */
+const renderMermaidBlock = async (block: HTMLElement, dark: boolean): Promise<void> => {
+  const source = block.querySelector('.mermaid-src')?.textContent ?? '';
+  if (!source.trim()) return;
+  const generation = (Number(block.dataset.generation) || 0) + 1;
+  block.dataset.generation = String(generation);
+  block.dataset.theme = String(dark);
+  try {
+    const mermaid = await loadMermaid(dark);
+    const { svg } = await mermaid.render(`aio-mermaid-${++mermaidSeq}`, source);
+    if (block.dataset.generation !== String(generation) || !block.isConnected) return;
+    // Mermaid's own output is still model-influenced: strip scripts, foreign
+    // objects and event handlers before it enters the DOM.
+    const safe = DOMPurify.sanitize(svg, {
+      USE_PROFILES: { svg: true, svgFilters: true },
+      FORBID_TAGS: ['script', 'foreignObject', 'iframe', 'object', 'embed'],
+      FORBID_ATTR: [
+        'onload',
+        'onclick',
+        'onerror',
+        'onmouseover',
+        'onmouseout',
+        'onmousemove',
+        'onfocus',
+        'onpointerenter',
+        'onpointerleave',
+        'onpointermove',
+      ],
+    });
+    const target = block.querySelector('.mermaid-diagram');
+    if (target) target.innerHTML = safe;
+    block.dataset.rendered = '1';
+    block.classList.remove('mermaid-failed');
+  } catch {
+    if (block.dataset.generation !== String(generation) || !block.isConnected) return;
+    // Invalid/incomplete diagram (common while streaming): keep the source
+    // visible instead of showing mermaid's error glyph.
+    block.dataset.rendered = 'error';
+    block.classList.add('mermaid-failed');
+  }
+};
+
+/** Render every pending diagram under the root for the current theme. */
+const renderMermaidBlocks = (root: HTMLElement, dark: boolean): void => {
+  root.querySelectorAll<HTMLElement>('.mermaid-block').forEach((block) => {
+    if (block.dataset.rendered && block.dataset.theme === String(dark)) return;
+    void renderMermaidBlock(block, dark);
+  });
+};
+
 /**
  * Override the code-block rendering rule (LobeHub style)
  * @param {Tokens.Code} token - code block token
  * @returns {string} HTML with a header bar and a copy button
  */
 renderer.code = (token: Tokens.Code) => {
-  const renderedCode = originalCodeRenderer(token);
   const lang = token.lang || 'plaintext';
+  if (lang.trim().split(/\s+/)[0].toLowerCase() === 'mermaid') {
+    return mermaidBlockHtml(token.text);
+  }
+  const renderedCode = originalCodeRenderer(token);
 
   return `
         <div class="group relative code-block my-5 rounded-xl overflow-clip bg-white/[0.04] border border-white/[0.06]">
@@ -328,7 +425,13 @@ const renderMarkdownHtml = (raw: string): string => {
   if (!raw.trim()) return '';
   const cached = renderCache.get(raw);
   if (cached !== undefined) return cached;
-  const html = marked.parse(raw) as string;
+  const parsed = marked.parse(raw) as string;
+  // Rounded, horizontally scrollable frame: the table itself stays a real
+  // table; the wrapper clips the corners and owns the scrollbar.
+  const html = parsed.replace(
+    /<table>([\s\S]*?)<\/table>/g,
+    '<div class="md-table-wrap"><table>$1</table></div>',
+  );
   const out = DOMPurify.sanitize(html, {
     // F2 (SEC): the model must not be able to render form controls inside a chat
     // bubble (counterfeit "enter your API key" UI) or <style>/<template>. The
@@ -394,6 +497,24 @@ interface MarkdownProps {
  */
 const Markdown: Component<MarkdownProps> = (props) => {
   const segments = createMemo(() => parseSegments(props.content || ''));
+  let rootRef: HTMLDivElement | undefined;
+  let mermaidTimer: number | undefined;
+
+  // Debounced post-render pass: streaming replaces the segment HTML frequently,
+  // so diagrams are rendered only after a short pause (and re-rendered when the
+  // theme changes). Generation tokens in renderMermaidBlock drop stale results.
+  createEffect(() => {
+    void props.content;
+    const dark = isDarkMode();
+    if (!rootRef) return;
+    if (mermaidTimer) window.clearTimeout(mermaidTimer);
+    mermaidTimer = window.setTimeout(() => {
+      if (rootRef) renderMermaidBlocks(rootRef, dark);
+    }, 300);
+  });
+  onCleanup(() => {
+    if (mermaidTimer) window.clearTimeout(mermaidTimer);
+  });
 
   /**
    * Handle code-block copy
@@ -455,6 +576,7 @@ const Markdown: Component<MarkdownProps> = (props) => {
 
   return (
     <div
+      ref={rootRef}
       class="markdown-body"
       onClick={(e) => {
         handleLinkClick(e);

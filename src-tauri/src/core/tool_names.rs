@@ -48,3 +48,7 @@ pub const CREATE_TASKS: &str = "create_tasks";
 pub const UPDATE_TASK: &str = "update_task";
 /// Ask the user a clarifying question.
 pub const ASK_USER: &str = "ask_user";
+/// Capture desktop state (window list + accessibility tree refs [+ screenshot]).
+pub const COMPUTER_SNAPSHOT: &str = "computer_snapshot";
+/// Perform a real mouse/keyboard/window action on the desktop.
+pub const COMPUTER_ACTION: &str = "computer_action";

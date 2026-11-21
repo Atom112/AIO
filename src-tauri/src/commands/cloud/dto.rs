@@ -321,3 +321,31 @@ pub struct AnnouncementList {
     #[serde(default)]
     pub items: Vec<CloudAnnouncement>,
 }
+
+/// One pending workspace invitation from `GET /v1/invitations`.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CloudInvitation {
+    pub id: String,
+    pub organization_id: String,
+    pub organization_name: String,
+    pub role: String,
+    pub status: String,
+    pub expires_at: String,
+    pub created_at: String,
+}
+
+/// `GET /v1/invitations` envelope.
+#[derive(Debug, Clone, Deserialize)]
+pub struct InvitationList {
+    #[serde(default)]
+    pub items: Vec<CloudInvitation>,
+}
+
+/// `POST /v1/invitations/:id/accept` result.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AcceptedInvitation {
+    pub organization_id: String,
+    pub role: String,
+}

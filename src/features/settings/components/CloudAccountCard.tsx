@@ -1,11 +1,15 @@
 // Team cloud account card: server URL, GitHub device sign-in, workspace binding and
 // sync controls. Mounted at the top of App settings; all state lives in the cloud store
 // so the sync loop and the card never disagree.
-import { Component, createMemo, createSignal, Show } from 'solid-js';
+import { Component, createMemo, createSignal, For, Show } from 'solid-js';
 import { openSafeUrl } from '../../../core/utils/safeUrl';
 import {
+  acceptCloudInvitation,
   bindCloudWorkspace,
   cloudDevicePrompt,
+  cloudInvitations,
+  invitationExpiresLabel,
+  rejectCloudInvitation,
   cloudLastError,
   cloudPending,
   cloudSession,
@@ -26,11 +30,15 @@ import {
   btnSecondary,
 } from '../../../shared/components/buttonStyles';
 
+type BusyKind = 'signin' | 'bind' | 'sync' | 'signout' | 'invitation';
+
 /** Settings card for the optional team cloud account and conversation sync. */
 export const CloudAccountCard: Component = () => {
   const [serverUrl, setServerUrl] = createSignal(cloudSession().serverUrl ?? '');
   const [workspaceId, setWorkspaceId] = createSignal(cloudSession().workspaceId ?? '');
-  const [busy, setBusy] = createSignal<'signin' | 'bind' | 'sync' | 'signout' | null>(null);
+  const [busy, setBusy] = createSignal<
+    'signin' | 'bind' | 'sync' | 'signout' | 'invitation' | null
+  >(null);
   const [localError, setLocalError] = createSignal<string | null>(null);
 
   const bound = createMemo(() => Boolean(cloudSession().workspaceId));
@@ -59,7 +67,7 @@ export const CloudAccountCard: Component = () => {
     }
   });
 
-  const run = async (kind: 'signin' | 'bind' | 'sync' | 'signout', action: () => Promise<void>) => {
+  const run = async (kind: BusyKind, action: () => Promise<void>) => {
     setBusy(kind);
     setLocalError(null);
     try {
@@ -99,6 +107,14 @@ export const CloudAccountCard: Component = () => {
       setServerUrl('');
       setWorkspaceId('');
     });
+
+  const onAcceptInvitation = (invitationId: string): void => {
+    void run('invitation', () => acceptCloudInvitation(invitationId));
+  };
+
+  const onDeclineInvitation = (invitationId: string): void => {
+    void run('invitation', () => rejectCloudInvitation(invitationId));
+  };
 
   return (
     <div
@@ -183,6 +199,51 @@ export const CloudAccountCard: Component = () => {
             </button>
           </div>
         )}
+      </Show>
+
+      <Show when={signedIn() && cloudInvitations().length > 0}>
+        <div class="py-3 border-b border-white/5">
+          <div class="text-[rgba(var(--text-base-rgb),0.93)] text-[14px] mb-2">
+            {t('settings.cloud.invitations.title')}
+          </div>
+          <div class="flex flex-col gap-2">
+            <For each={cloudInvitations()}>
+              {(invitation) => (
+                <div class="flex items-center justify-between gap-3 rounded-lg border border-[var(--border-dim)] bg-white/[0.06] px-3 py-2">
+                  <div class="min-w-0">
+                    <div class="text-xs text-white/90 truncate">
+                      {invitation.organizationName}
+                      <span class="ml-1.5 text-white/40">({invitation.role})</span>
+                    </div>
+                    <div class="text-[11px] text-white/40 mt-0.5">
+                      {t('settings.cloud.invitations.expires', {
+                        time: invitationExpiresLabel(invitation),
+                      })}
+                    </div>
+                  </div>
+                  <div class="flex items-center gap-2 shrink-0">
+                    <button
+                      type="button"
+                      class={btnPrimaryOutline}
+                      disabled={busy() !== null}
+                      onClick={() => onAcceptInvitation(invitation.id)}
+                    >
+                      {t('settings.cloud.invitations.join')}
+                    </button>
+                    <button
+                      type="button"
+                      class={btnSecondary}
+                      disabled={busy() !== null}
+                      onClick={() => onDeclineInvitation(invitation.id)}
+                    >
+                      {t('settings.cloud.invitations.decline')}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </For>
+          </div>
+        </div>
       </Show>
 
       <div class="flex justify-between items-center py-3 border-b border-white/5">

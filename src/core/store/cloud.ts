@@ -19,9 +19,12 @@ import {
   cloudBindWorkspace,
   cloudDevicePoll,
   cloudDeviceStart,
+  cloudAcceptInvitation,
   cloudListAnnouncements,
+  cloudListInvitations,
   cloudListWorkspaces,
   cloudLogout,
+  cloudRejectInvitation,
   cloudSessionStatus,
   cloudStartEvents,
   cloudStopEvents,
@@ -31,6 +34,7 @@ import {
   cloudSyncSnapshot,
   type CloudAnnouncement,
   type CloudAttachmentRef,
+  type CloudInvitation,
   type CloudDevicePollStatus,
   type CloudMe,
   type CloudRemoteChange,
@@ -41,6 +45,7 @@ import { appendMessage, loadAssistants } from '../api/chat';
 import { EVENTS } from '../api/events';
 import { datas, setDatas } from './chat';
 import { dismissedAnnouncementIds, dismissAnnouncement } from './cloudAnnouncements';
+import { invitationExpiryTime } from './cloudInvitations';
 import { mergeRemoteChanges } from './cloudMerge';
 import { asRecord, asString, attachmentRefs, patchMessage } from './cloudMergeHelpers';
 import { isThinking } from './stream';
@@ -81,6 +86,9 @@ export const [cloudAnnouncementDismissed, setCloudAnnouncementDismissed] = creat
   dismissedAnnouncementIds(),
 );
 
+/** Pending workspace invitations for the signed-in account. */
+export const [cloudInvitations, setCloudInvitations] = createSignal<CloudInvitation[]>([]);
+
 /** Interval between announcement refreshes; notices are not latency-sensitive. */
 const ANNOUNCEMENT_REFRESH_MS = 15 * 60 * 1000;
 
@@ -118,8 +126,10 @@ export async function initCloud(): Promise<void> {
   await refreshCloudSession();
   const session = cloudSession();
   if (!session.signedIn) return;
-  // Server-wide notices are worth showing before a workspace is bound.
+  // Server-wide notices are worth showing before a workspace is bound; the
+  // invitation list only needs a signed-in account.
   void refreshCloudAnnouncements();
+  void refreshCloudInvitations();
   startAnnouncementRefresh();
   if (session.workspaceId) {
     await cloudStartEvents().catch(() => undefined);
@@ -231,6 +241,7 @@ export async function bindCloudWorkspace(serverUrl: string, workspaceId: string)
   setCloudSession(session);
   setCloudStatus('idle');
   void refreshCloudAnnouncements();
+  void refreshCloudInvitations();
   await cloudStartEvents().catch(() => undefined);
   startLoop();
   void tick();
@@ -242,6 +253,7 @@ export async function signOutCloud(): Promise<void> {
   stopDevicePoll();
   stopAnnouncementRefresh();
   setCloudAnnouncements([]);
+  setCloudInvitations([]);
   clearDevicePrompt();
   await cloudStopEvents().catch(() => undefined);
   await cloudLogout();
@@ -290,6 +302,38 @@ function stopAnnouncementRefresh(): void {
   if (announcementTimer === null) return;
   window.clearInterval(announcementTimer);
   announcementTimer = null;
+}
+
+/** Reloads pending invitations; a failure keeps the previous list. */
+export async function refreshCloudInvitations(): Promise<void> {
+  if (!cloudSession().signedIn) {
+    setCloudInvitations([]);
+    return;
+  }
+  try {
+    setCloudInvitations(await cloudListInvitations());
+  } catch {
+    // Invitations are advisory until accepted; the settings card stays usable.
+  }
+}
+
+/** Joins the workspace behind an invitation and refreshes the workspace list. */
+export async function acceptCloudInvitation(invitationId: string): Promise<void> {
+  await cloudAcceptInvitation(invitationId);
+  await refreshCloudInvitations();
+  const serverUrl = cloudSession().serverUrl;
+  if (serverUrl) await loadCloudWorkspaces(serverUrl);
+}
+
+/** Declines an invitation; the row disappears from the pending list. */
+export async function rejectCloudInvitation(invitationId: string): Promise<void> {
+  await cloudRejectInvitation(invitationId);
+  await refreshCloudInvitations();
+}
+
+/** Expiry label for the settings card. */
+export function invitationExpiresLabel(invitation: CloudInvitation): string {
+  return invitationExpiryTime(invitation.expiresAt);
 }
 
 /** Hides one announcement for this installation and re-reads the dismissal list. */

@@ -7,9 +7,9 @@
 use serde_json::Value;
 
 use super::dto::{
-    AnnouncementList, AttachmentDownloadResponse, AttachmentInitResponse, CloudAnnouncement,
-    DeviceCodeResponse, DevicePoll, DeviceStart, DeviceTokenResponse, MeResponse, PullResponse,
-    PushResponse, SnapshotResponse,
+    AcceptedInvitation, AnnouncementList, AttachmentDownloadResponse, AttachmentInitResponse,
+    CloudAnnouncement, CloudInvitation, DeviceCodeResponse, DevicePoll, DeviceStart,
+    DeviceTokenResponse, InvitationList, MeResponse, PullResponse, PushResponse, SnapshotResponse,
 };
 
 /// Failure from the cloud API. `status` is `None` for transport-level errors.
@@ -226,6 +226,79 @@ pub(crate) async fn fetch_announcements(
     }
     let list: AnnouncementList = response.json().await?;
     Ok(list.items)
+}
+
+/// `GET /v1/invitations` — pending workspace invitations for this account.
+pub(crate) async fn fetch_invitations(
+    client: &reqwest::Client,
+    server_url: &str,
+    token: &str,
+) -> Result<Vec<CloudInvitation>, HttpError> {
+    let url = format!("{}/v1/invitations", api_base(server_url));
+    let response = client.get(url).bearer_auth(token).send().await?;
+    if !response.status().is_success() {
+        return Err(to_http_error(response).await);
+    }
+    let list: InvitationList = response.json().await?;
+    Ok(list.items)
+}
+
+/// Builds `/v1/invitations/<id>/<action>` with the id as a single path segment.
+fn invitation_action_url(
+    server_url: &str,
+    invitation_id: &str,
+    action: &str,
+) -> Result<reqwest::Url, HttpError> {
+    let mut url = reqwest::Url::parse(&format!("{}/v1/invitations", api_base(server_url)))
+        .map_err(HttpError::transport)?;
+    {
+        let mut segments = url
+            .path_segments_mut()
+            .map_err(|()| HttpError::transport("invitation cannot be a base URL"))?;
+        segments.push(invitation_id);
+        segments.push(action);
+    }
+    Ok(url)
+}
+
+/// `POST /v1/invitations/:id/accept` — joins the workspace.
+pub(crate) async fn accept_invitation(
+    client: &reqwest::Client,
+    server_url: &str,
+    token: &str,
+    invitation_id: &str,
+) -> Result<AcceptedInvitation, HttpError> {
+    let url = invitation_action_url(server_url, invitation_id, "accept")?;
+    let response = client
+        .post(url)
+        .bearer_auth(token)
+        .json(&serde_json::json!({}))
+        .send()
+        .await?;
+    if !response.status().is_success() {
+        return Err(to_http_error(response).await);
+    }
+    Ok(response.json().await?)
+}
+
+/// `POST /v1/invitations/:id/reject` — declines the invitation.
+pub(crate) async fn reject_invitation(
+    client: &reqwest::Client,
+    server_url: &str,
+    token: &str,
+    invitation_id: &str,
+) -> Result<(), HttpError> {
+    let url = invitation_action_url(server_url, invitation_id, "reject")?;
+    let response = client
+        .post(url)
+        .bearer_auth(token)
+        .json(&serde_json::json!({}))
+        .send()
+        .await?;
+    if !response.status().is_success() {
+        return Err(to_http_error(response).await);
+    }
+    Ok(())
 }
 
 /// `POST /api/auth/sign-out` — best effort; a failure never blocks local sign-out.

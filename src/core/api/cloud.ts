@@ -143,6 +143,29 @@ export interface CloudAnnouncement {
   endsAt: string | null;
 }
 
+/** One pending workspace invitation for the signed-in account. */
+export interface CloudInvitation {
+  id: string;
+  organizationId: string;
+  organizationName: string;
+  role: string;
+  status: string;
+  expiresAt: string;
+  createdAt: string;
+}
+
+/** Pending invitations for the linked account (empty array when signed out). */
+export const cloudListInvitations = (): Promise<CloudInvitation[]> =>
+  invoke<CloudInvitation[]>('cloud_list_invitations');
+
+/** Joins the workspace behind an invitation. */
+export const cloudAcceptInvitation = (invitationId: string) =>
+  invoke<{ organizationId: string; role: string }>('cloud_accept_invitation', { invitationId });
+
+/** Declines an invitation for this account. */
+export const cloudRejectInvitation = (invitationId: string) =>
+  invoke<void>('cloud_reject_invitation', { invitationId });
+
 /** Active announcements for the linked account (empty array when signed out). */
 export const cloudListAnnouncements = (): Promise<CloudAnnouncement[]> =>
   invoke<CloudAnnouncement[]>('cloud_list_announcements');

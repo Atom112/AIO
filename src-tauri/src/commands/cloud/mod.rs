@@ -29,7 +29,8 @@ use crate::core::secure_store;
 use crate::utils::url_validation::{validate_http_url, HttpUrlOptions};
 use apply::ApplyOutcome;
 use dto::{
-    CloudAnnouncement, DevicePoll, DeviceStart, MeResponse, RemoteAttachmentRef, RemoteChange,
+    AcceptedInvitation, CloudAnnouncement, CloudInvitation, DevicePoll, DeviceStart, MeResponse,
+    RemoteAttachmentRef, RemoteChange,
 };
 use outbox::Account;
 
@@ -320,6 +321,52 @@ pub async fn cloud_list_announcements(app: AppHandle) -> Result<Vec<CloudAnnounc
     };
     let state = app.state::<CloudState>();
     client::fetch_announcements(&state.client, &account.server_url, &token)
+        .await
+        .map_err(client::HttpError::into_message)
+}
+
+/// Pending workspace invitations for the linked account. Empty (not an error)
+/// when no account is linked, so the settings card renders nothing extra.
+#[tauri::command]
+pub async fn cloud_list_invitations(app: AppHandle) -> Result<Vec<CloudInvitation>, String> {
+    let Some(account) = sync_ops::account(&app)? else {
+        return Ok(Vec::new());
+    };
+    let Some(token) = session_token(&app) else {
+        return Ok(Vec::new());
+    };
+    let state = app.state::<CloudState>();
+    client::fetch_invitations(&state.client, &account.server_url, &token)
+        .await
+        .map_err(client::HttpError::into_message)
+}
+
+/// Joins the workspace behind an invitation. The caller refreshes the workspace
+/// list afterwards; this command only performs the accept.
+#[tauri::command]
+pub async fn cloud_accept_invitation(
+    app: AppHandle,
+    invitation_id: String,
+) -> Result<AcceptedInvitation, String> {
+    let account = sync_ops::account(&app)?
+        .ok_or_else(|| crate::ierr!("尚未登录云同步", "Not signed in to cloud sync"))?;
+    let token = session_token(&app)
+        .ok_or_else(|| crate::ierr!("尚未登录云同步", "Not signed in to cloud sync"))?;
+    let state = app.state::<CloudState>();
+    client::accept_invitation(&state.client, &account.server_url, &token, &invitation_id)
+        .await
+        .map_err(client::HttpError::into_message)
+}
+
+/// Declines an invitation to the caller's account.
+#[tauri::command]
+pub async fn cloud_reject_invitation(app: AppHandle, invitation_id: String) -> Result<(), String> {
+    let account = sync_ops::account(&app)?
+        .ok_or_else(|| crate::ierr!("尚未登录云同步", "Not signed in to cloud sync"))?;
+    let token = session_token(&app)
+        .ok_or_else(|| crate::ierr!("尚未登录云同步", "Not signed in to cloud sync"))?;
+    let state = app.state::<CloudState>();
+    client::reject_invitation(&state.client, &account.server_url, &token, &invitation_id)
         .await
         .map_err(client::HttpError::into_message)
 }

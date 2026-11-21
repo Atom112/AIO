@@ -866,22 +866,24 @@ const AppSettings: Component = () => {
         </div>
 
         <div class="flex flex-col gap-3">
-          <Dropdown
-            value={appFont()}
-            onChange={(value) => persistAppFont(value)}
-            options={fontOptions()}
-            placeholder={t('app.font.system')}
-            variant="ghost"
-            class="w-full max-w-[380px]"
-          />
-          <div class="w-full max-w-[380px]">
-            <span class="block text-[12px] text-white/40 mb-1">{t('app.font.size.title')}</span>
-            <StopSlider
-              value={appFontSize()}
-              stops={fontSizeOptions()}
-              onChange={(value) => persistAppFontSize(value as AppFontSize)}
-              ariaLabel={t('app.font.size.title')}
+          <div class="flex flex-wrap items-center gap-x-6 gap-y-3">
+            <Dropdown
+              value={appFont()}
+              onChange={(value) => persistAppFont(value)}
+              options={fontOptions()}
+              placeholder={t('app.font.system')}
+              variant="ghost"
+              class="w-[260px] shrink-0"
             />
+            {/* Font size sits on the same row, to the right of the family picker. */}
+            <div class="w-[360px] max-w-full shrink-0">
+              <StopSlider
+                value={appFontSize()}
+                stops={fontSizeOptions()}
+                onChange={(value) => persistAppFontSize(value as AppFontSize)}
+                ariaLabel={t('app.font.size.title')}
+              />
+            </div>
           </div>
           <div class="rounded-lg border border-white/10 bg-white/[0.03] px-4 py-3">
             <span class="block text-[12px] text-white/40 mb-1">{t('app.font.previewLabel')}</span>

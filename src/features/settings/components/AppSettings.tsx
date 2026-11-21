@@ -511,7 +511,7 @@ const AppSettings: Component = () => {
         style={{
           background: 'rgba(var(--text-base-rgb), 0.035)',
           'backdrop-filter': 'blur(16px)',
-          border: '1px solid var(--border-dim)',
+          border: '1px solid var(--acrylic-border)',
         }}
       >
         <div class="flex justify-between items-center mb-5">

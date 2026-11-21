@@ -318,6 +318,7 @@ pub fn run() {
             commands::cloud::cloud_list_workspaces,
             commands::cloud::cloud_bind_workspace,
             commands::cloud::cloud_session_status,
+            commands::cloud::cloud_list_announcements,
             commands::cloud::cloud_logout,
             commands::cloud::cloud_sync_push,
             commands::cloud::cloud_sync_pull,

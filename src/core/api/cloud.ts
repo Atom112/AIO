@@ -129,6 +129,24 @@ export const cloudBindWorkspace = (serverUrl: string, workspaceId: string) =>
 
 export const cloudSessionStatus = () => invoke<CloudSessionStatus>('cloud_session_status');
 
+export type CloudAnnouncementSeverity = 'info' | 'warning' | 'critical';
+
+/** One active announcement served by the team backend. */
+export interface CloudAnnouncement {
+  id: string;
+  severity: CloudAnnouncementSeverity;
+  scope: 'server' | 'workspace';
+  workspaceId: string | null;
+  title: string;
+  body: string;
+  startsAt: string;
+  endsAt: string | null;
+}
+
+/** Active announcements for the linked account (empty array when signed out). */
+export const cloudListAnnouncements = (): Promise<CloudAnnouncement[]> =>
+  invoke<CloudAnnouncement[]>('cloud_list_announcements');
+
 export const cloudLogout = () => invoke<void>('cloud_logout');
 
 /** Flushes the local outbox to the server (uploads due attachments first). */

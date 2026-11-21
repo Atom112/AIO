@@ -298,3 +298,26 @@ pub struct OutboundChange {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub data: Option<Value>,
 }
+
+/// One active announcement served by the team backend.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CloudAnnouncement {
+    pub id: String,
+    pub severity: String,
+    pub scope: String,
+    #[serde(default)]
+    pub workspace_id: Option<String>,
+    pub title: String,
+    pub body: String,
+    pub starts_at: String,
+    #[serde(default)]
+    pub ends_at: Option<String>,
+}
+
+/// `GET /v1/announcements` envelope.
+#[derive(Debug, Clone, Deserialize)]
+pub struct AnnouncementList {
+    #[serde(default)]
+    pub items: Vec<CloudAnnouncement>,
+}

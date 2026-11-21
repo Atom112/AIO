@@ -19,6 +19,7 @@ import {
   cloudBindWorkspace,
   cloudDevicePoll,
   cloudDeviceStart,
+  cloudListAnnouncements,
   cloudListWorkspaces,
   cloudLogout,
   cloudSessionStatus,
@@ -28,6 +29,7 @@ import {
   cloudSyncPull,
   cloudSyncPush,
   cloudSyncSnapshot,
+  type CloudAnnouncement,
   type CloudAttachmentRef,
   type CloudDevicePollStatus,
   type CloudMe,
@@ -38,6 +40,7 @@ import {
 import { appendMessage, loadAssistants } from '../api/chat';
 import { EVENTS } from '../api/events';
 import { datas, setDatas } from './chat';
+import { dismissedAnnouncementIds, dismissAnnouncement } from './cloudAnnouncements';
 import { mergeRemoteChanges } from './cloudMerge';
 import { asRecord, asString, attachmentRefs, patchMessage } from './cloudMergeHelpers';
 import { isThinking } from './stream';
@@ -72,6 +75,15 @@ export const [cloudDevicePrompt, setCloudDevicePrompt] = createSignal<CloudDevic
   null,
 );
 
+/** Active announcements plus the ids this installation already dismissed. */
+export const [cloudAnnouncements, setCloudAnnouncements] = createSignal<CloudAnnouncement[]>([]);
+export const [cloudAnnouncementDismissed, setCloudAnnouncementDismissed] = createSignal<string[]>(
+  dismissedAnnouncementIds(),
+);
+
+/** Interval between announcement refreshes; notices are not latency-sensitive. */
+const ANNOUNCEMENT_REFRESH_MS = 15 * 60 * 1000;
+
 /** Interval between sync ticks (the SSE feed triggers extra ticks immediately). */
 const SYNC_INTERVAL_MS = 3000;
 /** Upper bound on pages applied per tick so one sync never blocks the UI for long. */
@@ -80,6 +92,7 @@ const MAX_PULL_PAGES = 10;
 const MAX_ATTACHMENT_DOWNLOADS = 4;
 
 let listenersInstalled = false;
+let announcementTimer: number | null = null;
 let loopTimer: number | undefined;
 let tickRunning = false;
 /** Bumped to cancel the device poll loop. */
@@ -105,6 +118,9 @@ export async function initCloud(): Promise<void> {
   await refreshCloudSession();
   const session = cloudSession();
   if (!session.signedIn) return;
+  // Server-wide notices are worth showing before a workspace is bound.
+  void refreshCloudAnnouncements();
+  startAnnouncementRefresh();
   if (session.workspaceId) {
     await cloudStartEvents().catch(() => undefined);
     startLoop();
@@ -214,6 +230,7 @@ export async function bindCloudWorkspace(serverUrl: string, workspaceId: string)
   const session = await cloudBindWorkspace(serverUrl.trim(), workspaceId);
   setCloudSession(session);
   setCloudStatus('idle');
+  void refreshCloudAnnouncements();
   await cloudStartEvents().catch(() => undefined);
   startLoop();
   void tick();
@@ -223,6 +240,8 @@ export async function bindCloudWorkspace(serverUrl: string, workspaceId: string)
 export async function signOutCloud(): Promise<void> {
   stopLoop();
   stopDevicePoll();
+  stopAnnouncementRefresh();
+  setCloudAnnouncements([]);
   clearDevicePrompt();
   await cloudStopEvents().catch(() => undefined);
   await cloudLogout();
@@ -240,6 +259,43 @@ export async function signOutCloud(): Promise<void> {
   setCloudPending(0);
   setCloudStatus('signed_out');
   setCloudLastError(null);
+}
+
+/** Reloads active announcements; a failure keeps the previous list (they are advisory). */
+export async function refreshCloudAnnouncements(): Promise<void> {
+  const session = cloudSession();
+  if (!session.signedIn) {
+    setCloudAnnouncements([]);
+    return;
+  }
+  try {
+    setCloudAnnouncements(await cloudListAnnouncements());
+  } catch {
+    // A transient failure must not surface as a sync error.
+  }
+}
+
+/** Timer callback kept outside `startAnnouncementRefresh` so the reactivity lint
+ * rule sees the signal reads only inside `refreshCloudAnnouncements`. */
+function announcementRefreshTick(): void {
+  void refreshCloudAnnouncements();
+}
+
+function startAnnouncementRefresh(): void {
+  if (announcementTimer !== null) return;
+  announcementTimer = window.setInterval(announcementRefreshTick, ANNOUNCEMENT_REFRESH_MS);
+}
+
+function stopAnnouncementRefresh(): void {
+  if (announcementTimer === null) return;
+  window.clearInterval(announcementTimer);
+  announcementTimer = null;
+}
+
+/** Hides one announcement for this installation and re-reads the dismissal list. */
+export function dismissCloudAnnouncement(id: string): void {
+  dismissAnnouncement(id);
+  setCloudAnnouncementDismissed(dismissedAnnouncementIds());
 }
 
 /** Runs one sync tick immediately (the "Sync now" button). */

@@ -28,7 +28,9 @@ use crate::core::models::StoredAttachment;
 use crate::core::secure_store;
 use crate::utils::url_validation::{validate_http_url, HttpUrlOptions};
 use apply::ApplyOutcome;
-use dto::{DevicePoll, DeviceStart, MeResponse, RemoteAttachmentRef, RemoteChange};
+use dto::{
+    CloudAnnouncement, DevicePoll, DeviceStart, MeResponse, RemoteAttachmentRef, RemoteChange,
+};
 use outbox::Account;
 
 /// OAuth client id the desktop presents during device authorization.
@@ -303,6 +305,23 @@ pub async fn cloud_session_status(app: AppHandle) -> Result<CloudSessionStatus, 
     let pending = sync_ops::pending_count(&app);
     let token_present = session_token(&app).is_some();
     Ok(status_from_account(account, token_present, pending))
+}
+
+/// Active announcements for the linked account. Returns an empty list when the
+/// account is not linked (or has no session token), never an error: announcements
+/// are advisory, so a signed-out desktop simply shows none.
+#[tauri::command]
+pub async fn cloud_list_announcements(app: AppHandle) -> Result<Vec<CloudAnnouncement>, String> {
+    let Some(account) = sync_ops::account(&app)? else {
+        return Ok(Vec::new());
+    };
+    let Some(token) = session_token(&app) else {
+        return Ok(Vec::new());
+    };
+    let state = app.state::<CloudState>();
+    client::fetch_announcements(&state.client, &account.server_url, &token)
+        .await
+        .map_err(client::HttpError::into_message)
 }
 
 /// Signs out: revokes the server session (best effort), deletes the keychain token and

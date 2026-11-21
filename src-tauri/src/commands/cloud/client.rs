@@ -7,8 +7,9 @@
 use serde_json::Value;
 
 use super::dto::{
-    AttachmentDownloadResponse, AttachmentInitResponse, DeviceCodeResponse, DevicePoll,
-    DeviceStart, DeviceTokenResponse, MeResponse, PullResponse, PushResponse, SnapshotResponse,
+    AnnouncementList, AttachmentDownloadResponse, AttachmentInitResponse, CloudAnnouncement,
+    DeviceCodeResponse, DevicePoll, DeviceStart, DeviceTokenResponse, MeResponse, PullResponse,
+    PushResponse, SnapshotResponse,
 };
 
 /// Failure from the cloud API. `status` is `None` for transport-level errors.
@@ -210,6 +211,21 @@ pub(crate) async fn fetch_me(
         return Err(to_http_error(response).await);
     }
     Ok(response.json().await?)
+}
+
+/// `GET /v1/announcements` — active notices for this account.
+pub(crate) async fn fetch_announcements(
+    client: &reqwest::Client,
+    server_url: &str,
+    token: &str,
+) -> Result<Vec<CloudAnnouncement>, HttpError> {
+    let url = format!("{}/v1/announcements", api_base(server_url));
+    let response = client.get(url).bearer_auth(token).send().await?;
+    if !response.status().is_success() {
+        return Err(to_http_error(response).await);
+    }
+    let list: AnnouncementList = response.json().await?;
+    Ok(list.items)
 }
 
 /// `POST /api/auth/sign-out` — best effort; a failure never blocks local sign-out.

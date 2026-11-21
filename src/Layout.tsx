@@ -6,6 +6,7 @@
  * elements like buttons and switches.
  */
 import NavBar from './shared/components/NavBar';
+import { AnnouncementBanner } from './shared/components/AnnouncementBanner';
 import UpdateNotification from './shared/components/UpdateNotification';
 import GlobalKeyboardHandler from './shared/components/GlobalKeyboardHandler';
 import CommandPalette from './shared/components/CommandPalette';
@@ -220,6 +221,7 @@ const Layout: Component<ParentProps> = (props) => {
         <GlobalKeyboardHandler />
         <CommandPalette />
         <NavBar />
+        <AnnouncementBanner />
         <main class="flex-1 relative overflow-hidden">
           <Transition name="page-fade">{props.children}</Transition>
         </main>

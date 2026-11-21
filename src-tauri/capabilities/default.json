@@ -23,7 +23,10 @@
     "updater:allow-download-and-install",
     {
       "identifier": "core:default",
-      "allow": [{ "protocol": "asset", "path": "$APPDATA/attachments/**" }]
+      "allow": [
+        { "protocol": "asset", "path": "$APPDATA/attachments/**" },
+        { "protocol": "asset", "path": "$APPDATA/backgrounds/**" }
+      ]
     }
   ]
 }

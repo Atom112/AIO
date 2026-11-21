@@ -38,6 +38,8 @@ toml = "0.8"
 # Comment-preserving structured edits on codex config.toml (plan PR C)
 toml_edit = "0.22"
 serde_yaml = "0.9"
+# Cloud payload artifacts are gzip-compressed JSON on the wire (Phase 2 message hydration).
+flate2 = "1"
 dirs = "6.0"
 reqwest = { version = "0.13", features = ["json", "stream", "blocking"] }
 tokio = { version = "1", features = ["full"] }
@@ -57,6 +59,9 @@ uuid = { version = "1", features = ["v4", "fast-rng", "serde"] }
 base64 = "0.22.1"
 rusqlite = { version = "0.39.0", features = ["bundled"] }
 keyring = { version = "3", features = ["windows-native", "apple-native", "linux-native-sync-persistent"] }
+# Installed-font scanner: reads family names out of system font files. Already in
+# the tree transitively (pdf-extract), declared here so the fonts command can use it.
+ttf-parser = "0.25"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 thiserror = "2"
@@ -81,6 +86,29 @@ fastembed = { version = "4", default-features = false, features = ["ort-download
 # stdio + utils/jsonrpc.rs), the crate supplies the serde v1 schema shapes.
 # Pinned to ~3.3: the crate majors land roughly quarterly — upgrades are deliberate.
 agent-client-protocol = { version = "~3.3", default-features = false }
+
+# 电脑控制：原生无障碍后端 + 输入注入 + 截屏。
+# 三个后端都只依赖系统无障碍 API（无外部运行时）：Windows=UIA，
+# macOS=AXUIElement，Linux=AT-SPI2。输入/截屏两平台共用 enigo/xcap。
+[target.'cfg(windows)'.dependencies]
+enigo = "0.6"
+xcap = "0.9"
+# clipboard 特性提供 send_text_by_clipboard（剪贴板快照/粘贴/还原）——IME 无关的
+# 文本注入路径，Win11 记事本等 TSF 应用上物理打字会被输入法改写。
+uiautomation = { version = "0.25", features = ["clipboard"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+enigo = "0.6"
+xcap = "0.9"
+axuielement = "0.10"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# 默认后端是 x11rb（X11 与 XWayland）；不使用 xdo，避免 libxdo 系统依赖。
+enigo = { version = "0.6", default-features = false, features = ["x11rb"] }
+xcap = "0.9"
+atspi = { version = "0.30", features = ["tokio"] }
+# AT-SPI 代理构造需要 zbus 的名字/路径类型（与 atspi 同版本 5.x 统一）。
+zbus = { version = "5.14", default-features = false, features = ["tokio"] }
 
 [dev-dependencies]
 # http is already in the dependency tree via reqwest 0.13 (same major version);

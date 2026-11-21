@@ -40,6 +40,7 @@
     "jspdf": "^4.2.1",
     "marked": "^18.0.5",
     "marked-highlight": "^2.2.4",
+    "mermaid": "^12.2.0",
     "solid-js": "^1.9.13",
     "solid-motionone": "^1.0.4",
     "solid-transition-group": "^0.3.0"

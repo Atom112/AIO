@@ -166,18 +166,18 @@ export const CloudAccountCard: Component = () => {
           fallback={
             <button
               type="button"
-              class={`min-w-[112px] ${btnPrimaryOutlineSm}`}
+              class={`min-w-[140px] ${btnSecondarySm}`}
               disabled={busy() !== null}
               onClick={onSignIn}
             >
-              <Icon name="globe" size={13} class="mr-1.5" />
+              <Icon src="/icons/app-logo/github.svg" class="h-3.5 w-3.5" />
               {t('settings.cloud.signIn')}
             </button>
           }
         >
           <button
             type="button"
-            class={`min-w-[112px] ${btnDangerOutline}`}
+            class={`min-w-[140px] ${btnDangerOutline}`}
             disabled={busy() !== null}
             onClick={() => void onSignOut()}
           >

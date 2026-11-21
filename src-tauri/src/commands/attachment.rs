@@ -11,7 +11,7 @@ use sha2::{Digest, Sha256};
 use std::path::PathBuf;
 use tauri::{AppHandle, Manager};
 
-fn attachment_storage_path(
+pub(crate) fn attachment_storage_path(
     app: &AppHandle,
     sha256: &str,
     extension: &str,
@@ -170,6 +170,8 @@ pub fn sync_message_attachments(
                     params![message_id, attachment_id, index as i64],
                 )
                 .map_err(|e| e.to_string())?;
+                // Cloud sync: a linked file is uploaded before the message that references it.
+                crate::commands::cloud::outbox::enqueue_attachment(conn, attachment_id);
             }
         }
     }

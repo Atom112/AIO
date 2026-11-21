@@ -313,6 +313,71 @@ fn m_messages_ttft(c: &Connection) -> Result<(), String> {
     add_column_if_missing(c, "messages", "ttft_ms", "INTEGER")
 }
 
+/// v20: cloud sync ledger.
+///
+/// `cloud_account` holds the single workspace binding of this installation (one row,
+/// `id = 1`); `cloud_sync_state` records the server version/seq per row; `cloud_outbox`
+/// is the durable change queue. The `cloud_version` columns are the compare-and-swap
+/// baseline sent with every push, and `messages.cloud_seq` keeps the server's per-thread
+/// ordering visible locally. `attachments.cloud_id` stores the server attachment id so a
+/// message can only be pushed once every referenced file has been uploaded.
+///
+/// Every statement is idempotent: legacy databases may have partially applied migrations.
+fn m_cloud_sync(c: &Connection) -> Result<(), String> {
+    c.execute_batch(
+        "CREATE TABLE IF NOT EXISTS cloud_account (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        server_url TEXT NOT NULL,
+        workspace_id TEXT NOT NULL,
+        user_id TEXT NOT NULL,
+        user_login TEXT NOT NULL,
+        device_id TEXT NOT NULL,
+        last_cursor TEXT,
+        created_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS cloud_sync_state (
+        entity_type TEXT NOT NULL,
+        entity_id TEXT NOT NULL,
+        remote_version INTEGER,
+        remote_seq INTEGER,
+        synced_at TEXT,
+        PRIMARY KEY(entity_type, entity_id)
+    );
+    CREATE TABLE IF NOT EXISTS cloud_outbox (
+        entity_type TEXT NOT NULL,
+        entity_id TEXT NOT NULL,
+        op TEXT NOT NULL,
+        payload_json TEXT NOT NULL,
+        base_version INTEGER,
+        local_order TEXT,
+        priority INTEGER NOT NULL DEFAULT 1,
+        enqueued_at TEXT NOT NULL,
+        attempts INTEGER NOT NULL DEFAULT 0,
+        last_error TEXT,
+        PRIMARY KEY(entity_type, entity_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_cloud_outbox_order
+        ON cloud_outbox(priority, local_order, enqueued_at);",
+    )
+    .map_err(|e| e.to_string())?;
+    add_column_if_missing(
+        c,
+        "assistants",
+        "cloud_version",
+        "INTEGER NOT NULL DEFAULT 0",
+    )?;
+    add_column_if_missing(c, "topics", "cloud_version", "INTEGER NOT NULL DEFAULT 0")?;
+    add_column_if_missing(c, "messages", "cloud_seq", "INTEGER")?;
+    add_column_if_missing(c, "messages", "cloud_version", "INTEGER NOT NULL DEFAULT 0")?;
+    add_column_if_missing(c, "attachments", "cloud_id", "TEXT")?;
+    c.execute_batch(
+        "CREATE INDEX IF NOT EXISTS idx_messages_cloud_seq ON messages(topic_id, cloud_seq);
+         CREATE UNIQUE INDEX IF NOT EXISTS idx_attachments_cloud_id ON attachments(cloud_id);",
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 /// v18: harness workbench tables (CLI-agent GUI compatibility layer).
 fn m_harness_tables(c: &Connection) -> Result<(), String> {
     c.execute_batch(
@@ -449,4 +514,68 @@ pub(crate) const CHAT_DB_MIGRATIONS: &[Migration] = &[
         name: "messages.ttft_ms",
         run: m_messages_ttft,
     },
+    Migration {
+        version: 20,
+        name: "cloud 同步账本（账号/待同步队列/版本号）",
+        run: m_cloud_sync,
+    },
 ];
+
+#[cfg(test)]
+mod cloud_migration_tests {
+    use super::*;
+
+    fn has_table(conn: &Connection, table: &str) -> bool {
+        conn.query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
+            [table],
+            |row| row.get::<_, i64>(0),
+        )
+        .map(|n| n > 0)
+        .unwrap_or(false)
+    }
+
+    fn has_column(conn: &Connection, table: &str, column: &str) -> bool {
+        let sql = format!("PRAGMA table_info({table})");
+        let mut stmt = conn.prepare(&sql).expect("prepare table_info");
+        let names = stmt
+            .query_map([], |row| row.get::<_, String>(1))
+            .expect("query table_info")
+            .filter_map(Result::ok)
+            .collect::<Vec<_>>();
+        names.iter().any(|name| name == column)
+    }
+
+    /// v20 must be idempotent: legacy databases may have partially applied migrations,
+    /// so the runner can execute it again without error.
+    #[test]
+    fn cloud_sync_migration_is_idempotent() {
+        let conn = Connection::open_in_memory().expect("open in-memory db");
+        conn.execute_batch(
+            "CREATE TABLE assistants (id TEXT PRIMARY KEY, name TEXT NOT NULL, prompt TEXT);
+             CREATE TABLE topics (id TEXT PRIMARY KEY, assistant_id TEXT NOT NULL, name TEXT NOT NULL);
+             CREATE TABLE messages (id TEXT PRIMARY KEY, topic_id TEXT NOT NULL, role TEXT NOT NULL, content TEXT NOT NULL);
+             CREATE TABLE attachments (id TEXT PRIMARY KEY, sha256 TEXT NOT NULL);",
+        )
+        .expect("create baseline tables");
+
+        m_cloud_sync(&conn).expect("first apply");
+        m_cloud_sync(&conn).expect("second apply must be a no-op");
+
+        for table in ["cloud_account", "cloud_sync_state", "cloud_outbox"] {
+            assert!(has_table(&conn, table), "{table} must exist");
+        }
+        for (table, column) in [
+            ("assistants", "cloud_version"),
+            ("topics", "cloud_version"),
+            ("messages", "cloud_version"),
+            ("messages", "cloud_seq"),
+            ("attachments", "cloud_id"),
+        ] {
+            assert!(
+                has_column(&conn, table, column),
+                "{table}.{column} must exist"
+            );
+        }
+    }
+}

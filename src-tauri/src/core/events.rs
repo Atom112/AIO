@@ -96,6 +96,12 @@ pub const HARNESS_APPROVAL_EXPIRED: &str = "harness-approval-expired";
 /// Models catalog updated (fresh fetch persisted to AppData)
 pub const MODELS_CATALOG_UPDATED: &str = "models-catalog-updated";
 
+/// Cloud sync change notification from the SSE feed: payload `{ workspaceId, cursor }`.
+/// Carries no entity data — listeners pull through `cloud_sync_pull`.
+pub const CLOUD_SYNC_EVENT: &str = "cloud-sync-event";
+/// One cloud-run event (AG-UI naming): payload `{ runId, seq, type, payload }`.
+pub const CLOUD_RUN_EVENT: &str = "cloud-run-event";
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -144,6 +150,8 @@ mod tests {
             HARNESS_STATE,
             HARNESS_APPROVAL_REQUESTED,
             HARNESS_APPROVAL_EXPIRED,
+            CLOUD_SYNC_EVENT,
+            CLOUD_RUN_EVENT,
         ] {
             assert!(
                 name.chars()

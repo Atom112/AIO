@@ -2,6 +2,7 @@
 
 // 阶段4 第1项（消 glob）：显式 use 取代原父模块 glob。
 use crate::commands::attachment::sync_message_attachments;
+use crate::commands::cloud;
 use crate::core::models::Message;
 use crate::core::state::DbState;
 use crate::ierr;
@@ -267,6 +268,8 @@ pub async fn append_message(
     )
     .map_err(|e| e.to_string())?;
     sync_message_attachments(&conn, &message_id, message.display_files.as_ref())?;
+    // Cloud sync: queue the new row (attachments are uploaded before the push batch).
+    cloud::outbox::enqueue_message(&conn, &message_id);
     Ok(())
 }
 
@@ -284,11 +287,20 @@ pub async fn delete_topic_message(
     message_id: String,
 ) -> Result<(), String> {
     let conn = (*state).0.lock();
+    let cloud_base: Option<i64> = conn
+        .query_row(
+            "SELECT cloud_version FROM messages WHERE id = ?1 AND topic_id = ?2",
+            params![message_id, topic_id],
+            |row| row.get(0),
+        )
+        .ok();
     conn.execute(
         "DELETE FROM messages WHERE id = ?1 AND topic_id = ?2",
         params![message_id, topic_id],
     )
     .map_err(|e| e.to_string())?;
+    // Cloud sync: tombstone so other devices drop the message too.
+    cloud::outbox::enqueue_tombstone(&conn, "message", &message_id, cloud_base, 3);
     Ok(())
 }
 

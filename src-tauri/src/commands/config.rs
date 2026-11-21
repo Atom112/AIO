@@ -4,6 +4,7 @@
 use crate::commands::attachment::{
     cleanup_attachment_ids, load_message_attachments_batch, sync_message_attachments,
 };
+use crate::commands::cloud;
 use crate::core::models::*;
 use crate::core::secure_store;
 use crate::core::state::DbState;
@@ -285,6 +286,10 @@ fn persist_assistant_inner(
     )
     .map_err(|e| e.to_string())?;
 
+    // Cloud sync: queue the assistant row first; topics and messages follow in the same
+    // transaction so a push batch can never reference a parent that is not queued yet.
+    cloud::outbox::enqueue_assistant(conn, &assistant.id);
+
     // 2. Delete topics that were removed on the frontend (otherwise they would reappear on reload)
     let current_topic_ids: Vec<String> = assistant.topics.iter().map(|t| t.id.clone()).collect();
     let mut stmt = conn
@@ -296,13 +301,17 @@ fn persist_assistant_inner(
         .collect::<Result<Vec<String>, _>>()
         .map_err(|e| e.to_string())?;
 
+    let existing_topic_ids = db_topic_ids.clone();
     for db_id in db_topic_ids {
         if !current_topic_ids.contains(&db_id) {
             let attachment_ids = attachment_ids_for_topic(conn, &db_id)?;
+            let cloud_base = cloud::outbox::local_version(conn, "topics", &db_id);
             // Delete checkpoints together with the topic (that table has no foreign key, so this must be explicit)
             crate::commands::llm::checkpoints::delete_topic_checkpoints(conn, &db_id);
             conn.execute("DELETE FROM topics WHERE id = ?", params![db_id])
                 .map_err(|e| e.to_string())?;
+            // One tombstone is enough: the server cascades a thread delete to its messages.
+            cloud::outbox::enqueue_tombstone(conn, "thread", &db_id, cloud_base, 3);
             cleanup_attachment_ids(conn, &attachment_ids)?;
         }
     }
@@ -310,6 +319,7 @@ fn persist_assistant_inner(
     // 3. Incrementally sync each topic
     for topic in &assistant.topics {
         upsert_topic_row(conn, &assistant.id, topic)?;
+        cloud::outbox::enqueue_topic(conn, &topic.id);
 
         // 4. Incremental message sync
         // Messages sync by ID via the ON CONFLICT clause (insert new, update existing) instead of DELETE ALL + reinsert
@@ -330,14 +340,29 @@ fn persist_assistant_inner(
         for db_message_id in db_message_ids {
             if !current_message_ids.contains(&db_message_id) {
                 let attachment_ids = attachment_ids_for_message(conn, &db_message_id)?;
+                let cloud_base: Option<i64> = conn
+                    .query_row(
+                        "SELECT cloud_version FROM messages WHERE id = ?1",
+                        [&db_message_id],
+                        |row| row.get(0),
+                    )
+                    .ok();
                 conn.execute("DELETE FROM messages WHERE id = ?1", [&db_message_id])
                     .map_err(|e| e.to_string())?;
+                cloud::outbox::enqueue_tombstone(conn, "message", &db_message_id, cloud_base, 3);
                 cleanup_attachment_ids(conn, &attachment_ids)?;
             }
         }
 
         for msg in &topic.history {
             upsert_message_row(conn, &topic.id, msg)?;
+        }
+
+        // A brand-new topic (branch, import, first message) pushes all its messages now.
+        // Existing topics only push the rows the incremental paths send, so a full save
+        // does not re-upload an entire history.
+        if !existing_topic_ids.contains(&topic.id) {
+            cloud::outbox::enqueue_messages_of(conn, &topic.id);
         }
     }
 
@@ -522,6 +547,13 @@ pub async fn upsert_topic_messages(
             for msg in &messages {
                 upsert_message_row(&conn, &topic.id, msg)?;
             }
+            // Incremental hot path: queue exactly what the caller sent (topic core + rows).
+            cloud::outbox::enqueue_topic(&conn, &topic.id);
+            for msg in &messages {
+                if let Some(id) = msg.id.as_deref() {
+                    cloud::outbox::enqueue_message(&conn, id);
+                }
+            }
             Ok(())
         })();
         if result.is_ok() {
@@ -547,9 +579,12 @@ pub async fn upsert_topic_messages(
 pub async fn delete_assistant(state: tauri::State<'_, DbState>, id: String) -> Result<(), String> {
     let conn = state.0.lock();
     let attachment_ids = attachment_ids_for_assistant(&conn, &id)?;
+    let cloud_base = cloud::outbox::local_version(&conn, "assistants", &id);
     // ON DELETE CASCADE automatically removes the associated topics and messages
     conn.execute("DELETE FROM assistants WHERE id = ?", params![id])
         .map_err(|e| e.to_string())?;
+    // The server cascades the delete to this assistant's threads and messages.
+    cloud::outbox::enqueue_tombstone(&conn, "assistant", &id, cloud_base, 0);
     cleanup_attachment_ids(&conn, &attachment_ids)?;
     Ok(())
 }
@@ -659,7 +694,7 @@ pub async fn load_activated_models(app: AppHandle) -> Result<Vec<ActivatedModel>
 }
 
 /// HOR-4: fs read + per-model keyring reads and legacy migration writes (blocking-pool body).
-fn load_activated_models_inner(app: AppHandle) -> Result<Vec<ActivatedModel>, String> {
+pub(crate) fn load_activated_models_inner(app: AppHandle) -> Result<Vec<ActivatedModel>, String> {
     let path = crate::core::paths::app_config_dir()?.join("activated_models.json");
 
     if !path.exists() {
@@ -1290,6 +1325,10 @@ pub async fn branch_topic(
         )
         .map_err(|e| ierr!("插入分支消息失败: {}", "Failed to insert branch messages: {}", e))?;
     }
+
+    // A branch is a new thread plus its copied messages: both are new server rows.
+    cloud::outbox::enqueue_topic(&conn, &new_topic_id);
+    cloud::outbox::enqueue_messages_of(&conn, &new_topic_id);
 
     Ok(new_topic)
 }

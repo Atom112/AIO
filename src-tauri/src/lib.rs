@@ -126,8 +126,10 @@ pub fn run() {
         ))
         .manage(core::state::AgentTaskBoard::new())
         .manage(core::state::PendingAgentQuestions::new())
+        .manage(utils::computer::ComputerSnapshot::default())
         .manage(MemoryStoreManager::new())
         .manage(HarnessManager::new())
+        .manage(commands::cloud::CloudState::new())
         .invoke_handler(tauri::generate_handler![
             commands::config::load_assistants,
             commands::config::save_assistant,
@@ -143,6 +145,9 @@ pub fn run() {
             commands::config::load_fetched_models,
             commands::attachment::store_chat_attachment,
             commands::attachment::discard_chat_attachment,
+            commands::appearance::save_app_background,
+            commands::appearance::delete_app_background,
+            commands::fonts::list_installed_fonts,
             commands::export::save_binary_file,
             commands::export::copy_stored_image,
             commands::export::pick_save_path,
@@ -307,11 +312,36 @@ pub fn run() {
             commands::local_model_download::local_models_get_dir,
             commands::local_model_download::local_models_set_dir,
             // Harness workbench (CLI-agent GUI compatibility layer)
+            // Cloud sync (self-hosted team account + conversation synchronization)
+            commands::cloud::cloud_device_start,
+            commands::cloud::cloud_device_poll,
+            commands::cloud::cloud_list_workspaces,
+            commands::cloud::cloud_bind_workspace,
+            commands::cloud::cloud_session_status,
+            commands::cloud::cloud_logout,
+            commands::cloud::cloud_sync_push,
+            commands::cloud::cloud_sync_pull,
+            commands::cloud::cloud_sync_apply,
+            commands::cloud::cloud_sync_snapshot,
+            commands::cloud::cloud_start_events,
+            commands::cloud::cloud_stop_events,
+            commands::cloud::cloud_attachment_upload,
+            commands::cloud::cloud_attachment_download,
+            commands::cloud::cloud_upload_message_payload,
+            commands::cloud::cloud_get_message_payload,
+            commands::cloud::runs::cloud_start_run,
+            commands::cloud::runs::cloud_start_run_events,
+            commands::cloud::runs::cloud_stop_run_events,
+            commands::cloud::runs::cloud_cancel_run,
+            commands::cloud::runs::cloud_resolve_run_approval,
+            commands::cloud::runs::cloud_run_artifacts,
             commands::harness::harness_detect_tools,
             commands::harness::harness_list_workspaces,
             commands::harness::harness_add_workspace,
             commands::harness::harness_remove_workspace,
             commands::harness::harness_list_sessions,
+            commands::harness::harness_list_agent_sessions,
+            commands::harness::harness_adopt_agent_session,
             commands::harness::harness_new_session,
             commands::harness::harness_rename_session,
             commands::harness::harness_delete_session,

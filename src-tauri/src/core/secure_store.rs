@@ -663,6 +663,12 @@ pub mod accounts {
         format!("harness-tool-{}-api-key", tool_id)
     }
 
+    /// Cloud sync session token (Better Auth bearer token for the self-hosted team server).
+    /// Kept in the keychain only: the token is never written to SQLite or logs.
+    pub fn cloud_session_token() -> String {
+        "cloud-session-token".to_string()
+    }
+
     /// API Key for an activated model (identified by the SHA-256 hash of api_url + model_id,
     /// avoiding writing the URL in plaintext into the keyring account name).
     pub fn activated_model_key(api_url: &str, model_id: &str) -> String {

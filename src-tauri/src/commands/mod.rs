@@ -1,13 +1,16 @@
 //! Command layer entry point (Tauri commands are split into per-domain submodules; commands must stay thin, with business logic pushed down to plugins/services/utils).
 //! Adding a command: implement it in the matching domain file, declare it here, and register it in lib.rs (the check:gates cmd-dispatch gate verifies consistency).
 
+pub mod appearance;
 pub mod attachment;
 pub mod catalog;
+pub mod cloud;
 pub mod config;
 pub mod embedding;
 pub mod engine;
 pub mod export;
 pub mod feedback;
+pub mod fonts;
 pub mod git;
 pub mod harness;
 pub mod image_gen;

@@ -28,6 +28,7 @@ import Icon, { type IconName } from '../../../shared/components/Icon';
 import ToolCallBubble from './ToolCallBubble';
 import Markdown from '../../../shared/components/Markdown';
 import { subagentProfileLabel } from './SubagentConversationView';
+import { hydrateMessagePayload } from '../../../core/store/cloud';
 import { getSubagentProfileStyle } from '../../../core/utils/subagentProfileStyle';
 import { stopSubagent } from '../../../core/api/chat';
 import { formatNumber, t } from '../../../core/i18n';
@@ -50,6 +51,14 @@ interface AgentProcessBlockProps {
   startTime?: number;
   /** Agent work-process timeline (new mode) */
   agentSteps?: AgentStep[];
+  /** Subagent cards open the standalone chat subagent view when true (chat);
+   * false renders them as plain expandable cards (harness — its subagents are
+   * reported by the CLI tool, not AIO's subagent registry). */
+  subagentInteractive?: boolean;
+  /** Owning topic id; together with `messageId` enables cloud payload hydration. */
+  threadId?: string;
+  /** Owning message id; expanding a synced message fetches agent steps on demand. */
+  messageId?: string;
 }
 
 // ---- Step type configuration ----
@@ -167,6 +176,7 @@ const StepCard: Component<{
   isActive: boolean;
   expanded: boolean;
   onToggle: () => void;
+  subagentInteractive: boolean;
 }> = (props) => {
   const cfg = createMemo(() => STEP_CONFIG[props.step.type]);
   const durationMs = createMemo(
@@ -293,7 +303,7 @@ const StepCard: Component<{
           type="button"
           class="flex items-center flex-1 min-w-0 gap-1.5 px-2.5 py-1.5 cursor-pointer select-none bg-transparent border-none text-white/45 text-[11px] transition-colors duration-200 hover:text-white/70"
           onClick={() => {
-            if (props.step.type === 'subagent') {
+            if (props.step.type === 'subagent' && props.subagentInteractive) {
               // Subagent: the whole card is the entry point; clicking opens its standalone conversation view (inner steps are never expanded)
               if (props.step.subagentId) setActiveSubagentView(props.step.subagentId);
             } else {
@@ -328,7 +338,7 @@ const StepCard: Component<{
           )}
           {props.step.type === 'subagent' && (
             <span class="truncate text-white/55 flex-initial min-w-0">
-              · {subagentProfileLabel(props.step.subagentProfile)}
+              · {props.step.subagentName || subagentProfileLabel(props.step.subagentProfile)}
             </span>
           )}
           {props.step.type === 'subagent' && props.step.subagentTask && (
@@ -364,7 +374,7 @@ const StepCard: Component<{
             aria-hidden="true"
           >
             <Show
-              when={props.step.type === 'subagent'}
+              when={props.step.type === 'subagent' && props.subagentInteractive}
               fallback={
                 <Icon
                   name="arrow-left"
@@ -380,6 +390,7 @@ const StepCard: Component<{
         <Show
           when={
             props.step.type === 'subagent' &&
+            props.subagentInteractive &&
             props.step.status === 'running' &&
             props.step.subagentId
           }
@@ -405,8 +416,10 @@ const StepCard: Component<{
         style={(() => {
           const expanded = effectiveExpanded();
           const running = props.step.status === 'running';
-          // Subagent cards have no expandable body (clicking the card opens the standalone view), so it never expands
-          const open = (expanded || running) && props.step.type !== 'subagent';
+          // Subagent cards have no expandable body in chat (clicking the card opens the standalone view);
+          // harness subagents are plain cards and expand to their reported progress.
+          const open =
+            (expanded || running) && (props.step.type !== 'subagent' || !props.subagentInteractive);
           return {
             transition:
               'max-height 0.25s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.18s, padding 0.25s',
@@ -461,9 +474,38 @@ const StepCard: Component<{
             {/* File-change diff preview */}
             {props.step.type === 'tool_call' && props.step.toolCall?.fileChanges?.length && (
               <div class="mt-1.5">
-                <DiffView changes={props.step.toolCall.fileChanges} />
+                <DiffView changes={props.step.toolCall.fileChanges} detailMode="side-panel" />
               </div>
             )}
+          </div>
+        )}
+
+        {/* Subagent step (non-interactive hosts): reported progress timeline + final result */}
+        {props.step.type === 'subagent' && !props.subagentInteractive && (
+          <div class="text-[12px] space-y-1">
+            <Show when={props.step.subagentSteps && props.step.subagentSteps.length > 0}>
+              <div class="space-y-0.5">
+                <For each={props.step.subagentSteps}>
+                  {(inner) => (
+                    <div class="flex items-center gap-1.5 min-w-0 px-2 py-0.5 rounded bg-black/[0.10]">
+                      <span class="shrink-0 text-white/25 text-[10px]">
+                        {inner.type === 'tool_call'
+                          ? t('agent.step.toolCall')
+                          : t('agent.step.content')}
+                      </span>
+                      <span class="truncate text-white/50">
+                        {inner.toolName ?? inner.summary ?? ''}
+                      </span>
+                    </div>
+                  )}
+                </For>
+              </div>
+            </Show>
+            <Show when={props.step.subagentResult}>
+              <div class="whitespace-pre-wrap break-words text-white/55 px-2 py-1.5 rounded bg-black/[0.12] max-h-[240px] overflow-y-auto">
+                {props.step.subagentResult}
+              </div>
+            </Show>
           </div>
         )}
 
@@ -538,6 +580,31 @@ const AgentProcessBlock: Component<AgentProcessBlockProps> = (props) => {
     return userExpanded() ?? false;
   };
 
+  // Collapse animation: the body is lazily mounted, so unmounting it on the same
+  // tick would transition max-height over an empty box and the content would vanish
+  // instantly. Keep it mounted for the 300ms max-height transition, then unmount.
+  const COLLAPSE_TRANSITION_MS = 300;
+  const [keepBodyMounted, setKeepBodyMounted] = createSignal(untrack(isExpanded));
+  let wasExpanded = untrack(isExpanded);
+  let collapseTimer: number | undefined;
+  createEffect(() => {
+    const expanded = isExpanded();
+    if (expanded) {
+      if (collapseTimer !== undefined) {
+        clearTimeout(collapseTimer);
+        collapseTimer = undefined;
+      }
+      setKeepBodyMounted(true);
+    } else if (wasExpanded) {
+      collapseTimer = window.setTimeout(() => {
+        collapseTimer = undefined;
+        setKeepBodyMounted(false);
+      }, COLLAPSE_TRANSITION_MS + 20);
+    }
+    wasExpanded = expanded;
+  });
+  onCleanup(() => clearTimeout(collapseTimer));
+
   // Live timer for total elapsed time
   const [elapsedMs, setElapsedMs] = createSignal(0);
 
@@ -590,7 +657,13 @@ const AgentProcessBlock: Component<AgentProcessBlockProps> = (props) => {
 
   const toggleOuter = () => {
     if (props.isActive) return;
-    setUserExpanded((p) => !(p ?? false));
+    const next = !(userExpanded() ?? false);
+    setUserExpanded(next);
+    // Expanding a message that came from another device: agent steps live in object
+    // storage (the sync feed strips them), so fetch them the first time the block opens.
+    if (next && !hasSteps() && props.threadId && props.messageId) {
+      void hydrateMessagePayload(props.threadId, props.messageId, 'agent_steps');
+    }
   };
 
   const toggleStep = (stepId: string) => {
@@ -769,7 +842,7 @@ const AgentProcessBlock: Component<AgentProcessBlockProps> = (props) => {
           class="overflow-hidden transition-[max-height] duration-300 ease-in-out"
           style={isExpanded() ? 'max-height: 620px' : 'max-height: 0'}
         >
-          <Show when={isExpanded()}>
+          <Show when={isExpanded() || keepBodyMounted()}>
             <div
               ref={stepsContainerRef}
               class="overflow-y-auto"
@@ -804,6 +877,7 @@ const AgentProcessBlock: Component<AgentProcessBlockProps> = (props) => {
                               isActive={props.isActive}
                               expanded={isStepExpanded(step()!)}
                               onToggle={() => toggleStep(id)}
+                              subagentInteractive={props.subagentInteractive ?? true}
                             />
                           </Show>
                         );

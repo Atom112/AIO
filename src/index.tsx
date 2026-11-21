@@ -14,10 +14,17 @@ import {
   initProfileModelOverrides,
   initCustomSubagentProfiles,
   initEngineScan,
+  appFontScale,
+  appFontSize,
 } from './core/store/store';
 import { t } from './core/i18n';
 import { reconcileActiveStreamKeys } from './core/api/chat';
 import { setIsThinking } from './core/store/stream';
+import { initCloud } from './core/store/cloud';
+
+// Apply the persisted app font-size scale before the first render (avoids a
+// standard-size flash; Layout keeps it in sync afterwards).
+document.documentElement.style.setProperty('--app-font-scale', String(appFontScale(appFontSize())));
 
 // Initialize the project list on app startup
 initProjects();
@@ -30,6 +37,8 @@ initProfileModelOverrides();
 initCustomSubagentProfiles();
 // Scan for installed inference engines on app startup
 initEngineScan();
+// Restore the optional team-cloud link (session + change loop) on startup
+initCloud();
 // Reconcile stream ownership after a webview reload: backend turn tasks survive a
 // reload while the module-level stop keys do not — re-import them so the stop button
 // and the thinking state keep working for in-flight turns.

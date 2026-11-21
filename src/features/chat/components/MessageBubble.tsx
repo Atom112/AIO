@@ -11,7 +11,6 @@ import {
   currentTopicId,
   setDatas,
 } from '../../../core/store/store';
-import { getLogo as getLogoByIds } from '../../../core/utils/modelLogo';
 import { formatSize } from '../../../core/utils/format';
 import { formatNumber, t } from '../../../core/i18n';
 import { btnBadge, btnGhost } from '../../../shared/components/buttonStyles';
@@ -151,7 +150,7 @@ const MessageBubble: Component<MessageBubbleProps> = (props) => {
               props.registerEl(msg.id, el);
             }
           }}
-          class={`flex flex-col flex-1 pointer-events-auto min-w-0 ${msg.id && !props.hasAnimated(msg.id) && !props.skipMessageAnimation() ? 'animate-message-in' : ''} ${msg.role === 'assistant' ? 'items-start' : 'items-end'}`}
+          class={`flex flex-col flex-1 pointer-events-auto min-w-0 ${msg.id && !props.hasAnimated(msg.id) && !props.skipMessageAnimation() ? 'animate-message-in' : ''} ${msg.role === 'assistant' ? 'items-center' : 'items-end'}`}
           style={{
             // content-visibility skips offscreen rendering for performance; contain-intrinsic-size
             // `auto <len>` remembers the element's last rendered height so it does not collapse
@@ -162,57 +161,26 @@ const MessageBubble: Component<MessageBubbleProps> = (props) => {
           }}
         >
           <div
-            class={`flex gap-3 w-full ${msg.role === 'assistant' ? 'justify-start items-start' : 'justify-end items-start pr-[10px]'}`}
+            class={`flex w-full ${msg.role === 'assistant' ? 'justify-center' : 'justify-end items-start pr-[10px]'}`}
           >
-            <Show when={msg.role === 'assistant'}>
-              <div
-                class="flex flex-shrink-0 items-center justify-center w-9 h-9 rounded-full overflow-hidden"
-                style={{
-                  background: 'rgb(var(--text-base-rgb))',
-                  border: '1px solid var(--border-dim)',
-                  'box-shadow': '0 2px 6px rgba(0,0,0,0.25)',
-                }}
-              >
-                <Show
-                  when={getLogoByIds(null, msg.modelId || selectedModel()?.model_id || '')}
-                  fallback={
-                    <span
-                      class="text-[14px] font-bold select-none"
-                      style={{ color: 'var(--color-dark-700)' }}
-                    >
-                      {(msg.modelId || selectedModel()?.model_id || 'AI').charAt(0).toUpperCase()}
-                    </span>
-                  }
-                >
-                  <img
-                    src={getLogoByIds(null, msg.modelId || selectedModel()?.model_id || '')!}
-                    alt={t('common.ai')}
-                    class="w-[25px] h-[25px] rounded-full"
-                  />
-                </Show>
-              </div>
-            </Show>
-
             <div
-              class={`flex flex-col max-w-[75%] ${msg.role === 'assistant' ? 'items-start' : 'items-end'}`}
+              class={`flex flex-col ${msg.role === 'assistant' ? 'w-full max-w-[820px] items-stretch px-1' : 'max-w-[75%] items-end'}`}
             >
               <div
-                class={`rounded-[10px] leading-relaxed max-w-full min-h-[1.5em] px-[14px] py-[10px] transition-[height] duration-200 break-words group relative ${
+                class={`leading-relaxed max-w-full min-h-[1.5em] break-words group relative ${
                   msg.role === 'assistant'
-                    ? 'rounded-tl-[2px] text-white'
-                    : 'rounded-tr-[2px] text-white'
+                    ? 'text-white'
+                    : 'rounded-[10px] rounded-tr-[2px] px-[14px] py-[10px] text-white transition-[height] duration-200'
                 } ${isActiveRound() && msg.content ? 'message-streaming' : ''}`}
-                style={{
-                  background:
-                    msg.role === 'assistant'
-                      ? 'rgba(var(--text-base-rgb),0.04)'
-                      : 'rgba(var(--primary-rgb),0.08)',
-                  border:
-                    msg.role === 'assistant'
-                      ? '1px solid rgba(var(--text-base-rgb),0.13)'
-                      : '1px solid rgba(var(--primary-rgb),0.16)',
-                  'backdrop-filter': 'blur(6px)',
-                }}
+                style={
+                  msg.role === 'assistant'
+                    ? {}
+                    : {
+                        background: 'rgba(var(--primary-rgb),0.08)',
+                        border: '1px solid rgba(var(--primary-rgb),0.16)',
+                        'backdrop-filter': 'blur(6px)',
+                      }
+                }
               >
                 <Show when={msg.role === 'user' && msg.displayFiles && msg.displayFiles.length > 0}>
                   <div class="flex flex-col gap-2 mb-2 first:mt-3">
@@ -283,6 +251,8 @@ const MessageBubble: Component<MessageBubbleProps> = (props) => {
                       isActive={isActiveRound()}
                       startTime={msg.agentStartTime}
                       agentSteps={msg.agentSteps}
+                      threadId={currentTopicId() ?? undefined}
+                      messageId={msg.id}
                     />
                   </Show>
                   <Show
@@ -784,7 +754,11 @@ const MessageBubble: Component<MessageBubbleProps> = (props) => {
                     </Show>
                   </div>
                   <div class="p-2">
-                    <DiffView changes={fileChanges()} allReverted={isReverted()} />
+                    <DiffView
+                      changes={fileChanges()}
+                      allReverted={isReverted()}
+                      detailMode="side-panel"
+                    />
                   </div>
                 </div>
               );

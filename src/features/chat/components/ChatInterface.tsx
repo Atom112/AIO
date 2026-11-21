@@ -22,7 +22,7 @@ import {
   currentProject,
   datas,
   currentAssistantId,
-  compactingTopicId,
+  compactingTopicIds,
   isChatMode,
   gitBranch,
   gitBranches,
@@ -36,8 +36,13 @@ import {
 import { open } from '@tauri-apps/plugin-dialog';
 import { pickSavePath } from '../../../core/api/dialog';
 import { copyStoredImage } from '../../../core/api/attachment';
-import { registerCommand, unregisterCommand } from '../../../core/shortcuts';
+import {
+  registerCommand,
+  unregisterCommand,
+  findLeadingSlashCommand,
+} from '../../../core/shortcuts';
 import SlashCommandMenu from '../../../shared/components/SlashCommandMenu';
+import SlashHighlightedTextarea from '../../../shared/components/SlashHighlightedTextarea';
 import Icon from '../../../shared/components/Icon';
 import { formatNumber, t } from '../../../core/i18n';
 import ReasoningButton from './ReasoningButton';
@@ -52,6 +57,7 @@ import WelcomeScreen from './WelcomeScreen';
 import { useChatAutoScroll } from '../hooks/useChatAutoScroll';
 import MessageBubble from './MessageBubble';
 import SubagentMenu from './SubagentMenu';
+import CloudRunBar from './CloudRunBar';
 import BackgroundTaskMenu from './BackgroundTaskMenu';
 import PendingFileChips from './PendingFileChips';
 import DiagnosticsToggle from './DiagnosticsToggle';
@@ -120,6 +126,10 @@ interface ChatInterfaceProps {
 
 const ChatInterface: Component<ChatInterfaceProps> = (props) => {
   let textareaRef: HTMLTextAreaElement | undefined;
+  // The slash menu is a separate component created in the same render pass,
+  // before the child textarea's ref callback runs. A signal lets the menu's
+  // effect observe the element once it exists.
+  const [textareaEl, setTextareaEl] = createSignal<HTMLTextAreaElement>();
   let scrollContainerRef: HTMLDivElement | undefined;
   // Message content wrapper (all children of the scroll container): observed by the streaming
   // follow-bottom ResizeObserver. The scroll container is a fixed-height flex-grow box, so
@@ -597,7 +607,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
 
             {/* Context compaction in progress: in-record pill with a spinner
                 (mainstream visual feedback, cf. DSH's in-record compaction indicator) */}
-            <Show when={props.activeTopic && compactingTopicId() === props.activeTopic.id}>
+            <Show when={props.activeTopic && compactingTopicIds().has(props.activeTopic.id)}>
               <div class="flex items-center justify-center gap-2 my-3 animate-fade-in">
                 <svg
                   class="w-4 h-4 animate-spin"
@@ -904,25 +914,29 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
             );
           })()}
         </Show>
+        <CloudRunBar message={props.inputMessage} onConsumed={() => props.setInputMessage('')} />
         <div
           class="rounded-xl box-border flex flex-col gap-[10px] mt-[3px] p-[10px] transition-all duration-200 w-full"
           style={{ background: 'rgba(0,0,0,0.25)', border: '1px solid var(--border-dim)' }}
         >
-          <textarea
-            ref={textareaRef}
-            class="bg-transparent border-none text-white font-inherit text-base leading-relaxed min-h-[40px] max-h-[20vh] outline-none overflow-y-hidden px-[5px] pb-[5px] resize-none w-full focus:overflow-y-auto"
-            placeholder={t('chat.input.placeholder')}
+          <SlashHighlightedTextarea
             value={props.inputMessage}
-            onInput={(e) => props.setInputMessage(e.currentTarget.value)}
+            onInput={props.setInputMessage}
             onKeyDown={(e) => {
               if (e.key === 'Enter' && !e.ctrlKey && !e.shiftKey) {
                 e.preventDefault();
                 props.handleSendMessage();
               }
             }}
+            placeholder={t('chat.input.placeholder')}
+            commandRange={findLeadingSlashCommand}
+            textareaRef={(el) => {
+              textareaRef = el;
+              setTextareaEl(el);
+            }}
           />
           <SlashCommandMenu
-            textareaRef={textareaRef}
+            textareaRef={textareaEl()}
             inputMessage={props.inputMessage}
             setInputMessage={props.setInputMessage}
           />

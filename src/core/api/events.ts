@@ -85,6 +85,11 @@ export const EVENTS = {
   harnessApprovalRequested: 'harness-approval-requested',
   /** Harness approval expired (bubble removes itself) */
   harnessApprovalExpired: 'harness-approval-expired',
+
+  /** Cloud sync change notification: `{ workspaceId, cursor }` (no entity data) */
+  cloudSyncEvent: 'cloud-sync-event',
+  /** One cloud-run event: `{ runId, seq, type, payload }` */
+  cloudRunEvent: 'cloud-run-event',
 } as const;
 
 export type EventName = (typeof EVENTS)[keyof typeof EVENTS];

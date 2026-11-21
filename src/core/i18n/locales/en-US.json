@@ -825,6 +825,7 @@
   "settings.embeddingModels.disable": "Disable",
   "settings.embeddingModels.toggleFail": "Failed to save enable state",
   "settings.embeddingModels.loadFail": "Failed to load model list",
+  "settings.team": "Team settings",
   "settings.title": "Settings",
   "settings.usage": "Usage",
   "engine.checking": "Checking",

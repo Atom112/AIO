@@ -823,6 +823,7 @@
   "settings.embeddingModels.disable": "停用",
   "settings.embeddingModels.toggleFail": "启停状态保存失败",
   "settings.embeddingModels.loadFail": "加载模型列表失败",
+  "settings.team": "团队设置",
   "settings.title": "设置中心",
   "settings.usage": "使用量",
   "engine.installed": "已安装",

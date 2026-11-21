@@ -72,6 +72,7 @@ const Settings = lazy(() => import('./features/settings/SettingsPage'));
 const ProviderList = lazy(() => import('./features/settings/components/ProviderList'));
 const ProviderDetail = lazy(() => import('./features/settings/ProviderDetailPage'));
 const AppSettings = lazy(() => import('./features/settings/components/AppSettings'));
+const TeamSettingsPage = lazy(() => import('./features/settings/TeamSettingsPage'));
 const McpServerList = lazy(() => import('./features/settings/components/McpServerList'));
 const SkillList = lazy(() => import('./features/settings/components/SkillList'));
 const SubagentModelSettings = lazy(
@@ -106,6 +107,7 @@ render(
           <Route path="/mcp" component={McpServerList} />
           <Route path="/skills" component={SkillList} />
           <Route path="/usage" component={UsageSettings} />
+          <Route path="/team" component={TeamSettingsPage} />
           <Route path="/app" component={AppSettings} />
           <Route path="/subagent-models" component={SubagentModelSettings} />
           <Route path="/embedding-models" component={EmbeddingModelSettings} />

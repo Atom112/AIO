@@ -9,7 +9,6 @@ import {
   Show,
 } from 'solid-js';
 import { openSafeUrl } from '../../../core/utils/safeUrl';
-import CloudAccountCard from './CloudAccountCard';
 import FeedbackSection from './FeedbackSection';
 import {
   loadAppConfig,
@@ -505,7 +504,6 @@ const AppSettings: Component = () => {
 
   return (
     <div class="flex flex-col gap-[15px] box-border">
-      <CloudAccountCard />
       <div
         class="rounded-xl p-6 animate-row-in"
         style={{

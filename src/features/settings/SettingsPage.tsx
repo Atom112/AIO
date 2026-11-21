@@ -74,7 +74,7 @@ const Settings: Component<{ children?: JSX.Element }> = (props) => {
         id: 'team',
         path: '/settings/team',
         label: t('settings.team'),
-        icon: <Icon name="globe" class="w-5 h-5" />,
+        icon: <Icon name="users" class="w-5 h-5" />,
       },
       {
         id: 'app',

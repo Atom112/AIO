@@ -27,8 +27,8 @@ import { Dropdown } from '../../../shared/components/Dropdown';
 import { Icon } from '../../../shared/components/Icon';
 import {
   btnDangerOutline,
-  btnPrimaryOutline,
-  btnSecondary,
+  btnPrimaryOutlineSm,
+  btnSecondarySm,
 } from '../../../shared/components/buttonStyles';
 
 type BusyKind = 'signin' | 'bind' | 'sync' | 'signout' | 'invitation';
@@ -142,7 +142,7 @@ export const CloudAccountCard: Component = () => {
         </div>
         <input
           type="text"
-          class="min-w-[280px] px-3 py-1.5 rounded-lg text-xs bg-white/[0.06] border border-[var(--border-dim)] text-white/85 outline-none focus:border-[rgba(var(--primary-rgb),0.5)]"
+          class="w-[280px] px-3 py-1.5 rounded-lg text-xs bg-transparent border border-[var(--border-dim)] text-white/85 outline-none transition-colors duration-150 hover:border-[rgba(var(--primary-rgb),0.5)] focus:border-[rgba(var(--primary-rgb),0.5)]"
           placeholder="https://cloud.example.com"
           value={serverUrl()}
           disabled={signedIn() || busy() !== null}
@@ -166,7 +166,7 @@ export const CloudAccountCard: Component = () => {
           fallback={
             <button
               type="button"
-              class={btnPrimaryOutline}
+              class={`min-w-[112px] ${btnPrimaryOutlineSm}`}
               disabled={busy() !== null}
               onClick={onSignIn}
             >
@@ -177,7 +177,7 @@ export const CloudAccountCard: Component = () => {
         >
           <button
             type="button"
-            class={btnDangerOutline}
+            class={`min-w-[112px] ${btnDangerOutline}`}
             disabled={busy() !== null}
             onClick={() => void onSignOut()}
           >
@@ -195,7 +195,7 @@ export const CloudAccountCard: Component = () => {
             <div class="text-xs text-white/40 mt-1">{t('settings.cloud.deviceHint')}</div>
             <button
               type="button"
-              class={`${btnSecondary} mt-2`}
+              class={`mt-2 ${btnSecondarySm}`}
               onClick={() => void openSafeUrl(current().verificationUri)}
             >
               {t('settings.cloud.openVerification')}
@@ -227,7 +227,7 @@ export const CloudAccountCard: Component = () => {
                   <div class="flex items-center gap-2 shrink-0">
                     <button
                       type="button"
-                      class={btnPrimaryOutline}
+                      class={`min-w-[112px] ${btnPrimaryOutlineSm}`}
                       disabled={busy() !== null}
                       onClick={() => onAcceptInvitation(invitation.id)}
                     >
@@ -235,7 +235,7 @@ export const CloudAccountCard: Component = () => {
                     </button>
                     <button
                       type="button"
-                      class={btnSecondary}
+                      class={`min-w-[112px] ${btnSecondarySm}`}
                       disabled={busy() !== null}
                       onClick={() => onDeclineInvitation(invitation.id)}
                     >
@@ -263,7 +263,7 @@ export const CloudAccountCard: Component = () => {
         <div class="flex items-center gap-2">
           <Dropdown
             variant="ghost"
-            class="min-w-[200px]"
+            class="w-[280px]"
             value={workspaceId()}
             placeholder={t('settings.cloud.selectWorkspace')}
             options={workspaceOptions()}
@@ -273,7 +273,7 @@ export const CloudAccountCard: Component = () => {
           <Show when={!bound() && signedIn()}>
             <button
               type="button"
-              class={btnPrimaryOutline}
+              class={`min-w-[112px] ${btnPrimaryOutlineSm}`}
               disabled={busy() !== null || !workspaceId()}
               onClick={onBind}
             >
@@ -290,7 +290,7 @@ export const CloudAccountCard: Component = () => {
         <div class="flex items-center gap-2">
           <button
             type="button"
-            class={btnSecondary}
+            class={`min-w-[112px] ${btnSecondarySm}`}
             disabled={!bound() || busy() !== null}
             onClick={() => void run('sync', () => syncNow())}
           >
@@ -298,7 +298,7 @@ export const CloudAccountCard: Component = () => {
           </button>
           <button
             type="button"
-            class={btnSecondary}
+            class={`h-[30px] ${btnSecondarySm}`}
             onClick={() => void initCloud()}
             title={t('settings.cloud.reload')}
           >

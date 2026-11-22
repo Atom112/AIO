@@ -1,13 +1,4 @@
-import {
-  Component,
-  For,
-  Show,
-  createEffect,
-  createMemo,
-  createSignal,
-  onMount,
-  onCleanup,
-} from 'solid-js';
+import { Component, For, Show, createEffect, createSignal, onMount, onCleanup } from 'solid-js';
 import { Portal } from 'solid-js/web';
 import {
   Assistant,
@@ -218,24 +209,14 @@ const TopicSidebar: Component<TopicSidebarProps> = (props) => {
     }, 200);
   };
 
-  /** Topic targeted by the context menu, used for the share/private toggle. */
-  const menuTopic = createMemo(() => {
-    const id = topicMenuState().targetTopicId;
-    if (!id) return undefined;
-    return props.currentAssistant?.topics.find((topic) => topic.id === id);
-  });
-  const canShareTopic = createMemo(() => canToggleTopicVisibility(menuTopic(), cloudSession()));
-
-  const toggleTopicVisibility = async (): Promise<void> => {
-    const topic = menuTopic();
-    if (!topic) return;
+  /** Shares or privatizes one conversation from the row action bar. */
+  const toggleTopicVisibility = async (topic: Topic): Promise<void> => {
     try {
       if (topic.visibility === 'workspace') await unshareTopic(topic.id);
       else await shareTopic(topic.id);
     } catch (error) {
       console.error('topic visibility change failed', error);
     }
-    closeTopicMenu();
   };
 
   const deleteTopic = async (asstId: string, topicId: string) => {
@@ -547,6 +528,42 @@ const TopicSidebar: Component<TopicSidebarProps> = (props) => {
                           />
                         </Show>
                         <div class="flex items-center gap-0.5 shrink-0">
+                          {/* Visibility: share with the team / make private. Shared
+                              topics keep a persistent lock so the state is visible
+                              without hovering; private ones reveal the action on hover. */}
+                          <Show when={canToggleTopicVisibility(topic, cloudSession())}>
+                            <button
+                              type="button"
+                              class={`flex items-center justify-center border-none rounded-full cursor-pointer transition-all duration-200 active:scale-90 ${
+                                topic.visibility === 'workspace'
+                                  ? 'bg-pri-10 text-pri opacity-100 hover:bg-white/[0.08]'
+                                  : 'bg-white/[0.06] text-white/60 hover:bg-pri-10 opacity-0 group-hover:opacity-100'
+                              }`}
+                              style={{
+                                width: isChild ? '22px' : '30px',
+                                height: isChild ? '22px' : '30px',
+                              }}
+                              title={
+                                topic.visibility === 'workspace'
+                                  ? t('chat.topic.makePrivate')
+                                  : t('chat.topic.shareTeam')
+                              }
+                              aria-label={
+                                topic.visibility === 'workspace'
+                                  ? t('chat.topic.makePrivate')
+                                  : t('chat.topic.shareTeam')
+                              }
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                void toggleTopicVisibility(topic);
+                              }}
+                            >
+                              <Icon
+                                name={topic.visibility === 'workspace' ? 'lock' : 'users'}
+                                size={isChild ? 13 : 15}
+                              />
+                            </button>
+                          </Show>
                           {/* Fold toggle: only for topics with children, hover-only
                                 visibility (same as the more button). Caret icons
                                 indicate the click action: v (caret-down) when
@@ -687,16 +704,7 @@ const TopicSidebar: Component<TopicSidebarProps> = (props) => {
                 {t('chat.regenerateTitle')}
               </button>
             </Show>
-            <Show when={canShareTopic()}>
-              <button
-                class="w-full text-left px-3 py-2 bg-transparent border-none cursor-pointer rounded-lg transition-all duration-200 text-white/75 hover:bg-pri-10 hover:text-white"
-                onClick={() => void toggleTopicVisibility()}
-              >
-                {menuTopic()?.visibility === 'workspace'
-                  ? t('chat.topic.makePrivate')
-                  : t('chat.topic.shareTeam')}
-              </button>
-            </Show>
+
             <button
               class="w-full text-left px-3 py-2 bg-transparent border-none cursor-pointer rounded-lg transition-all duration-200 text-white/75 hover:bg-pri-10 hover:text-white"
               onClick={() => {

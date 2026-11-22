@@ -12,6 +12,7 @@ import {
 } from 'solid-js';
 import { Portal } from 'solid-js/web';
 import ModelSelector from './ModelSelector';
+import { cloudSession } from '../../../core/store/cloud';
 import {
   Topic,
   PendingAttachment,
@@ -149,6 +150,18 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
   // commands/llm/mod.rs, under __builtin__); there is no __aio-filesystem__ stdio
   // subprocess handshake to track. Ready therefore means a project is loaded, so the
   // dot does not sit permanently on the "connecting" yellow state.
+  /** A teammate's shared conversation is visible but not writable here. */
+  const teamReadOnly = createMemo(() => {
+    const topic = props.activeTopic;
+    const session = cloudSession();
+    return Boolean(
+      topic?.ownerUserId &&
+      session.signedIn &&
+      session.userId &&
+      topic.ownerUserId !== session.userId,
+    );
+  });
+
   const fsStatus = createMemo<'connected' | 'connecting' | 'error'>(() =>
     currentProject() ? 'connected' : 'connecting',
   );
@@ -914,6 +927,11 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
             );
           })()}
         </Show>
+        <Show when={teamReadOnly()}>
+          <div class="mb-2 rounded-lg border border-[var(--border-dim)] bg-white/[0.04] px-3 py-2 text-xs text-white/60">
+            {t('chat.topic.readOnly')}
+          </div>
+        </Show>
         <CloudRunBar message={props.inputMessage} onConsumed={() => props.setInputMessage('')} />
         <div
           class="rounded-xl box-border flex flex-col gap-[10px] mt-[3px] p-[10px] transition-all duration-200 w-full"
@@ -923,6 +941,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
             value={props.inputMessage}
             onInput={props.setInputMessage}
             onKeyDown={(e) => {
+              if (teamReadOnly()) return;
               if (e.key === 'Enter' && !e.ctrlKey && !e.shiftKey) {
                 e.preventDefault();
                 props.handleSendMessage();
@@ -1033,9 +1052,12 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
               <button
                 class={`flex items-center justify-center border-none rounded-lg cursor-pointer h-8 w-8 transition-all duration-100 hover:opacity-90 hover:scale-105 active:scale-95 ${props.isThinking ? 'bg-[var(--color-danger)] text-white' : 'text-white'}`}
                 style={!props.isThinking ? { background: 'rgba(var(--primary-rgb),0.3)' } : {}}
-                onClick={() =>
-                  props.isThinking ? props.handleStopGeneration() : props.handleSendMessage()
-                }
+                disabled={teamReadOnly()}
+                onClick={() => {
+                  if (teamReadOnly()) return;
+                  if (props.isThinking) props.handleStopGeneration();
+                  else props.handleSendMessage();
+                }}
               >
                 <Show
                   when={props.isThinking}

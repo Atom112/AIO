@@ -163,6 +163,10 @@ export interface Topic {
    * behavior: DSH shadows surface nodes, pi keeps raw entries). Absent = 0.
    */
   contextTrimCount?: number;
+  /** `private` stays on this device; `workspace` is synced and read-only for others. */
+  visibility?: 'private' | 'workspace';
+  /** Server-side owner of a synced conversation; absent for local-only topics. */
+  ownerUserId?: string | null;
 }
 
 /**

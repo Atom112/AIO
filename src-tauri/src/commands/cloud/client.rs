@@ -301,6 +301,32 @@ pub(crate) async fn reject_invitation(
     Ok(())
 }
 
+/// `DELETE /v1/threads/:id` — removes a shared conversation from the workspace.
+/// A 404 means the server never had it (the share never completed), which is fine.
+pub(crate) async fn purge_thread(
+    client: &reqwest::Client,
+    server_url: &str,
+    token: &str,
+    thread_id: &str,
+) -> Result<(), HttpError> {
+    let mut url = reqwest::Url::parse(&format!("{}/v1/threads", api_base(server_url)))
+        .map_err(HttpError::transport)?;
+    {
+        let mut segments = url
+            .path_segments_mut()
+            .map_err(|()| HttpError::transport("thread cannot be a base URL"))?;
+        segments.push(thread_id);
+    }
+    let response = client.delete(url).bearer_auth(token).send().await?;
+    if response.status() == 404 {
+        return Ok(());
+    }
+    if !response.status().is_success() {
+        return Err(to_http_error(response).await);
+    }
+    Ok(())
+}
+
 /// `POST /api/auth/sign-out` — best effort; a failure never blocks local sign-out.
 pub(crate) async fn sign_out(client: &reqwest::Client, server_url: &str, token: &str) {
     let url = format!("{}/api/auth/sign-out", api_base(server_url));

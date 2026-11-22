@@ -93,12 +93,63 @@ fn apply_assistant(conn: &Connection, payload: &Value) -> Result<(), String> {
     Ok(())
 }
 
+/// Owner of the local topic row, when it came from the server.
+fn local_topic_owner(conn: &Connection, topic_id: &str) -> Option<String> {
+    conn.query_row(
+        "SELECT owner_user_id FROM topics WHERE id = ?1",
+        [topic_id],
+        |row| row.get::<_, Option<String>>(0),
+    )
+    .ok()
+    .flatten()
+}
+
+/// The signed-in account's user id, when this installation is bound to a workspace.
+fn local_cloud_user(conn: &Connection) -> Option<String> {
+    conn.query_row(
+        "SELECT user_id FROM cloud_account WHERE id = 1",
+        [],
+        |row| row.get(0),
+    )
+    .ok()
+}
+
+/// True when the local topic is local-only and must survive server delete events.
+fn topic_is_private(conn: &Connection, topic_id: &str) -> bool {
+    conn.query_row(
+        "SELECT visibility FROM topics WHERE id = ?1",
+        [topic_id],
+        |row| row.get::<_, String>(0),
+    )
+    .map(|value| value == "private")
+    .unwrap_or(false)
+}
+
 /// Inserts or updates a topic (server "thread") row.
 fn apply_thread(conn: &Connection, payload: &Value) -> Result<Option<String>, String> {
     let remote: RemoteThread = serde_json::from_value(payload.clone())
         .map_err(|e| format!("invalid thread payload: {e}"))?;
     if remote.deleted_at.is_some() {
-        delete_topic(conn, &remote.id)?;
+        // A private conversation never has a server copy: a delete event for it can
+        // only be the echo of this device's own unshare, so keep the local topic.
+        if topic_is_private(conn, &remote.id) {
+            return Ok(Some(remote.id));
+        }
+        // The owner's other devices also receive the delete event; keep their copy
+        // (now local-only) instead of losing the conversation on the other machine.
+        let mine = matches!(
+            (local_topic_owner(conn, &remote.id), local_cloud_user(conn)),
+            (Some(owner), Some(me)) if owner == me
+        );
+        if mine {
+            conn.execute(
+                "UPDATE topics SET visibility = 'private', owner_user_id = NULL, cloud_version = ?2 WHERE id = ?1",
+                params![remote.id, remote.version],
+            )
+            .map_err(|e| e.to_string())?;
+        } else {
+            delete_topic(conn, &remote.id)?;
+        }
         return Ok(Some(remote.id));
     }
     // The assistant must exist locally: the FK would reject the row and the whole
@@ -114,15 +165,17 @@ fn apply_thread(conn: &Connection, payload: &Value) -> Result<Option<String>, St
         return Ok(None);
     }
     conn.execute(
-        "INSERT INTO topics (id, assistant_id, name, summary, renamed, branched_from_message_id, parent_topic_id, context_trim_count, cloud_version)
-         VALUES (?1, ?2, ?3, ?4, 0, ?5, ?6, ?7, ?8)
+        "INSERT INTO topics (id, assistant_id, name, summary, renamed, branched_from_message_id, parent_topic_id, context_trim_count, cloud_version, visibility, owner_user_id)
+         VALUES (?1, ?2, ?3, ?4, 0, ?5, ?6, ?7, ?8, ?9, ?10)
          ON CONFLICT(id) DO UPDATE SET
            name = excluded.name,
            summary = excluded.summary,
            branched_from_message_id = excluded.branched_from_message_id,
            parent_topic_id = excluded.parent_topic_id,
            context_trim_count = excluded.context_trim_count,
-           cloud_version = excluded.cloud_version",
+           cloud_version = excluded.cloud_version,
+           visibility = excluded.visibility,
+           owner_user_id = excluded.owner_user_id",
         params![
             remote.id,
             remote.assistant_id,
@@ -131,7 +184,9 @@ fn apply_thread(conn: &Connection, payload: &Value) -> Result<Option<String>, St
             remote.branched_from_message_id,
             remote.parent_thread_id,
             remote.context_trim_count,
-            remote.version
+            remote.version,
+            remote.visibility.unwrap_or_else(|| "workspace".to_string()),
+            remote.owner_user_id
         ],
     )
     .map_err(|e| e.to_string())?;

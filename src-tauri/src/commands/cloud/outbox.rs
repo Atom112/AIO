@@ -351,8 +351,36 @@ pub(crate) fn enqueue_assistant(conn: &Connection, assistant_id: &str) {
     );
 }
 
+/// True when the topic is shared with the workspace and may leave this device.
+///
+/// Private conversations are enforced locally: no thread/message/attachment row of
+/// theirs is ever queued, so the server never receives a copy.
+fn topic_is_shared(conn: &Connection, topic_id: &str) -> bool {
+    conn.query_row(
+        "SELECT visibility FROM topics WHERE id = ?1",
+        [topic_id],
+        |row| row.get::<_, String>(0),
+    )
+    .map(|value| value == "workspace")
+    .unwrap_or(false)
+}
+
+/// Visibility of the topic that owns this message; `false` when it is private or gone.
+fn message_topic_is_shared(conn: &Connection, message_id: &str) -> bool {
+    conn.query_row(
+        "SELECT t.visibility FROM messages m JOIN topics t ON t.id = m.topic_id WHERE m.id = ?1",
+        [message_id],
+        |row| row.get::<_, String>(0),
+    )
+    .map(|value| value == "workspace")
+    .unwrap_or(false)
+}
+
 /// Enqueues one topic (thread) at priority 1.
 pub(crate) fn enqueue_topic(conn: &Connection, topic_id: &str) {
+    if !topic_is_shared(conn, topic_id) {
+        return;
+    }
     let Some(payload) = thread_payload(conn, topic_id) else {
         return;
     };
@@ -373,6 +401,9 @@ pub(crate) fn enqueue_topic(conn: &Connection, topic_id: &str) {
 
 /// Enqueues every message of a topic at priority 3 in chronological order.
 pub(crate) fn enqueue_messages_of(conn: &Connection, topic_id: &str) {
+    if !topic_is_shared(conn, topic_id) {
+        return;
+    }
     let ids: Vec<String> = conn
         .prepare("SELECT id FROM messages WHERE topic_id = ?1 ORDER BY timestamp ASC")
         .and_then(|mut stmt| {
@@ -390,7 +421,7 @@ pub(crate) fn enqueue_messages_of(conn: &Connection, topic_id: &str) {
 /// Priority 4 and a separate entity type keep them out of the message push: the server
 /// must accept the message first so the payload flags always reference an existing row.
 pub(crate) fn enqueue_message_payloads(conn: &Connection, message_id: &str) {
-    if account(conn).ok().flatten().is_none() {
+    if account(conn).ok().flatten().is_none() || !message_topic_is_shared(conn, message_id) {
         return;
     }
     let agent_steps: Option<String> = conn
@@ -444,6 +475,9 @@ pub(crate) fn enqueue_message_payloads(conn: &Connection, message_id: &str) {
 
 /// Enqueues one message at priority 3.
 pub(crate) fn enqueue_message(conn: &Connection, message_id: &str) {
+    if !message_topic_is_shared(conn, message_id) {
+        return;
+    }
     let Ok(Some(payload)) = message_payload(conn, message_id) else {
         return;
     };
@@ -479,6 +513,21 @@ pub(crate) fn enqueue_message(conn: &Connection, message_id: &str) {
 /// no longer exists (a message can reference a just-cleaned file).
 pub(crate) fn enqueue_attachment(conn: &Connection, attachment_id: &str) {
     if account(conn).ok().flatten().is_none() {
+        return;
+    }
+    // Upload only files reachable from a shared topic; a private conversation's
+    // attachments stay on the device with it.
+    let shared: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM message_attachments ma
+             JOIN messages m ON m.id = ma.message_id
+             JOIN topics t ON t.id = m.topic_id
+             WHERE ma.attachment_id = ?1 AND t.visibility = 'workspace'",
+            [attachment_id],
+            |row| row.get(0),
+        )
+        .unwrap_or(0);
+    if shared == 0 {
         return;
     }
     let needs_upload: Option<Option<String>> = conn
@@ -517,6 +566,15 @@ pub(crate) fn enqueue_tombstone(
     base_version: Option<i64>,
     priority: i64,
 ) {
+    // Deleting a private conversation or one of its messages has no server effect.
+    let allowed = match entity_type {
+        "thread" => topic_is_shared(conn, entity_id),
+        "message" => message_topic_is_shared(conn, entity_id),
+        _ => true,
+    };
+    if !allowed {
+        return;
+    }
     enqueue_best_effort(
         conn,
         &EnqueueChange {
@@ -799,5 +857,152 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM cloud_outbox", [], |row| row.get(0))
             .expect("count outbox");
         assert_eq!(rows, 0);
+    }
+}
+
+/// Conversation privacy: private topics never queue thread/message/attachment rows,
+/// so the team server cannot receive a copy of them.
+#[cfg(test)]
+mod privacy_tests {
+    use super::*;
+
+    fn connection() -> Connection {
+        let conn = Connection::open_in_memory().expect("open in-memory db");
+        conn.execute_batch(
+            "CREATE TABLE cloud_account (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                server_url TEXT NOT NULL,
+                workspace_id TEXT NOT NULL,
+                user_id TEXT NOT NULL,
+                user_login TEXT NOT NULL,
+                device_id TEXT NOT NULL,
+                last_cursor TEXT,
+                created_at TEXT NOT NULL
+            );
+            CREATE TABLE cloud_outbox (
+                entity_type TEXT NOT NULL,
+                entity_id TEXT NOT NULL,
+                op TEXT NOT NULL,
+                payload_json TEXT NOT NULL,
+                base_version INTEGER,
+                local_order TEXT,
+                priority INTEGER NOT NULL DEFAULT 1,
+                enqueued_at TEXT NOT NULL,
+                attempts INTEGER NOT NULL DEFAULT 0,
+                last_error TEXT,
+                PRIMARY KEY(entity_type, entity_id)
+            );
+            CREATE TABLE cloud_sync_state (
+                entity_type TEXT NOT NULL,
+                entity_id TEXT NOT NULL,
+                remote_version INTEGER NOT NULL,
+                remote_seq INTEGER,
+                synced_at TEXT NOT NULL,
+                PRIMARY KEY(entity_type, entity_id)
+            );
+            CREATE TABLE assistants (id TEXT PRIMARY KEY, name TEXT NOT NULL, prompt TEXT);
+            CREATE TABLE topics (
+                id TEXT PRIMARY KEY,
+                assistant_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                summary TEXT,
+                context_trim_count INTEGER NOT NULL DEFAULT 0,
+                branched_from_message_id TEXT,
+                parent_topic_id TEXT,
+                visibility TEXT NOT NULL DEFAULT 'private',
+                owner_user_id TEXT,
+                cloud_version INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE TABLE messages (
+                id TEXT PRIMARY KEY,
+                topic_id TEXT NOT NULL,
+                role TEXT NOT NULL,
+                content TEXT NOT NULL,
+                display_text TEXT,
+                model_id TEXT,
+                reasoning TEXT,
+                tool_calls_json TEXT,
+                agent_steps_json TEXT,
+                parent_message_id TEXT,
+                branch_index INTEGER NOT NULL DEFAULT 0,
+                input_tokens INTEGER,
+                output_tokens INTEGER,
+                cached_input_tokens INTEGER,
+                context_tokens INTEGER,
+                ttft_ms INTEGER,
+                timestamp DATETIME,
+                cloud_version INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE TABLE attachments (
+                id TEXT PRIMARY KEY,
+                cloud_id TEXT,
+                file_name TEXT NOT NULL,
+                mime_type TEXT NOT NULL,
+                sha256 TEXT NOT NULL,
+                size INTEGER NOT NULL
+            );
+            CREATE TABLE message_attachments (
+                message_id TEXT NOT NULL,
+                attachment_id TEXT NOT NULL,
+                sort_order INTEGER NOT NULL DEFAULT 0
+            );
+            INSERT INTO cloud_account
+                (id, server_url, workspace_id, user_id, user_login, device_id, last_cursor, created_at)
+                VALUES (1, 'https://cloud.test', 'ws1', 'u1', 'octocat', 'dev1', NULL, CURRENT_TIMESTAMP);
+            INSERT INTO assistants (id, name, prompt) VALUES ('a1', 'Assistant', NULL);
+            INSERT INTO topics (id, assistant_id, name, visibility) VALUES
+                ('private-topic', 'a1', 'Private', 'private'),
+                ('shared-topic', 'a1', 'Shared', 'workspace');
+            INSERT INTO messages (id, topic_id, role, content) VALUES
+                ('private-message', 'private-topic', 'user', '[]'),
+                ('shared-message', 'shared-topic', 'user', '[]'),
+                ('shared-att-message', 'shared-topic', 'user', '[]');
+            INSERT INTO attachments (id, cloud_id, file_name, mime_type, sha256, size) VALUES
+                ('att-private', NULL, 'a.txt', 'text/plain', 'aa', 1),
+                ('att-shared', NULL, 'b.txt', 'text/plain', 'bb', 1);
+            INSERT INTO message_attachments (message_id, attachment_id) VALUES
+                ('private-message', 'att-private'),
+                ('shared-att-message', 'att-shared');",
+        )
+        .expect("create privacy fixture");
+        conn
+    }
+
+    fn queued(conn: &Connection) -> i64 {
+        conn.query_row("SELECT COUNT(*) FROM cloud_outbox", [], |row| row.get(0))
+            .expect("count outbox")
+    }
+
+    #[test]
+    fn private_topics_never_queue_rows() {
+        let conn = connection();
+        enqueue_topic(&conn, "private-topic");
+        enqueue_messages_of(&conn, "private-topic");
+        enqueue_message(&conn, "private-message");
+        enqueue_attachment(&conn, "att-private");
+        assert_eq!(queued(&conn), 0);
+
+        enqueue_topic(&conn, "shared-topic");
+        enqueue_messages_of(&conn, "shared-topic");
+        enqueue_attachment(&conn, "att-shared");
+        // thread + shared-message + the attachment's upload row. The message that
+        // references the attachment waits for its server id by design.
+        assert_eq!(queued(&conn), 3);
+    }
+
+    #[test]
+    fn switching_to_private_stops_future_enqueues() {
+        let conn = connection();
+        enqueue_topic(&conn, "shared-topic");
+        assert_eq!(queued(&conn), 1);
+
+        conn.execute(
+            "UPDATE topics SET visibility = 'private' WHERE id = 'shared-topic'",
+            [],
+        )
+        .expect("flip visibility");
+        enqueue_message(&conn, "shared-message");
+        enqueue_attachment(&conn, "att-shared");
+        assert_eq!(queued(&conn), 1);
     }
 }

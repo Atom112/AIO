@@ -197,6 +197,10 @@ pub struct RemoteThread {
     pub id: String,
     pub assistant_id: String,
     #[serde(default)]
+    pub owner_user_id: Option<String>,
+    #[serde(default)]
+    pub visibility: Option<String>,
+    #[serde(default)]
     pub title: Option<String>,
     #[serde(default)]
     pub summary: Option<String>,

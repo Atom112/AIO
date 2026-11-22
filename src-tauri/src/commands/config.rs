@@ -140,7 +140,7 @@ pub async fn load_assistants(state: tauri::State<'_, DbState>) -> Result<Vec<Ass
 
         // 2. Load topics for each assistant
         let mut t_stmt = conn
-            .prepare("SELECT id, name, summary, renamed, branched_from_message_id, parent_topic_id, context_trim_count FROM topics WHERE assistant_id = ?")
+            .prepare("SELECT id, name, summary, renamed, branched_from_message_id, parent_topic_id, context_trim_count, visibility, owner_user_id FROM topics WHERE assistant_id = ?")
             .map_err(|e| e.to_string())?;
         let topic_iter = t_stmt
             .query_map([&asst.id], |row| {
@@ -153,6 +153,10 @@ pub async fn load_assistants(state: tauri::State<'_, DbState>) -> Result<Vec<Ass
                     branched_from_message_id: row.get(4)?,
                     parent_topic_id: row.get(5)?,
                     context_trim_count: row.get::<_, Option<i64>>(6)?.unwrap_or(0),
+                    visibility: row
+                        .get::<_, Option<String>>(7)?
+                        .unwrap_or_else(|| "private".to_string()),
+                    owner_user_id: row.get(8)?,
                     history: vec![],
                 })
             })
@@ -1262,6 +1266,8 @@ pub async fn branch_topic(
         id: new_topic_id.clone(),
         name: branch_name,
         history: history.clone(),
+        visibility: "private".to_string(),
+        owner_user_id: None,
         summary: None,
         renamed: false,
         branched_from_message_id: Some(source_message_id.clone()),

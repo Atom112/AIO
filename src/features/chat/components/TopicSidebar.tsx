@@ -1,4 +1,13 @@
-import { Component, For, Show, createEffect, createSignal, onMount, onCleanup } from 'solid-js';
+import {
+  Component,
+  For,
+  Show,
+  createEffect,
+  createMemo,
+  createSignal,
+  onMount,
+  onCleanup,
+} from 'solid-js';
 import { Portal } from 'solid-js/web';
 import {
   Assistant,
@@ -12,6 +21,7 @@ import {
   setPendingSearchJump,
 } from '../../../core/store/store';
 import { loadTopicFoldState, saveTopicFoldState } from '../../../core/store/layout';
+import { cloudSession, shareTopic, unshareTopic } from '../../../core/store/cloud';
 import Icon from '../../../shared/components/Icon';
 import { formatDateTime, t } from '../../../core/i18n';
 import { searchChatHistory, type ChatSearchMatch } from '../utils/searchHistory';
@@ -205,6 +215,32 @@ const TopicSidebar: Component<TopicSidebarProps> = (props) => {
       setShowTopicMenuDiv(false);
       setIsTopicMenuAnimatingOut(false);
     }, 200);
+  };
+
+  /** Topic targeted by the context menu, used for the share/private toggle. */
+  const menuTopic = createMemo(() => {
+    const id = topicMenuState().targetTopicId;
+    if (!id) return undefined;
+    return props.currentAssistant?.topics.find((topic) => topic.id === id);
+  });
+  const canShareTopic = createMemo(() => {
+    const topic = menuTopic();
+    const session = cloudSession();
+    if (!session.signedIn || !session.workspaceId || !topic) return false;
+    // Only the owner can change a shared conversation's visibility.
+    return !topic.ownerUserId || topic.ownerUserId === session.userId;
+  });
+
+  const toggleTopicVisibility = async (): Promise<void> => {
+    const topic = menuTopic();
+    if (!topic) return;
+    try {
+      if (topic.visibility === 'workspace') await unshareTopic(topic.id);
+      else await shareTopic(topic.id);
+    } catch (error) {
+      console.error('topic visibility change failed', error);
+    }
+    closeTopicMenu();
   };
 
   const deleteTopic = async (asstId: string, topicId: string) => {
@@ -654,6 +690,16 @@ const TopicSidebar: Component<TopicSidebarProps> = (props) => {
                 onClick={handleRegenerateTitle}
               >
                 {t('chat.regenerateTitle')}
+              </button>
+            </Show>
+            <Show when={canShareTopic()}>
+              <button
+                class="w-full text-left px-3 py-2 bg-transparent border-none cursor-pointer rounded-lg transition-all duration-200 text-white/75 hover:bg-pri-10 hover:text-white"
+                onClick={() => void toggleTopicVisibility()}
+              >
+                {menuTopic()?.visibility === 'workspace'
+                  ? t('chat.topic.makePrivate')
+                  : t('chat.topic.shareTeam')}
               </button>
             </Show>
             <button

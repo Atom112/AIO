@@ -322,6 +322,8 @@ pub fn run() {
             commands::cloud::cloud_list_invitations,
             commands::cloud::cloud_accept_invitation,
             commands::cloud::cloud_reject_invitation,
+            commands::cloud::cloud_share_topic,
+            commands::cloud::cloud_unshare_topic,
             commands::cloud::cloud_logout,
             commands::cloud::cloud_sync_push,
             commands::cloud::cloud_sync_pull,

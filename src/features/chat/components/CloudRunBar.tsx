@@ -13,7 +13,7 @@ import {
   resolveCloudApproval,
   startCloudRun,
 } from '../../../core/store/cloud';
-import { currentAssistantId, currentTopicId } from '../../../core/store/store';
+import { currentAssistantId, currentTopicId, datas } from '../../../core/store/store';
 import { openSafeUrl } from '../../../core/utils/safeUrl';
 import { t } from '../../../core/i18n';
 import {
@@ -32,6 +32,18 @@ interface CloudRunBarProps {
 export const CloudRunBar: Component<CloudRunBarProps> = (props) => {
   const run = createMemo(() => cloudRun());
   const linked = createMemo(() => cloudSession().signedIn && Boolean(cloudSession().workspaceId));
+  /** Only shared conversations we own can run on the server. */
+  const topic = createMemo(() =>
+    datas.assistants
+      .flatMap((assistant) => assistant.topics)
+      .find((entry) => entry.id === currentTopicId()),
+  );
+  const runnable = createMemo(
+    () =>
+      linked() &&
+      topic()?.visibility === 'workspace' &&
+      (!topic()?.ownerUserId || topic()?.ownerUserId === cloudSession().userId),
+  );
   const active = createMemo(() => {
     const status = run()?.status;
     return status === 'queued' || status === 'running' || status === 'waiting_approval';
@@ -48,7 +60,7 @@ export const CloudRunBar: Component<CloudRunBarProps> = (props) => {
   };
 
   return (
-    <Show when={linked()}>
+    <Show when={runnable()}>
       <div class="px-1 pb-1">
         <Show
           when={run()}

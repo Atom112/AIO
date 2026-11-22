@@ -20,6 +20,7 @@ mod stream;
 mod sync_ops;
 
 use parking_lot::Mutex;
+use rusqlite::params;
 use serde::Serialize;
 use tauri::{AppHandle, Manager};
 use tokio_util::sync::CancellationToken;
@@ -323,6 +324,84 @@ pub async fn cloud_list_announcements(app: AppHandle) -> Result<Vec<CloudAnnounc
     client::fetch_announcements(&state.client, &account.server_url, &token)
         .await
         .map_err(client::HttpError::into_message)
+}
+
+/// Shares a conversation with the workspace.
+///
+/// The topic becomes workspace-visible and its rows join the outbox; the caller
+/// triggers a sync tick so the upload starts immediately.
+#[tauri::command]
+pub async fn cloud_share_topic(app: AppHandle, topic_id: String) -> Result<(), String> {
+    let account = sync_ops::account(&app)?
+        .ok_or_else(|| crate::ierr!("尚未绑定团队工作区", "No team workspace is bound"))?;
+    sync_ops::with_conn(&app, |conn| {
+        conn.execute(
+            "UPDATE topics SET visibility = 'workspace', owner_user_id = ?2 WHERE id = ?1",
+            params![topic_id, account.user_id],
+        )
+        .map_err(|e| e.to_string())?;
+        outbox::enqueue_topic(conn, &topic_id);
+        outbox::enqueue_messages_of(conn, &topic_id);
+        Ok(())
+    })
+}
+
+/// Turns a shared conversation back into a local-only one.
+///
+/// The server copy is removed first (messages, run history and artifacts) while the
+/// local conversation and its files stay; a network failure keeps the share state so
+/// the user can retry instead of leaving an orphaned server copy.
+#[tauri::command]
+pub async fn cloud_unshare_topic(app: AppHandle, topic_id: String) -> Result<(), String> {
+    let account = sync_ops::account(&app)?
+        .ok_or_else(|| crate::ierr!("尚未绑定团队工作区", "No team workspace is bound"))?;
+    let token = session_token(&app)
+        .ok_or_else(|| crate::ierr!("尚未登录云同步", "Not signed in to cloud sync"))?;
+    {
+        let state = app.state::<CloudState>();
+        client::purge_thread(&state.client, &account.server_url, &token, &topic_id)
+            .await
+            .map_err(client::HttpError::into_message)?;
+    }
+    sync_ops::with_conn(&app, |conn| {
+        conn.execute(
+            "UPDATE topics SET visibility = 'private', owner_user_id = NULL WHERE id = ?1",
+            [&topic_id],
+        )
+        .map_err(|e| e.to_string())?;
+        // Nothing of a private conversation may remain queued for upload.
+        conn.execute(
+            "DELETE FROM cloud_outbox WHERE entity_type = 'thread' AND entity_id = ?1",
+            [&topic_id],
+        )
+        .map_err(|e| e.to_string())?;
+        conn.execute(
+            "DELETE FROM cloud_outbox WHERE entity_type = 'message'
+               AND entity_id IN (SELECT id FROM messages WHERE topic_id = ?1)",
+            [&topic_id],
+        )
+        .map_err(|e| e.to_string())?;
+        conn.execute(
+            "DELETE FROM cloud_outbox WHERE entity_type = 'message_payload'
+               AND substr(entity_id, 1, instr(entity_id, ':') - 1)
+                   IN (SELECT id FROM messages WHERE topic_id = ?1)",
+            [&topic_id],
+        )
+        .map_err(|e| e.to_string())?;
+        // The server rows are gone; a later re-share must start from version 0.
+        conn.execute(
+            "DELETE FROM cloud_sync_state WHERE entity_type = 'thread' AND entity_id = ?1",
+            [&topic_id],
+        )
+        .map_err(|e| e.to_string())?;
+        conn.execute(
+            "DELETE FROM cloud_sync_state WHERE entity_type = 'message'
+               AND entity_id IN (SELECT id FROM messages WHERE topic_id = ?1)",
+            [&topic_id],
+        )
+        .map_err(|e| e.to_string())?;
+        Ok(())
+    })
 }
 
 /// Pending workspace invitations for the linked account.

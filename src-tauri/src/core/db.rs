@@ -519,7 +519,34 @@ pub(crate) const CHAT_DB_MIGRATIONS: &[Migration] = &[
         name: "cloud 同步账本（账号/待同步队列/版本号）",
         run: m_cloud_sync,
     },
+    Migration {
+        version: 21,
+        name: "topics.visibility / owner_user_id",
+        run: m_topics_visibility,
+    },
 ];
+
+/// v21: conversation visibility for the team workspace.
+///
+/// New conversations default to private (never uploaded). Rows that existed before
+/// this column was introduced were already mirrored to the workspace, so they keep
+/// `workspace` visibility instead of being silently unshared.
+fn m_topics_visibility(c: &Connection) -> Result<(), String> {
+    let had_column: i32 = c
+        .query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('topics') WHERE name='visibility'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
+    add_column_if_missing(c, "topics", "visibility", "TEXT NOT NULL DEFAULT 'private'")?;
+    add_column_if_missing(c, "topics", "owner_user_id", "TEXT")?;
+    if had_column == 0 {
+        c.execute("UPDATE topics SET visibility = 'workspace'", [])
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
 
 #[cfg(test)]
 mod cloud_migration_tests {

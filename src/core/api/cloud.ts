@@ -170,6 +170,13 @@ export const cloudAcceptInvitation = (serverUrl: string, invitationId: string) =
     invitationId,
   });
 
+/** Shares a conversation with the bound workspace (owner-only writes afterwards). */
+export const cloudShareTopic = (topicId: string) => invoke<void>('cloud_share_topic', { topicId });
+
+/** Removes the server copy and keeps the conversation local-only. */
+export const cloudUnshareTopic = (topicId: string) =>
+  invoke<void>('cloud_unshare_topic', { topicId });
+
 /** Declines an invitation for this account. */
 export const cloudRejectInvitation = (serverUrl: string, invitationId: string) =>
   invoke<void>('cloud_reject_invitation', { serverUrl, invitationId });

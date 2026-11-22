@@ -309,12 +309,23 @@ pub struct ToolResultContent {
 
 // Streaming tool_call accumulation is centralized in commands/llm's ToolCallAccum.
 
+fn default_topic_visibility() -> String {
+    "private".to_string()
+}
+
 /// A conversation topic with its message history.
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Topic {
     pub id: String,
     pub name: String,
     pub history: Vec<Message>,
+    /// `private` conversations never leave this device; `workspace` ones sync and are
+    /// read-only for the other members.
+    #[serde(default = "default_topic_visibility")]
+    pub visibility: String,
+    /// Server-side owner of a synced conversation; `None` for local-only rows.
+    #[serde(default)]
+    pub owner_user_id: Option<String>,
     #[serde(default)]
     pub summary: Option<String>,
     /// Whether the topic has been auto-renamed. New topics are `false`; the frontend sets `true`

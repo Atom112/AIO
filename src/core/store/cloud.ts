@@ -26,6 +26,8 @@ import {
   cloudLogout,
   cloudRejectInvitation,
   cloudSessionStatus,
+  cloudShareTopic,
+  cloudUnshareTopic,
   cloudStartEvents,
   cloudStopEvents,
   cloudSyncApply,
@@ -372,6 +374,35 @@ export async function rejectCloudInvitation(invitationId: string): Promise<void>
   if (!serverUrl) return;
   await cloudRejectInvitation(serverUrl, invitationId);
   await refreshCloudInvitations();
+}
+
+/** Mirrors a visibility change into the local topic tree. */
+function applyTopicVisibility(
+  topicId: string,
+  visibility: 'private' | 'workspace',
+  ownerUserId: string | null,
+): void {
+  setDatas('assistants', (assistants) =>
+    assistants.map((assistant) => ({
+      ...assistant,
+      topics: assistant.topics.map((topic) =>
+        topic.id === topicId ? { ...topic, visibility, ownerUserId } : topic,
+      ),
+    })),
+  );
+}
+
+/** Shares one conversation with the workspace and starts pushing it. */
+export async function shareTopic(topicId: string): Promise<void> {
+  await cloudShareTopic(topicId);
+  applyTopicVisibility(topicId, 'workspace', cloudSession().userId);
+  void syncNow();
+}
+
+/** Removes the server copy and keeps the conversation on this device only. */
+export async function unshareTopic(topicId: string): Promise<void> {
+  await cloudUnshareTopic(topicId);
+  applyTopicVisibility(topicId, 'private', null);
 }
 
 /** Expiry label for the settings card. */

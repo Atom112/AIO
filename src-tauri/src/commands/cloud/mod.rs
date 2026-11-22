@@ -341,6 +341,20 @@ pub async fn cloud_share_topic(app: AppHandle, topic_id: String) -> Result<(), S
         )
         .map_err(|e| e.to_string())?;
         outbox::enqueue_topic(conn, &topic_id);
+        // Attachments must upload before the messages referencing them can be built.
+        let attachment_ids: Vec<String> = conn
+            .prepare(
+                "SELECT DISTINCT ma.attachment_id FROM message_attachments ma
+                 JOIN messages m ON m.id = ma.message_id WHERE m.topic_id = ?1",
+            )
+            .and_then(|mut stmt| {
+                stmt.query_map([&topic_id], |row| row.get::<_, String>(0))?
+                    .collect::<Result<Vec<_>, _>>()
+            })
+            .unwrap_or_default();
+        for attachment_id in &attachment_ids {
+            outbox::enqueue_attachment(conn, attachment_id);
+        }
         outbox::enqueue_messages_of(conn, &topic_id);
         Ok(())
     })

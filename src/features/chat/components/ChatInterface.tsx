@@ -13,6 +13,7 @@ import {
 import { Portal } from 'solid-js/web';
 import ModelSelector from './ModelSelector';
 import { cloudSession } from '../../../core/store/cloud';
+import { isTopicReadOnly } from '../../../core/store/topicVisibility';
 import {
   Topic,
   PendingAttachment,
@@ -151,16 +152,7 @@ const ChatInterface: Component<ChatInterfaceProps> = (props) => {
   // subprocess handshake to track. Ready therefore means a project is loaded, so the
   // dot does not sit permanently on the "connecting" yellow state.
   /** A teammate's shared conversation is visible but not writable here. */
-  const teamReadOnly = createMemo(() => {
-    const topic = props.activeTopic;
-    const session = cloudSession();
-    return Boolean(
-      topic?.ownerUserId &&
-      session.signedIn &&
-      session.userId &&
-      topic.ownerUserId !== session.userId,
-    );
-  });
+  const teamReadOnly = createMemo(() => isTopicReadOnly(props.activeTopic, cloudSession()));
 
   const fsStatus = createMemo<'connected' | 'connecting' | 'error'>(() =>
     currentProject() ? 'connected' : 'connecting',

@@ -22,6 +22,7 @@ import {
 } from '../../../core/store/store';
 import { loadTopicFoldState, saveTopicFoldState } from '../../../core/store/layout';
 import { cloudSession, shareTopic, unshareTopic } from '../../../core/store/cloud';
+import { canToggleTopicVisibility } from '../../../core/store/topicVisibility';
 import Icon from '../../../shared/components/Icon';
 import { formatDateTime, t } from '../../../core/i18n';
 import { searchChatHistory, type ChatSearchMatch } from '../utils/searchHistory';
@@ -223,13 +224,7 @@ const TopicSidebar: Component<TopicSidebarProps> = (props) => {
     if (!id) return undefined;
     return props.currentAssistant?.topics.find((topic) => topic.id === id);
   });
-  const canShareTopic = createMemo(() => {
-    const topic = menuTopic();
-    const session = cloudSession();
-    if (!session.signedIn || !session.workspaceId || !topic) return false;
-    // Only the owner can change a shared conversation's visibility.
-    return !topic.ownerUserId || topic.ownerUserId === session.userId;
-  });
+  const canShareTopic = createMemo(() => canToggleTopicVisibility(menuTopic(), cloudSession()));
 
   const toggleTopicVisibility = async (): Promise<void> => {
     const topic = menuTopic();
